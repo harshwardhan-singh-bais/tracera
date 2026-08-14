@@ -65,12 +65,26 @@ class BM25Index:
     # ── Indexing ──────────────────────────────────────────────────────────────
 
     def add_document(self, doc_id: str, text: str, metadata: dict[str, Any] | None = None) -> None:
-        """Add a single document to the index."""
+        """Add a single document to the index.
+
+        Idempotent: re-adding an existing doc_id replaces its content
+        (used by incremental re-indexing of modified files) without
+        double-counting documents.
+        """
+        existed = doc_id in self._docs
+        if existed:
+            # Drop the old postings for this doc_id before re-indexing it
+            for token in set(self._tokenized.get(doc_id, [])):
+                self._inverted[token].pop(doc_id, None)
+                if not self._inverted[token]:
+                    del self._inverted[token]
+
         tokens = _tokenize(text)
         self._docs[doc_id] = text
         self._tokenized[doc_id] = tokens
         self._doc_lengths[doc_id] = len(tokens)
-        self._doc_count += 1
+        if not existed:
+            self._doc_count += 1
 
         # Update inverted index with term frequencies
         tf: dict[str, int] = defaultdict(int)
@@ -80,7 +94,8 @@ class BM25Index:
             self._inverted[term][doc_id] = count
 
         # Recalculate average doc length
-        self._avg_doc_len = sum(self._doc_lengths.values()) / self._doc_count
+        if self._doc_count > 0:
+            self._avg_doc_len = sum(self._doc_lengths.values()) / self._doc_count
 
     def add_documents(self, docs: list[tuple[str, str]]) -> None:
         """Bulk-add (doc_id, text) pairs."""

@@ -100,6 +100,7 @@ def create_default_registry(workspace=None) -> ToolRegistry:
     from tracera.tools.list_dir import ListDirTool
     from tracera.tools.grep import GrepTool
     from tracera.tools.run_command import RunCommandTool
+    from tracera.tools.git_tool import GitTool
     from tracera.workspace.sandbox import WorkspaceSandbox
     from pathlib import Path
 
@@ -114,6 +115,7 @@ def create_default_registry(workspace=None) -> ToolRegistry:
         ListDirTool(workspace),
         GrepTool(workspace),
         RunCommandTool(workspace),
+        GitTool(workspace),
     ])
     return registry
 
@@ -122,30 +124,51 @@ def extend_registry_with_retrieval(
     registry: ToolRegistry,
     retriever,
     expander,
+    graph_retriever=None,
 ) -> ToolRegistry:
     """
     Phase 27/28 — Extend an existing registry with code-intelligence tools.
 
     This makes the agent retrieval-aware: it can now call search_code,
     find_symbol, and get_context as native tools alongside read_file/grep.
+    When a symbol graph is available (Phases 25-26), the graph-backed tools
+    find_references and get_dependencies are registered too, and get_context
+    includes graph neighbours.
 
     Args:
         registry: An existing ToolRegistry (from create_default_registry).
         retriever: A SymbolAwareRetriever instance.
         expander: A ContextExpander instance.
+        graph_retriever: A GraphRetriever instance (optional).
 
     Returns:
         The same registry, extended with retrieval tools.
     """
-    from tracera.tools.code_search import SearchCodeTool, FindSymbolTool, GetContextTool
+    from tracera.tools.code_search import (
+        SearchCodeTool,
+        FindSymbolTool,
+        GetContextTool,
+        FindReferencesTool,
+        GetDependenciesTool,
+    )
 
-    registry.register_many([
+    tools: list[Tool] = [
         SearchCodeTool(retriever),
         FindSymbolTool(retriever),
-        GetContextTool(retriever, expander),
-    ])
+    ]
+
+    if graph_retriever is not None:
+        graph = graph_retriever.graph
+        tools.append(GetContextTool(retriever, expander, graph_retriever))
+        tools.append(FindReferencesTool(graph))
+        tools.append(GetDependenciesTool(graph))
+    else:
+        tools.append(GetContextTool(retriever, expander))
+
+    registry.register_many(tools)
     log.info(
-        "Registry extended with retrieval tools: search_code, find_symbol, get_context"
+        "Registry extended with retrieval tools: %s",
+        ", ".join(t.name for t in tools),
     )
     return registry
 

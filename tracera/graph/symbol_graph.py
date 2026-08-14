@@ -9,7 +9,9 @@ Uses NetworkX under the hood for graph operations.
 
 from __future__ import annotations
 
+import json
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 from tracera.indexer.schema import Symbol, SymbolType
@@ -154,6 +156,30 @@ class SymbolGraph:
         """
         for symbol in symbols:
             self.add_symbol(file_path, symbol)
+
+    def remove_file(self, file_path: str) -> None:
+        """Remove all nodes (and their edges) belonging to a file."""
+        for node_id in self.find_by_file(file_path):
+            self._g.remove_node(node_id)
+
+    # ── Persistence ──────────────────────────────────────────────────────────
+
+    def save(self, path: Path) -> None:
+        """Serialize the graph to disk as JSON (node-link format)."""
+        import networkx as nx
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = nx.node_link_data(self._g, edges="edges")
+        path.write_text(json.dumps(data), encoding="utf-8")
+        log.debug("Symbol graph saved: %s (%d nodes, %d edges)", path, self.node_count, self.edge_count)
+
+    @classmethod
+    def load(cls, path: Path) -> "SymbolGraph":
+        """Load a graph previously saved with save()."""
+        import networkx as nx
+        graph = cls()
+        data = json.loads(path.read_text(encoding="utf-8"))
+        graph._g = nx.node_link_graph(data, edges="edges")
+        return graph
 
     @property
     def node_count(self) -> int:

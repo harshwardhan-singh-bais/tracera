@@ -38,17 +38,23 @@ log = get_logger("providers")
 # Used when tracera_default_provider = "auto"
 # Each entry: (provider_name, settings_attr, base_url, default_model)
 _FALLBACK_ORDER = [
-    ("groq",       "groq_api_key",       "https://api.groq.com/openai/v1",          "llama-3.3-70b-versatile"),
-    ("cerebras",   "cerebras_api_key",   "https://api.cerebras.ai/v1",              "llama-3.3-70b"),
-    ("nvidia",     "nvidia_api_key",     "https://integrate.api.nvidia.com/v1",     "nvidia/llama-3.1-nemotron-70b-instruct"),
-    ("sambanova",  "sambanova_api_key",  "https://api.sambanova.ai/v1",             "Meta-Llama-3.1-70B-Instruct"),
-    ("mistral",    "mistral_api_key",    "https://api.mistral.ai/v1",               "mistral-large-latest"),
-    ("openrouter", "openrouter_api_key", "https://openrouter.ai/api/v1",            "meta-llama/llama-3.1-405b-instruct"),
-    ("ollama",     None,                 None,                                       "llama3.2"),
+    ("groq",       "groq_api_key",       "https://api.groq.com/openai/v1",                          "llama-3.3-70b-versatile"),
+    ("openai",     "openai_api_key",     "https://api.openai.com/v1",                              "gpt-4o"),
+    ("cerebras",   "cerebras_api_key",   "https://api.cerebras.ai/v1",                              "llama-3.3-70b"),
+    ("nvidia",     "nvidia_api_key",     "https://integrate.api.nvidia.com/v1",                     "nvidia/llama-3.1-nemotron-70b-instruct"),
+    ("sambanova",  "sambanova_api_key",  "https://api.sambanova.ai/v1",                             "Meta-Llama-3.1-70B-Instruct"),
+    ("mistral",    "mistral_api_key",    "https://api.mistral.ai/v1",                               "mistral-large-latest"),
+    ("openrouter", "openrouter_api_key", "https://openrouter.ai/api/v1",                            "meta-llama/llama-3.1-405b-instruct"),
+    ("anthropic",  "anthropic_api_key",  "https://api.anthropic.com/v1",                             "claude-3-5-sonnet-latest"),
+    ("gemini",     "google_api_key",     "https://generativelanguage.googleapis.com/v1beta/openai/", "gemini-2.5-pro"),
+    ("ollama",     None,                 None,                                                       "llama3.2"),
 ]
 
 # Per-provider recommended models (used when TRACERA_DEFAULT_MODEL is not set per-provider)
 _PROVIDER_MODELS: dict[str, str] = {
+    "openai":     "gpt-4o",
+    "anthropic":  "claude-3-5-sonnet-latest",
+    "gemini":     "gemini-2.5-pro",
     "groq":       "llama-3.3-70b-versatile",
     "cerebras":   "llama-3.3-70b",
     "nvidia":     "nvidia/llama-3.1-nemotron-70b-instruct",
@@ -75,6 +81,8 @@ def create_provider(
     following the ranked fallback order.
 
     Supported providers:
+        openai      — OpenAI (gpt-4o, etc.)
+        gemini      — Google Gemini via OpenAI-compatible endpoint
         groq        — Groq (llama-3.3-70b-versatile, mixtral-8x7b, etc.)
         cerebras    — Cerebras (llama-3.3-70b, etc.)
         nvidia      — NVIDIA NIM (nvidia/llama-3.1-nemotron-70b-instruct, etc.)
@@ -132,6 +140,42 @@ def _auto_select_provider(settings, model: str | None = None) -> LLMProvider:
 def _create_named_provider(provider_name: str, model_id: str, settings) -> LLMProvider:
     """Create a specific named provider. Raises if key missing."""
     match provider_name:
+        # ── 0. OpenAI ────────────────────────────────────────────────────────
+        case "openai":
+            api_key = settings.openai_api_key
+            if not api_key:
+                raise MissingAPIKeyError("openai", "OPENAI_API_KEY")
+            return OpenAIProvider(
+                api_key=api_key,
+                base_url="https://api.openai.com/v1",
+                default_model=model_id or _PROVIDER_MODELS["openai"],
+                provider_name="openai",
+            )
+
+        # ── 0b. Anthropic (via OpenAI-SDK compatibility layer) ────────────────
+        case "anthropic":
+            api_key = settings.anthropic_api_key
+            if not api_key:
+                raise MissingAPIKeyError("anthropic", "ANTHROPIC_API_KEY")
+            return OpenAIProvider(
+                api_key=api_key,
+                base_url="https://api.anthropic.com/v1",
+                default_model=model_id or _PROVIDER_MODELS["anthropic"],
+                provider_name="anthropic",
+            )
+
+        # ── 0c. Gemini (via OpenAI-compatible endpoint) ───────────────────────
+        case "gemini":
+            api_key = settings.google_api_key
+            if not api_key:
+                raise MissingAPIKeyError("gemini", "GOOGLE_API_KEY")
+            return OpenAIProvider(
+                api_key=api_key,
+                base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+                default_model=model_id or _PROVIDER_MODELS["gemini"],
+                provider_name="gemini",
+            )
+
         # ── 1. Groq ──────────────────────────────────────────────────────────
         case "groq":
             api_key = settings.groq_api_key
@@ -259,7 +303,7 @@ def list_available_providers(settings=None) -> list[dict]:
             "rank": rank,
             "name": pname,
             "available": available,
-            "key_env": key_attr.upper().replace("_API_KEY", "_API_KEY") if key_attr else "none",
+            "key_env": key_attr.upper() if key_attr else "none",
             "model": _PROVIDER_MODELS.get(pname, default_model),
         })
     return result

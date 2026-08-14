@@ -144,11 +144,12 @@ def test_registry_has_all_tools(registry):
     assert "list_dir" in names
     assert "grep" in names
     assert "run_command" in names
+    assert "git" in names
 
 
 def test_registry_schemas(registry):
     schemas = registry.schemas()
-    assert len(schemas) == 6
+    assert len(schemas) == 7
     for s in schemas:
         assert s.name
         assert s.description

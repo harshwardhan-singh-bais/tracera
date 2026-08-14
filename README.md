@@ -15,21 +15,29 @@
 
 ---
 
-## Features (Phases 1–10)
+## Features (Phases 1–38)
 
 | Phase | Feature |
 |-------|---------|
 | 1 | Project architecture, config system, Rich logging, Typer CLI |
 | 2 | Workspace sandbox — path validation, traversal protection |
-| 3 | Git integration — status, diff, log, branch |
-| 4 | LLM provider abstraction — OpenAI, Anthropic, Gemini, Ollama |
+| 3 | Git integration — status, diff, log, branch (+ `git` agent tool) |
+| 4 | LLM provider abstraction — OpenAI, Anthropic, Gemini, Groq, Ollama, … |
 | 5 | Provider-neutral conversation state |
 | 6 | Tool abstraction + registry with JSON schema |
 | 7 | Basic coding tools — read, write, edit, grep, run |
 | 8 | Core ReAct agent loop with streaming |
 | 9 | Planning system — task decomposition, TODO tracking |
-| 10 | Persistent agent memory — project facts, decisions |
-| TUI | Futuristic Textual terminal UI |
+| 10 | Persistent agent memory — injected into agent context |
+| 11–15 | Repository scanner, tree-sitter parsing, symbol extraction, chunking, schema |
+| 16–20 | BM25, local embeddings, LanceDB vector index, dense + hybrid retrieval |
+| 21–24 | Symbol-aware retrieval, context expansion, cross-encoder rerank, incremental indexing |
+| 25–26 | Symbol relationship graph + dependency-aware graph retrieval |
+| 27–28 | Code-search agent tools (`search_code`, `find_symbol`, `find_references`, `get_dependencies`, `get_context`) |
+| 29–31 | Context assembly, context compression, repository-aware agent |
+| 32–34 | Test discovery, safe test execution, failure analysis |
+| 35–38 | Retrieval-driven debugging, autonomous fix loop, self-review, regression protection |
+| TUI | Futuristic Textual terminal UI with full scrolling (PgUp/PgDn + mouse) |
 
 ---
 

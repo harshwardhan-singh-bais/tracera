@@ -71,6 +71,9 @@ class Settings(BaseSettings):
 
     # ── LLM Providers ─────────────────────────────────────────────────────────
 
+    openai_api_key: str | None = Field(None, alias="OPENAI_API_KEY")
+    anthropic_api_key: str | None = Field(None, alias="ANTHROPIC_API_KEY")
+    google_api_key: str | None = Field(None, alias="GOOGLE_API_KEY")
     groq_api_key: str | None = Field(None, alias="GROQ_API_KEY")
     sambanova_api_key: str | None = Field(None, alias="SAMBANOVA_API_KEY")
     mistral_api_key: str | None = Field(None, alias="MISTRAL_API_KEY")
@@ -179,6 +182,9 @@ class Settings(BaseSettings):
     def provider_api_key(self, provider: str) -> str | None:
         """Return the API key for a given provider name."""
         mapping: dict[str, str | None] = {
+            "openai": self.openai_api_key,
+            "anthropic": self.anthropic_api_key,
+            "gemini": self.google_api_key,
             "groq": self.groq_api_key,
             "sambanova": self.sambanova_api_key,
             "mistral": self.mistral_api_key,

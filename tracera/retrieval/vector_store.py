@@ -35,7 +35,7 @@ class VectorStore:
         vector      — embedding (float32[])
     """
 
-    def __init__(self, uri: str | Path, dimension: int = 384) -> None:
+    def __init__(self, uri: str | Path, dimension: int | None = None) -> None:
         self._uri = str(uri)
         self._dimension = dimension
         self._db: Any = None
@@ -53,13 +53,40 @@ class VectorStore:
         log.debug("Connecting to LanceDB at %s", self._uri)
         self._db = lancedb.connect(self._uri)
 
+    def existing_dimension(self) -> int | None:
+        """
+        Return the vector dimension of an already-created table, or None.
+        Lets the pipeline reuse the stored dimension instead of assuming 384.
+        """
+        try:
+            self._connect()
+            if _TABLE_NAME not in self._db.table_names():
+                return None
+            table = self._db.open_table(_TABLE_NAME)
+            field = table.schema.field("vector")
+            size = getattr(field.type, "list_size", None)
+            if size and size > 0:
+                return int(size)
+            return None
+        except Exception:
+            return None
+
     def _get_or_create_table(self) -> Any:
         if self._table is not None:
             return self._table
         self._connect()
         if _TABLE_NAME in self._db.table_names():
             self._table = self._db.open_table(_TABLE_NAME)
+            # Adopt the real dimension from the existing table
+            if self._dimension is None:
+                dim = self.existing_dimension()
+                if dim:
+                    self._dimension = dim
         else:
+            if self._dimension is None:
+                raise RuntimeError(
+                    "VectorStore dimension is required to create a new table."
+                )
             import pyarrow as pa
             schema = pa.schema([
                 pa.field("id", pa.string()),

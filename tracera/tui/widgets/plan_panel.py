@@ -86,6 +86,9 @@ class PlanPanel(Widget):
             markup=True,
         ))
 
+        # Show the plan from the top
+        container.scroll_home(animate=False)
+
     def update_plan(self, plan: Plan) -> None:
         """Refresh plan display."""
         self.set_plan(plan)

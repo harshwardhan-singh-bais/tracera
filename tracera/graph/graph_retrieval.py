@@ -25,6 +25,11 @@ class GraphRetriever:
         self._graph = symbol_graph
         self._bm25 = bm25_index
 
+    @property
+    def graph(self) -> SymbolGraph:
+        """The underlying symbol graph (used by the agent's graph tools)."""
+        return self._graph
+
     def expand_with_graph(
         self,
         base_results: list[dict],

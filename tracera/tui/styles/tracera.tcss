@@ -75,30 +75,30 @@ Screen {
 
 /* ── Main Layout ─────────────────────────────────────────────────────────── */
 
-#main-screen {
-    layout: grid;
-    grid-size: 12;
-    grid-gutter: 0;
+/* Fills the screen between the header (top) and status bar + footer (bottom).
+   Children are laid out horizontally: left sidebar | conversation | right sidebar. */
+#main-layout {
+    height: 1fr;
+    width: 100%;
+    layout: horizontal;
     background: $bg-deep;
 }
 
 #left-sidebar {
-    column-span: 3;
+    width: 30;
     height: 100%;
     background: $bg-panel;
     border-right: solid $border-dim;
     layout: vertical;
 }
 
-#center-panel {
-    column-span: 6;
+#agent-panel-widget {
+    width: 1fr;
     height: 100%;
-    layout: vertical;
-    background: $bg-deep;
 }
 
 #right-sidebar {
-    column-span: 3;
+    width: 42;
     height: 100%;
     background: $bg-panel;
     border-left: solid $border-dim;
@@ -107,36 +107,12 @@ Screen {
 
 /* ── Header bar ─────────────────────────────────────────────────────────── */
 
-#header {
+#app-header {
     height: 3;
     background: $bg-panel;
     border-bottom: solid $border-bright;
-    layout: horizontal;
     padding: 0 2;
-}
-
-#header-logo {
-    color: $cyan;
-    text-style: bold;
-    width: auto;
     content-align: left middle;
-}
-
-#header-spacer {
-    width: 1fr;
-}
-
-#header-model-badge {
-    color: $purple;
-    width: auto;
-    content-align: right middle;
-    text-style: bold;
-}
-
-#header-status-indicator {
-    width: auto;
-    content-align: right middle;
-    padding: 0 1;
 }
 
 /* ── Status bar (bottom) ─────────────────────────────────────────────────── */

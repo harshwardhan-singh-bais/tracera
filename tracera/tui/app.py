@@ -22,7 +22,7 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from textual import on, work
+from textual import events, on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, ScrollableContainer
@@ -80,6 +80,12 @@ class TraceraTUI(App):
         Binding("ctrl+m", "show_memory", "Memory", show=True),
         Binding("f1", "show_help", "Help", show=True),
         Binding("escape", "cancel_task", "Cancel", show=False),
+        # Keyboard scrolling — works like any other CLI tool (less, htop):
+        # PgUp/PgDn scroll the panel under the mouse cursor, falling back to
+        # the conversation log. (Home/End are left to the input field, where
+        # they move the cursor — the standard terminal behaviour.)
+        Binding("pageup", "scroll_active(-1)", "Scroll Up", show=True),
+        Binding("pagedown", "scroll_active(1)", "Scroll Down", show=True),
     ]
 
     def __init__(
@@ -95,6 +101,7 @@ class TraceraTUI(App):
         self.workspace_path = workspace_path
         self._conversation = ConversationState()
         self._running_task: asyncio.Task | None = None
+        self._hovered_scrollable: ScrollableContainer | None = None
 
     # ── Layout ────────────────────────────────────────────────────────────────
 
@@ -129,7 +136,7 @@ class TraceraTUI(App):
         text.append("CodePilotX", style="dim #606090")
         text.append("  ·  ", style="dim #303050")
         text.append(str(self.workspace_path), style="dim #606090")
-        return Static(text, id="app-header", classes="panel-title")
+        return Static(text, id="app-header")
 
     def _build_stats_panel(self) -> Vertical:
         return Vertical(
@@ -145,6 +152,41 @@ class TraceraTUI(App):
             ),
             id="stats-panel",
         )
+
+    # ── Scroll handling ───────────────────────────────────────────────────────
+
+    def _find_scrollable(self, widget) -> ScrollableContainer | None:
+        """Walk up the DOM from *widget* to find the enclosing scrollable, if any."""
+        node = widget
+        while node is not None:
+            if isinstance(node, ScrollableContainer):
+                return node
+            node = node.parent
+        return None
+
+    def on_mouse_move(self, event: events.MouseMove) -> None:
+        """Track which scrollable panel the mouse is currently over."""
+        try:
+            widget, _ = self.screen.get_widget_at(event.x, event.y)
+        except Exception:
+            return
+        scrollable = self._find_scrollable(widget)
+        if scrollable is not None:
+            self._hovered_scrollable = scrollable
+
+    def _active_scrollable(self) -> ScrollableContainer:
+        """The scrollable to act on: hovered panel, else the conversation log."""
+        if self._hovered_scrollable is not None and self._hovered_scrollable.is_attached:
+            return self._hovered_scrollable
+        return self.query_one("#agent-log", ScrollableContainer)
+
+    def action_scroll_active(self, direction: int) -> None:
+        """Scroll the active panel by one page (direction: -1 up, +1 down)."""
+        target = self._active_scrollable()
+        if direction < 0:
+            target.scroll_page_up(animate=False)
+        else:
+            target.scroll_page_down(animate=False)
 
     # ── Event handlers ────────────────────────────────────────────────────────
 

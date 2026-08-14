@@ -14,9 +14,9 @@ import asyncio
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Callable
 
-from tracera.conversation.state import ConversationState, MessageType
+from tracera.conversation.state import ConversationMessage, ConversationState, MessageType
 from tracera.errors import AgentError, MaxIterationsError, MaxToolCallsError
 from tracera.logging import get_logger, log_agent, log_tool
 from tracera.providers.base import LLMMessage, LLMProvider, ToolCallRequest, ToolSchema
@@ -106,6 +106,7 @@ class ReActAgent:
         system_prompt: str | None = None,
         retry_on_tool_error: bool = True,
         max_retries: int = 3,
+        memory_provider: Callable[[], str] | None = None,
     ) -> None:
         self.provider = provider
         self.registry = registry
@@ -117,6 +118,8 @@ class ReActAgent:
         self.system_prompt = system_prompt or _SYSTEM_PROMPT
         self.retry_on_tool_error = retry_on_tool_error
         self.max_retries = max_retries
+        # Phase 10 → 8: injects persistent memory context into the conversation
+        self.memory_provider = memory_provider
         self._tool_call_count = 0
 
     async def run(
@@ -146,6 +149,19 @@ class ReActAgent:
             # Ensure system prompt is set
             if not any(m.type == MessageType.SYSTEM for m in conversation.messages):
                 conversation.add_system(self.system_prompt)
+
+        # Phase 10: inject persistent memory into the conversation once per session
+        if self.memory_provider is not None:
+            has_memory = any(
+                m.type == MessageType.SYSTEM and m.metadata.get("memory")
+                for m in conversation.messages
+            )
+            if not has_memory:
+                memory_ctx = self.memory_provider()
+                if memory_ctx:
+                    msg = ConversationMessage.system(memory_ctx)
+                    msg.metadata["memory"] = True
+                    conversation.add(msg)
 
         conversation.add_user(task)
         self._tool_call_count = 0

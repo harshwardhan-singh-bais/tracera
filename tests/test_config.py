@@ -8,6 +8,10 @@ from pathlib import Path
 def test_settings_defaults(tmp_path, monkeypatch):
     """Settings load with sensible defaults."""
     monkeypatch.chdir(tmp_path)
+    # Isolate from any TRACERA_* env vars the developer may have set
+    for var in list(os.environ):
+        if var.startswith("TRACERA_"):
+            monkeypatch.delenv(var, raising=False)
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
 
     from tracera.config.settings import Settings, reset_settings

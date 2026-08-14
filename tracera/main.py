@@ -74,8 +74,12 @@ def _build_agent(settings=None, workspace_path: Path | None = None, retrieval_pi
     # Phase 28: extend registry with code-search tools if index is available
     if retrieval_pipeline is not None:
         from tracera.tools.registry import extend_registry_with_retrieval
-        _, symbol_retriever, expander, *_ = retrieval_pipeline
-        extend_registry_with_retrieval(registry, symbol_retriever, expander)
+        symbol_retriever = retrieval_pipeline[1]
+        expander = retrieval_pipeline[2]
+        graph_retriever = retrieval_pipeline[-1]
+        extend_registry_with_retrieval(
+            registry, symbol_retriever, expander, graph_retriever
+        )
 
     provider = create_provider(settings=settings)
 
@@ -94,6 +98,10 @@ def _build_agent(settings=None, workspace_path: Path | None = None, retrieval_pi
         )
     )
 
+    # Phase 10 → 8: give the agent access to persistent memory
+    from tracera.agent.memory import AgentMemory
+    memory = AgentMemory(settings.memory_dir)
+
     agent = ReActAgent(
         provider=provider,
         registry=registry,
@@ -103,6 +111,7 @@ def _build_agent(settings=None, workspace_path: Path | None = None, retrieval_pi
         temperature=settings.tracera_default_temperature,
         max_tokens=settings.tracera_default_max_tokens,
         system_prompt=system_prompt,
+        memory_provider=lambda: memory.build_context(""),
     )
     return agent, workspace, provider
 
@@ -457,7 +466,8 @@ def _build_retrieval_pipeline(settings=None, workspace_path: Path | None = None)
 
     Returns:
         (incremental_indexer, symbol_retriever, context_expander, reranker,
-         context_engine, compressor, embedder, vector_store, bm25_index)
+         context_engine, compressor, embedder, vector_store, bm25_index,
+         graph_retriever)
     """
     if settings is None:
         settings = _get_settings()
@@ -475,6 +485,8 @@ def _build_retrieval_pipeline(settings=None, workspace_path: Path | None = None)
     from tracera.retrieval.context_expander import ContextExpander
     from tracera.retrieval.reranker import CrossEncoderReranker
     from tracera.retrieval.incremental import IncrementalIndexer
+    from tracera.graph.symbol_graph import SymbolGraph
+    from tracera.graph.graph_retrieval import GraphRetriever
     from tracera.agent.context_engine import ContextAssemblyEngine
     from tracera.agent.compressor import ContextCompressor
 
@@ -491,11 +503,23 @@ def _build_retrieval_pipeline(settings=None, workspace_path: Path | None = None)
     if bm25_path.exists():
         bm25 = BM25Index.load(bm25_path)
 
-    # Phase 18: LanceDB vector store
-    vector_store = VectorStore(
-        uri=settings.lancedb_uri,
-        dimension=embedder.dimension if bm25.doc_count == 0 else 384,
-    )
+    # Phase 18: LanceDB vector store.
+    # Reuse the dimension of an existing table when present (avoids loading the
+    # embedding model just to learn the dimension); otherwise derive it from the
+    # configured embedding model.
+    vector_store = VectorStore(uri=settings.lancedb_uri)
+    dimension = vector_store.existing_dimension() or embedder.dimension
+    vector_store = VectorStore(uri=settings.lancedb_uri, dimension=dimension)
+
+    # Phase 25-26: Symbol relationship graph + dependency-aware retrieval
+    graph = SymbolGraph()
+    graph_path = index_dir / "symbol_graph.json"
+    if graph_path.exists():
+        try:
+            graph = SymbolGraph.load(graph_path)
+        except Exception as e:
+            console.print(f"[dim yellow]⚠ Symbol graph load failed ({e}) — starting empty[/]")
+    graph_retriever = GraphRetriever(graph, bm25)
 
     # Phase 19: Dense retriever
     dense = DenseRetriever(embedder, vector_store)
@@ -520,6 +544,7 @@ def _build_retrieval_pipeline(settings=None, workspace_path: Path | None = None)
         vector_store=vector_store,
         index_dir=index_dir,
         max_file_size=settings.tracera_indexing_max_file_size,
+        symbol_graph=graph,
     )
 
     # Phase 29: Context engine
@@ -528,7 +553,18 @@ def _build_retrieval_pipeline(settings=None, workspace_path: Path | None = None)
     # Phase 30: Compressor
     compressor = ContextCompressor(target_tokens=15_000)
 
-    return indexer, symbol_retriever, expander, reranker, context_engine, compressor, embedder, vector_store, bm25
+    return (
+        indexer,
+        symbol_retriever,
+        expander,
+        reranker,
+        context_engine,
+        compressor,
+        embedder,
+        vector_store,
+        bm25,
+        graph_retriever,
+    )
 
 
 # ── index ─────────────────────────────────────────────────────────────────────
@@ -621,8 +657,10 @@ def search(
     console.print(f"\n[bold cyan]Search:[/] [white]{query}[/]")
 
     try:
-        _, symbol_retriever, expander, reranker, context_engine, *_ = \
-            _build_retrieval_pipeline(settings, ws_path)
+        pipeline = _build_retrieval_pipeline(settings, ws_path)
+        symbol_retriever, expander, reranker, graph_retriever = (
+            pipeline[1], pipeline[2], pipeline[3], pipeline[-1]
+        )
     except Exception as e:
         console.print(f"[bold red]Pipeline init failed:[/] {e}")
         raise typer.Exit(1)
@@ -632,6 +670,10 @@ def search(
             results = symbol_retriever.search(query, k=k * 2, language=language)
             # Phase 22: Context expansion
             results = expander.expand(results, max_additional=3)
+            # Phase 26: dependency-aware graph expansion (when a graph exists)
+            results = graph_retriever.expand_with_graph(
+                results, max_depth=1, max_total=k * 2
+            )
             # Phase 23: Optional reranking
             if rerank:
                 results = reranker.rerank(query, results, k=k)
