@@ -48,6 +48,9 @@ def _setup() -> None:
         level=settings.tracera_log_level,
         log_file=settings.tracera_log_file,
     )
+    # Phase 2: workspace lifecycle — create the `.tracera/` data dirs
+    from tracera.workspace.lifecycle import WorkspaceLifecycle
+    WorkspaceLifecycle(settings.tracera_data_dir).initialise()
 
 
 def _build_agent(settings=None, workspace_path: Path | None = None, retrieval_pipeline=None):
@@ -716,6 +719,121 @@ def search(
 
         syntax = Syntax(content[:800], lang, theme="monokai", line_numbers=False)
         console.print(RPanel(syntax, title=title, border_style="cyan"))
+
+
+# ── fix ──────────────────────────────────────────────────────────────────────
+
+@app.command()
+def fix(
+    task: Annotated[str, typer.Argument(help="Coding task to implement or fix.")],
+    workspace: Annotated[
+        Optional[Path],
+        typer.Option("--workspace", "-w"),
+    ] = None,
+    provider: Annotated[
+        Optional[str],
+        typer.Option("--provider", "-p"),
+    ] = None,
+    max_iterations: Annotated[
+        int,
+        typer.Option("--max-iterations", "-i", help="Max fix-loop iterations."),
+    ] = 5,
+) -> None:
+    """
+    Run the autonomous fix loop (Phases 35-36 + 38).
+
+    For each failing test, retrieves the relevant code (Phase 35), drives the
+    agent to edit it (Phase 36: plan → edit → test → retry), and wraps the whole
+    run with a pre/post regression check (Phase 38).
+    """
+    _setup()
+    settings = _get_settings()
+    if provider:
+        settings.tracera_default_provider = provider
+    ws_path = (workspace or settings.tracera_workspace).resolve()
+
+    console.print("\n[bold cyan]TRACERA Autonomous Fix Loop[/] (Phases 35-36, 38)\n")
+
+    # Retrieval pipeline is optional: the loop still works on basic tools alone.
+    pipeline = None
+    try:
+        pipeline = _build_retrieval_pipeline(settings, ws_path)
+    except Exception as e:
+        console.print(f"[dim yellow]⚠ Retrieval pipeline unavailable ({e}) — basic tools only[/]")
+
+    try:
+        agent, ws, prov = _build_agent(settings, ws_path, pipeline)
+    except Exception as e:
+        console.print(f"[bold red]Init failed:[/] {e}")
+        raise typer.Exit(1)
+
+    from tracera.tools.test_runner import TestRunner
+    from tracera.agent.autonomous import AutonomousFixLoop, RetrievalDebugger, RegressionProtector
+    from tracera.agent.context_engine import ContextAssemblyEngine
+    from tracera.agent.compressor import ContextCompressor
+
+    symbol_retriever = pipeline[1] if pipeline else None
+    context_engine = pipeline[4] if pipeline else ContextAssemblyEngine()
+    compressor = pipeline[5] if pipeline else ContextCompressor()
+
+    test_runner = TestRunner(ws_path)
+    debugger = RetrievalDebugger(symbol_retriever, context_engine, compressor=compressor)
+    protector = RegressionProtector(ws_path, test_runner)
+    fix_loop = AutonomousFixLoop(ws_path, test_runner, debugger, max_iterations=max_iterations)
+
+    console.print("[dim]Taking pre-task regression baseline…[/]")
+    baseline = protector.snapshot_before()
+    console.print(f"[dim]Baseline: {baseline.summary}[/]\n")
+
+    async def _run():
+        return await fix_loop.run(task, prov, agent)
+
+    result = asyncio.run(_run())
+
+    attempts_table = Table(title="Fix Loop Attempts", border_style="cyan", show_header=True)
+    attempts_table.add_column("#", style="dim", width=3)
+    attempts_table.add_column("Test Run", style="white")
+    attempts_table.add_column("Result", width=8)
+    attempts_table.add_column("Diagnosis", style="dim", width=45)
+    for a in result.attempts:
+        attempts_table.add_row(
+            str(a.iteration),
+            a.test_report.summary,
+            "✅ PASS" if a.success else "❌ FAIL",
+            (a.patch_description or "")[:45],
+        )
+    console.print(attempts_table)
+
+    if result.final_success:
+        console.print(
+            f"\n[bold green]✓ All tests passing after {result.total_iterations} attempt(s).[/]"
+        )
+    else:
+        console.print(
+            f"\n[bold yellow]Fix loop exhausted after {result.total_iterations} attempt(s) — "
+            "tests still failing.[/]"
+        )
+
+    # Phase 38: regression protection
+    console.print("\n[dim]Verifying no regressions…[/]")
+    report = protector.verify_after()
+    reg_table = Table(title="Regression Report (Phase 38)", border_style="yellow", show_header=True)
+    reg_table.add_column("Metric", style="cyan bold")
+    reg_table.add_column("Value", style="white")
+    reg_table.add_row("Tests passing before", str(report["pre_passed"]))
+    reg_table.add_row("Tests passing after", str(report["post_passed"]))
+    reg_table.add_row(
+        "Regressions",
+        f"[bold red]{report['regressions']}[/]"
+        if report["regressions"]
+        else "[bold green]0[/]",
+    )
+    reg_table.add_row("Changed files", ", ".join(report["changed_files"][:5]) or "—")
+    reg_table.add_row(
+        "Overall",
+        "[bold green]PASS[/]" if report["overall_success"] else "[bold red]FAIL[/]",
+    )
+    console.print(reg_table)
 
 
 # ── review ────────────────────────────────────────────────────────────────────

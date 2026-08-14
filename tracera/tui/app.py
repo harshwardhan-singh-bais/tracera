@@ -47,6 +47,17 @@ from tracera.agent.planner import TaskDecomposer
 from tracera.conversation.state import ConversationState
 
 
+def _format_args(args: dict) -> str:
+    """Compact, single-line rendering of tool arguments for the activity line."""
+    parts = []
+    for k, v in list(args.items())[:3]:
+        sv = str(v)
+        if len(sv) > 30:
+            sv = sv[:27] + "…"
+        parts.append(f"{k}={sv}")
+    return f"({', '.join(parts)})" if parts else ""
+
+
 _HELP_TEXT = """
 [bold cyan]TRACERA Commands[/]
 
@@ -269,9 +280,10 @@ class TraceraTUI(App):
             model=provider.default_model or "—",
             status="thinking",
             workspace=str(self.workspace_path),
+            activity="Thinking…",
         )
 
-        agent_panel.add_thinking("Thinking…")
+        agent_panel.set_activity("thinking", "Thinking…")
 
         total_iterations = 0
         total_tool_calls = 0
@@ -280,38 +292,63 @@ class TraceraTUI(App):
             async for event in await self.agent.run(task, conversation=self._conversation):
                 match event.type:
                     case AgentEventType.THINKING:
-                        agent_panel.add_thinking(f"◌  Iteration {event.iteration + 1}")
                         status_bar.update_stats(
                             status="thinking",
                             iteration=event.iteration + 1,
+                            activity=f"Thinking… (iteration {event.iteration + 1})",
+                        )
+                        agent_panel.set_activity(
+                            "thinking",
+                            f"Thinking… (iteration {event.iteration + 1})",
                         )
 
                     case AgentEventType.TOOL_START:
-                        status_bar.update_stats(status="running")
-                        agent_panel.add_tool_message(event.tool_name or "tool")
+                        name = event.tool_name or "tool"
+                        args_preview = _format_args(event.tool_args or {})
+                        status_bar.update_stats(
+                            status="running",
+                            activity=f"{name}{args_preview}",
+                        )
+                        agent_panel.set_activity("running", name, args_preview)
+                        agent_panel.add_tool_message(name)
 
                     case AgentEventType.TOOL_END:
                         total_tool_calls += 1
+                        name = event.tool_name or "tool"
+                        duration_ms = event.metadata.get("duration_ms", 0.0)
                         tool_log.add_entry(
-                            event.tool_name or "tool",
+                            name,
                             event.tool_args or {},
                             success=event.tool_success,
                             output=event.tool_output or "",
-                            duration_ms=event.metadata.get("duration_ms", 0.0),
+                            duration_ms=duration_ms,
                         )
-                        status_bar.update_stats(tool_calls=total_tool_calls)
+                        status_bar.update_stats(
+                            tool_calls=total_tool_calls,
+                            activity="",
+                        )
+                        if event.tool_success:
+                            agent_panel.set_activity(
+                                "done", name, f"{duration_ms:.0f}ms"
+                            )
+                        else:
+                            agent_panel.set_activity(
+                                "error", name, (event.tool_output or "")[:60]
+                            )
 
                     case AgentEventType.RESPONSE_COMPLETE:
                         total_iterations = event.metadata.get("iterations", 0)
                         total_tokens = event.metadata.get("total_tokens", 0)
                         total_latency = event.metadata.get("total_latency_ms", 0.0)
 
+                        agent_panel.clear_activity()
                         agent_panel.add_assistant_message(event.text or "")
                         status_bar.update_stats(
                             tokens=total_tokens,
                             iteration=total_iterations,
                             status="done",
                             latency_ms=total_latency,
+                            activity="",
                         )
                         self._update_stats_panel(
                             total_iterations, total_tool_calls,
@@ -321,16 +358,18 @@ class TraceraTUI(App):
                         )
 
                     case AgentEventType.ERROR:
+                        agent_panel.set_activity("error", "Error", event.text or "")
                         agent_panel.add_error(event.text or "Unknown error")
-                        status_bar.update_stats(status="error")
+                        status_bar.update_stats(status="error", activity="")
 
                     case AgentEventType.DONE:
                         if status_bar.status != "done" and status_bar.status != "error":
-                            status_bar.update_stats(status="idle")
+                            status_bar.update_stats(status="idle", activity="")
 
         except Exception as e:
+            agent_panel.set_activity("error", "Agent error", str(e))
             agent_panel.add_error(f"Agent error: {e}")
-            status_bar.update_stats(status="error")
+            status_bar.update_stats(status="error", activity="")
 
     @work(exclusive=False)
     async def _run_planning(self, task: str) -> None:
@@ -338,16 +377,18 @@ class TraceraTUI(App):
         agent_panel = self.query_one("#agent-panel-widget", AgentPanel)
         plan_panel = self.query_one("#plan-panel-widget", PlanPanel)
 
-        agent_panel.add_thinking("Decomposing task into steps…")
+        agent_panel.set_activity("thinking", "Decomposing task into steps…")
         try:
             decomposer = TaskDecomposer(self.agent.provider)
             plan = await decomposer.decompose(task)
+            agent_panel.clear_activity()
             plan_panel.set_plan(plan)
             agent_panel.add_assistant_message(
                 f"[bold]Plan ready[/]: {len(plan.items)} steps\n\n"
                 + plan.to_markdown()
             )
         except Exception as e:
+            agent_panel.set_activity("error", "Planning failed", str(e))
             agent_panel.add_error(f"Planning failed: {e}")
 
     def _update_stats_panel(

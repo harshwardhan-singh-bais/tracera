@@ -191,6 +191,15 @@ Screen {
     padding: 0 1;
 }
 
+#activity-line {
+    height: 1;
+    background: $bg-deep;
+    color: $cyan;
+    padding: 0 2;
+    border-top: solid $border-subtle;
+    text-style: bold;
+}
+
 #agent-prompt-icon {
     width: 3;
     content-align: center middle;

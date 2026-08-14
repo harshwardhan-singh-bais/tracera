@@ -43,6 +43,82 @@ class MessageWidget(Static):
         return text
 
 
+_SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+
+class ActivityLine(Static):
+    """
+    Claude Code-style live status line: animated spinner + current action.
+
+    Shows the agent's current activity in a single row that updates in place:
+      ⠋  Thinking…
+      ⠹  read_file(path="tracera/main.py")
+      ✓  read_file  12ms      ← auto-clears after a moment
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.status = "idle"  # idle | thinking | running | done | error
+        self.action = ""
+        self.detail = ""
+        self._frame = 0
+        self._timer = None
+
+    def on_mount(self) -> None:
+        self.set_interval(0.1, self._tick)
+
+    def _tick(self) -> None:
+        if self.status in ("thinking", "running"):
+            self._frame = (self._frame + 1) % len(_SPINNER_FRAMES)
+            self.refresh()
+
+    def show(self, status: str, action: str = "", detail: str = "") -> None:
+        """Display a status line. Terminal states auto-clear, like Claude Code."""
+        self.status = status
+        self.action = action
+        self.detail = detail
+        self._frame = 0
+        if self._timer is not None:
+            self._timer.stop()
+            self._timer = None
+        if status in ("done", "error"):
+            self._timer = self.set_timer(2.0, self.clear)
+        self.refresh()
+
+    def clear(self) -> None:
+        self.status = "idle"
+        self.action = ""
+        self.detail = ""
+        if self._timer is not None:
+            self._timer.stop()
+            self._timer = None
+        self.refresh()
+
+    def render(self) -> Text:
+        text = Text()
+        if self.status == "idle":
+            return text
+        if self.status == "thinking":
+            text.append(f" {_SPINNER_FRAMES[self._frame]}  ", style="bold cyan")
+            text.append(self.action or "Thinking…", style="italic #60a0c0")
+        elif self.status == "running":
+            text.append(f" {_SPINNER_FRAMES[self._frame]}  ", style="bold #00d4ff")
+            text.append(self.action, style="bold #00d4ff")
+            if self.detail:
+                text.append(f"  {self.detail}", style="dim #606090")
+        elif self.status == "done":
+            text.append(" ✓  ", style="bold green")
+            text.append(self.action, style="green")
+            if self.detail:
+                text.append(f"  {self.detail}", style="dim #00a05a")
+        elif self.status == "error":
+            text.append(" ✗  ", style="bold red")
+            text.append(self.action, style="red")
+            if self.detail:
+                text.append(f"  {self.detail}", style="dim #ff6688")
+        return text
+
+
 class AgentPanel(Widget):
     """
     Central agent conversation panel.
@@ -81,6 +157,7 @@ class AgentPanel(Widget):
                     "[dim]Type [bold cyan]/help[/] for available commands.[/]\n",
                     markup=True,
                 )
+            yield ActivityLine(id="activity-line")
             with Horizontal(id="agent-input-area"):
                 yield Static("❯", id="agent-prompt-icon")
                 yield Input(
@@ -122,7 +199,21 @@ class AgentPanel(Widget):
     def add_error(self, text: str) -> None:
         self.add_message("error", text)
 
+    def set_activity(self, status: str, action: str = "", detail: str = "") -> None:
+        """Drive the live Claude Code-style status line (spinner + action)."""
+        try:
+            self.query_one("#activity-line", ActivityLine).show(status, action, detail)
+        except Exception:
+            pass
+
+    def clear_activity(self) -> None:
+        try:
+            self.query_one("#activity-line", ActivityLine).clear()
+        except Exception:
+            pass
+
     def clear(self) -> None:
         log_container = self.query_one("#agent-log", ScrollableContainer)
         for child in list(log_container.children):
             child.remove()
+        self.clear_activity()

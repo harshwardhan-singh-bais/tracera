@@ -12,6 +12,9 @@ from textual.containers import Horizontal
 from rich.text import Text
 
 
+_SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+
 class StatusBar(Widget):
     """Bottom status bar showing provider, model, tokens, tool calls, and iteration."""
 
@@ -23,6 +26,7 @@ class StatusBar(Widget):
     status: reactive[str] = reactive("idle")
     latency_ms: reactive[float] = reactive(0.0)
     workspace: reactive[str] = reactive(".")
+    activity: reactive[str] = reactive("")
 
     DEFAULT_CSS = """
     StatusBar {
@@ -39,12 +43,21 @@ class StatusBar(Widget):
         yield Static("", id="sb-right")
 
     def on_mount(self) -> None:
+        self._frame = 0
         self._refresh_display()
-        self.set_interval(1.0, self._refresh_display)
+        self.set_interval(0.1, self._tick)
+
+    def _tick(self) -> None:
+        if self.status in ("thinking", "running"):
+            self._frame = (self._frame + 1) % len(_SPINNER_FRAMES)
+        self._refresh_display()
+
+    def _spinner(self) -> str:
+        if self.status in ("thinking", "running"):
+            return _SPINNER_FRAMES[self._frame]
+        return "●"
 
     def _refresh_display(self) -> None:
-        import time
-
         status_colors = {
             "idle": "#606090",
             "thinking": "#ffd700",
@@ -72,7 +85,9 @@ class StatusBar(Widget):
         right.append("  ", style="")
         right.append(f"↻ {self.iteration}", style="dim #ffd700")
         right.append("  ", style="")
-        right.append(f"● {self.status.upper()}", style=f"bold {sc}")
+        right.append(f"{self._spinner()} {self.status.upper()}", style=f"bold {sc}")
+        if self.activity:
+            right.append(f"  {self.activity[:38]}", style="dim #606090")
         right.append("  ", style="")
 
         self.query_one("#sb-left", Static).update(left)
@@ -90,6 +105,7 @@ class StatusBar(Widget):
         status: str | None = None,
         latency_ms: float | None = None,
         workspace: str | None = None,
+        activity: str | None = None,
     ) -> None:
         if provider is not None:
             self.provider = provider
@@ -107,4 +123,6 @@ class StatusBar(Widget):
             self.latency_ms = latency_ms
         if workspace is not None:
             self.workspace = workspace
+        if activity is not None:
+            self.activity = activity
         self._refresh_display()

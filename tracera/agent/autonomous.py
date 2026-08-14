@@ -37,19 +37,38 @@ class RetrievalDebugger:
     a structured debug plan with a proposed patch.
     """
 
-    def __init__(self, retriever: Any, context_engine: Any) -> None:
+    def __init__(
+        self,
+        retriever: Any,
+        context_engine: Any,
+        compressor: Any | None = None,
+    ) -> None:
         self._retriever = retriever
         self._context = context_engine
+        self._compressor = compressor
 
     def build_debug_plan(self, failure: TestFailure, provider: Any) -> DebugPlan:
         """
         For a given TestFailure:
         1. Search for the failing symbol in the retrieval index.
         2. Retrieve its implementation + dependencies.
-        3. Build a DebugPlan with retrieved context.
+        3. Compress oversized context (Phase 30) if needed.
+        4. Build a DebugPlan with retrieved context.
         """
         query = f"{failure.test_name} {failure.error_type} {failure.error_message}"
-        chunks = self._retriever.search(query, k=8)
+        chunks: list[dict] = []
+        if self._retriever is not None:
+            try:
+                chunks = self._retriever.search(query, k=8)
+            except Exception as e:
+                log.warning("Retrieval during debugging failed: %s", e)
+                chunks = []
+
+        # Phase 30: compress the candidate pool to fit the LLM token budget
+        # before assembling it into the prompt context.
+        if self._compressor is not None and chunks:
+            chunks = self._compressor.compress(chunks)
+
         context_str = self._context.assemble(chunks, query=f"Fix: {failure.error_message}")
 
         return DebugPlan(
@@ -151,7 +170,10 @@ class AutonomousFixLoop:
             )
 
             try:
-                await agent.run(fix_task)
+                # Consume the event stream — this actually drives the agent loop
+                # (plan → retrieve → edit) before we re-run the tests.
+                async for _event in await agent.run(fix_task):
+                    pass
             except Exception as e:
                 log.error("Agent fix attempt failed: %s", e)
                 break
