@@ -1,0 +1,118 @@
+"""
+TRACERA Tool Registry — Phase 6.
+
+Central registry for all tools.
+Handles registration, discovery, and execution.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from tracera.errors import ToolNotFoundError
+from tracera.logging import get_logger
+from tracera.tools.base import Tool, ToolResult
+
+log = get_logger("tools.registry")
+
+
+class ToolRegistry:
+    """
+    Central registry mapping tool names to Tool instances.
+    
+    The registry is the single source of truth for what the agent can do.
+    It also converts tools to LLM-ready schemas.
+    """
+
+    def __init__(self) -> None:
+        self._tools: dict[str, Tool] = {}
+
+    def register(self, tool: Tool) -> None:
+        """Register a tool. Overwrites if the same name exists."""
+        if tool.name in self._tools:
+            log.debug("Overwriting tool: %s", tool.name)
+        self._tools[tool.name] = tool
+        log.debug("Registered tool: %s", tool.name)
+
+    def register_many(self, tools: list[Tool]) -> None:
+        for tool in tools:
+            self.register(tool)
+
+    def unregister(self, name: str) -> None:
+        """Remove a tool from the registry."""
+        if name in self._tools:
+            del self._tools[name]
+
+    def get(self, name: str) -> Tool:
+        """Return a tool by name, raising ToolNotFoundError if missing."""
+        if name not in self._tools:
+            raise ToolNotFoundError(name)
+        return self._tools[name]
+
+    def has(self, name: str) -> bool:
+        return name in self._tools
+
+    @property
+    def tools(self) -> list[Tool]:
+        return list(self._tools.values())
+
+    @property
+    def names(self) -> list[str]:
+        return list(self._tools.keys())
+
+    def schemas(self):
+        """Return all tools as ToolSchema objects for LLM submission."""
+        from tracera.providers.base import ToolSchema
+        return [tool.to_schema() for tool in self._tools.values()]
+
+    async def execute(
+        self, name: str, tool_call_id: str, arguments: dict[str, Any]
+    ) -> ToolResult:
+        """
+        Look up and execute a tool by name.
+        
+        Validates the tool exists, then delegates to safe_execute().
+        """
+        tool = self.get(name)
+        log.debug("Executing tool %s with %s", name, list(arguments.keys()))
+        result = await tool.safe_execute(tool_call_id, arguments)
+        if not result.success:
+            log.warning("Tool %s failed: %s", name, result.error)
+        return result
+
+    def __len__(self) -> int:
+        return len(self._tools)
+
+    def __repr__(self) -> str:
+        return f"<ToolRegistry tools={list(self._tools.keys())}>"
+
+
+def create_default_registry(workspace=None) -> ToolRegistry:
+    """
+    Create a ToolRegistry pre-loaded with all default coding tools.
+    
+    Args:
+        workspace: WorkspaceSandbox instance. If None, uses current directory.
+    """
+    from tracera.tools.read_file import ReadFileTool
+    from tracera.tools.write_file import WriteFileTool
+    from tracera.tools.edit_file import EditFileTool
+    from tracera.tools.list_dir import ListDirTool
+    from tracera.tools.grep import GrepTool
+    from tracera.tools.run_command import RunCommandTool
+    from tracera.workspace.sandbox import WorkspaceSandbox
+    from pathlib import Path
+
+    if workspace is None:
+        workspace = WorkspaceSandbox(Path(".").resolve())
+
+    registry = ToolRegistry()
+    registry.register_many([
+        ReadFileTool(workspace),
+        WriteFileTool(workspace),
+        EditFileTool(workspace),
+        ListDirTool(workspace),
+        GrepTool(workspace),
+        RunCommandTool(workspace),
+    ])
+    return registry

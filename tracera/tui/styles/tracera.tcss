@@ -1,0 +1,700 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   TRACERA — Futuristic Cyberpunk TUI Theme
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Design tokens ──────────────────────────────────────────────────────── */
+
+$bg-deep:       #070710;
+$bg-panel:      #0d0d1e;
+$bg-elevated:   #12122a;
+$bg-hover:      #1a1a35;
+
+$cyan:          #00d4ff;
+$cyan-dim:      #007a9a;
+$purple:        #bd00ff;
+$purple-dim:    #6b008f;
+$green:         #00ff88;
+$green-dim:     #007a42;
+$gold:          #ffd700;
+$red:           #ff4466;
+$orange:        #ff8800;
+
+$text-primary:  #e0e0ff;
+$text-muted:    #606090;
+$text-disabled: #303050;
+
+$border-bright: $cyan;
+$border-dim:    $cyan-dim;
+$border-subtle: #1e1e3a;
+
+/* ── Root app ────────────────────────────────────────────────────────────── */
+
+Screen {
+    background: $bg-deep;
+    color: $text-primary;
+    layers: base overlay;
+}
+
+/* ── Splash Screen ───────────────────────────────────────────────────────── */
+
+#splash-screen {
+    background: $bg-deep;
+    align: center middle;
+    layer: base;
+}
+
+#splash-logo {
+    content-align: center middle;
+    color: $cyan;
+    text-style: bold;
+    width: 100%;
+    height: auto;
+    padding: 2 4;
+}
+
+#splash-tagline {
+    content-align: center middle;
+    color: $text-muted;
+    width: 100%;
+    height: 3;
+}
+
+#splash-status {
+    content-align: center middle;
+    color: $purple;
+    width: 100%;
+    height: 3;
+}
+
+#splash-progress {
+    width: 60;
+    height: 1;
+    margin: 1 auto;
+}
+
+/* ── Main Layout ─────────────────────────────────────────────────────────── */
+
+#main-screen {
+    layout: grid;
+    grid-size: 12;
+    grid-gutter: 0;
+    background: $bg-deep;
+}
+
+#left-sidebar {
+    column-span: 3;
+    height: 100%;
+    background: $bg-panel;
+    border-right: solid $border-dim;
+    layout: vertical;
+}
+
+#center-panel {
+    column-span: 6;
+    height: 100%;
+    layout: vertical;
+    background: $bg-deep;
+}
+
+#right-sidebar {
+    column-span: 3;
+    height: 100%;
+    background: $bg-panel;
+    border-left: solid $border-dim;
+    layout: vertical;
+}
+
+/* ── Header bar ─────────────────────────────────────────────────────────── */
+
+#header {
+    height: 3;
+    background: $bg-panel;
+    border-bottom: solid $border-bright;
+    layout: horizontal;
+    padding: 0 2;
+}
+
+#header-logo {
+    color: $cyan;
+    text-style: bold;
+    width: auto;
+    content-align: left middle;
+}
+
+#header-spacer {
+    width: 1fr;
+}
+
+#header-model-badge {
+    color: $purple;
+    width: auto;
+    content-align: right middle;
+    text-style: bold;
+}
+
+#header-status-indicator {
+    width: auto;
+    content-align: right middle;
+    padding: 0 1;
+}
+
+/* ── Status bar (bottom) ─────────────────────────────────────────────────── */
+
+#status-bar {
+    height: 1;
+    background: $bg-panel;
+    border-top: solid $border-dim;
+    layout: horizontal;
+    padding: 0 1;
+}
+
+.status-segment {
+    width: auto;
+    content-align: left middle;
+    color: $text-muted;
+    padding: 0 1;
+}
+
+.status-segment-bright {
+    color: $cyan;
+    text-style: bold;
+}
+
+.status-separator {
+    width: 1;
+    content-align: center middle;
+    color: $text-disabled;
+}
+
+/* ── Panel titles ────────────────────────────────────────────────────────── */
+
+.panel-title {
+    height: 1;
+    background: $bg-elevated;
+    color: $cyan;
+    text-style: bold;
+    padding: 0 2;
+    border-bottom: solid $border-subtle;
+}
+
+.panel-title-purple {
+    color: $purple;
+}
+
+.panel-title-green {
+    color: $green;
+}
+
+.panel-title-gold {
+    color: $gold;
+}
+
+/* ── Agent conversation panel ────────────────────────────────────────────── */
+
+#agent-panel {
+    height: 1fr;
+    border: none;
+    background: $bg-deep;
+}
+
+#agent-log {
+    height: 1fr;
+    background: $bg-deep;
+    padding: 1 2;
+    border: none;
+    scrollbar-color: $cyan-dim $bg-panel;
+    scrollbar-size: 1 1;
+}
+
+#agent-input-area {
+    height: 3;
+    background: $bg-elevated;
+    border-top: solid $border-dim;
+    layout: horizontal;
+    padding: 0 1;
+}
+
+#agent-prompt-icon {
+    width: 3;
+    content-align: center middle;
+    color: $cyan;
+    text-style: bold;
+}
+
+#agent-input {
+    width: 1fr;
+    background: transparent;
+    border: none;
+    color: $text-primary;
+    padding: 0;
+}
+
+#agent-input:focus {
+    border: none;
+    background: transparent;
+}
+
+#agent-send-btn {
+    width: auto;
+    background: $cyan;
+    color: $bg-deep;
+    text-style: bold;
+    margin: 0 1;
+    padding: 0 2;
+    min-width: 8;
+}
+
+#agent-send-btn:hover {
+    background: $green;
+}
+
+/* ── Message bubbles ─────────────────────────────────────────────────────── */
+
+.msg-user {
+    background: $bg-elevated;
+    color: $text-primary;
+    border-left: thick $cyan;
+    padding: 1 2;
+    margin: 1 0;
+    border-radius: 0;
+}
+
+.msg-assistant {
+    background: $bg-panel;
+    color: $text-primary;
+    border-left: thick $purple;
+    padding: 1 2;
+    margin: 1 0;
+}
+
+.msg-tool {
+    background: $bg-deep;
+    color: $green-dim;
+    border-left: thick $green-dim;
+    padding: 0 2;
+    margin: 0;
+    text-style: italic;
+}
+
+.msg-error {
+    background: $bg-deep;
+    color: $red;
+    border-left: thick $red;
+    padding: 1 2;
+    margin: 1 0;
+}
+
+.msg-thinking {
+    color: $text-muted;
+    text-style: italic;
+    padding: 0 2;
+    margin: 0;
+}
+
+/* ── Tool log panel ─────────────────────────────────────────────────────── */
+
+#tool-log {
+    height: 1fr;
+    background: $bg-panel;
+    padding: 0 1;
+    scrollbar-color: $green-dim $bg-panel;
+    scrollbar-size: 1 1;
+    border: none;
+}
+
+.tool-entry {
+    height: auto;
+    layout: vertical;
+    margin: 0 0 1 0;
+}
+
+.tool-entry-header {
+    layout: horizontal;
+    height: 1;
+}
+
+.tool-icon {
+    width: 3;
+    color: $green;
+    text-style: bold;
+}
+
+.tool-name {
+    width: auto;
+    color: $green;
+    text-style: bold;
+}
+
+.tool-duration {
+    width: auto;
+    color: $text-muted;
+    padding: 0 1;
+}
+
+.tool-output {
+    color: $text-muted;
+    padding: 0 3;
+    text-style: italic;
+}
+
+.tool-error-output {
+    color: $red;
+    padding: 0 3;
+}
+
+/* ── Plan panel ─────────────────────────────────────────────────────────── */
+
+#plan-panel {
+    height: 1fr;
+    background: $bg-panel;
+    border: none;
+}
+
+#plan-list {
+    height: 1fr;
+    background: $bg-panel;
+    padding: 1 1;
+    scrollbar-color: $gold $bg-panel;
+    scrollbar-size: 1 1;
+    border: none;
+}
+
+.plan-item {
+    height: 2;
+    layout: horizontal;
+    padding: 0 1;
+}
+
+.plan-item-icon {
+    width: 2;
+    content-align: left middle;
+}
+
+.plan-item-text {
+    width: 1fr;
+    content-align: left middle;
+    text-style: bold;
+}
+
+.plan-item-status-pending {
+    color: $text-muted;
+}
+
+.plan-item-status-active {
+    color: $gold;
+    text-style: bold;
+}
+
+.plan-item-status-done {
+    color: $green;
+    text-style: dim;
+}
+
+.plan-item-status-failed {
+    color: $red;
+}
+
+.plan-progress-bar {
+    height: 1;
+    margin: 1 1;
+    color: $gold;
+    background: $bg-elevated;
+}
+
+/* ── Memory panel ────────────────────────────────────────────────────────── */
+
+#memory-panel {
+    height: 1fr;
+    background: $bg-panel;
+}
+
+#memory-list {
+    height: 1fr;
+    background: $bg-panel;
+    padding: 1 1;
+    scrollbar-color: $purple-dim $bg-panel;
+    scrollbar-size: 1 1;
+    border: none;
+}
+
+.memory-entry {
+    height: auto;
+    padding: 0 1;
+    margin: 0 0 1 0;
+    border-left: solid $purple-dim;
+}
+
+.memory-category {
+    color: $purple;
+    text-style: bold;
+    width: auto;
+}
+
+.memory-content {
+    color: $text-muted;
+}
+
+/* ── Stats panel ─────────────────────────────────────────────────────────── */
+
+#stats-panel {
+    height: auto;
+    background: $bg-elevated;
+    padding: 1 2;
+    border-top: solid $border-subtle;
+}
+
+.stat-row {
+    layout: horizontal;
+    height: 1;
+}
+
+.stat-label {
+    color: $text-muted;
+    width: 12;
+}
+
+.stat-value {
+    color: $cyan;
+    text-style: bold;
+    width: 1fr;
+}
+
+.stat-value-green {
+    color: $green;
+}
+
+.stat-value-gold {
+    color: $gold;
+}
+
+/* ── Tabs ────────────────────────────────────────────────────────────────── */
+
+TabbedContent {
+    height: 1fr;
+    background: $bg-panel;
+    border: none;
+}
+
+TabPane {
+    background: $bg-panel;
+    border: none;
+    padding: 0;
+}
+
+Tabs {
+    background: $bg-elevated;
+    border-bottom: solid $border-subtle;
+    height: 2;
+}
+
+Tab {
+    color: $text-muted;
+    background: $bg-elevated;
+    padding: 0 2;
+    border: none;
+}
+
+Tab:hover {
+    color: $text-primary;
+    background: $bg-hover;
+}
+
+Tab.-active {
+    color: $cyan;
+    text-style: bold;
+    background: $bg-panel;
+    border-bottom: solid $cyan;
+}
+
+/* ── Input ───────────────────────────────────────────────────────────────── */
+
+Input {
+    background: $bg-elevated;
+    border: solid $border-subtle;
+    color: $text-primary;
+    padding: 0 1;
+}
+
+Input:focus {
+    border: solid $cyan;
+    background: $bg-panel;
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
+
+Button {
+    background: $bg-elevated;
+    color: $text-primary;
+    border: solid $border-dim;
+    padding: 0 2;
+}
+
+Button:hover {
+    background: $cyan;
+    color: $bg-deep;
+    text-style: bold;
+    border: solid $cyan;
+}
+
+Button.-primary {
+    background: $cyan;
+    color: $bg-deep;
+    border: solid $cyan;
+    text-style: bold;
+}
+
+Button.-error {
+    background: $red;
+    color: $bg-deep;
+    border: solid $red;
+}
+
+/* ── Scrollbar ───────────────────────────────────────────────────────────── */
+
+ScrollBar {
+    background: $bg-panel;
+    color: $cyan-dim;
+}
+
+ScrollBar > .scrollbar--bar {
+    color: $cyan;
+}
+
+/* ── DataTable ───────────────────────────────────────────────────────────── */
+
+DataTable {
+    background: $bg-panel;
+    color: $text-primary;
+}
+
+DataTable > .datatable--header {
+    background: $bg-elevated;
+    color: $cyan;
+    text-style: bold;
+}
+
+DataTable > .datatable--cursor {
+    background: $bg-hover;
+    color: $green;
+}
+
+DataTable > .datatable--hover {
+    background: $bg-hover;
+}
+
+/* ── Progress bar ────────────────────────────────────────────────────────── */
+
+ProgressBar {
+    color: $cyan;
+    background: $bg-elevated;
+}
+
+ProgressBar > .bar--bar {
+    color: $cyan;
+}
+
+ProgressBar > .bar--complete {
+    color: $green;
+}
+
+/* ── Neon glow animation for active elements ─────────────────────────────── */
+
+.neon-pulse {
+    color: $cyan;
+    text-style: bold;
+}
+
+/* ── Loading spinner ─────────────────────────────────────────────────────── */
+
+LoadingIndicator {
+    color: $cyan;
+    background: $bg-deep;
+}
+
+/* ── Footer / key binding hints ──────────────────────────────────────────── */
+
+Footer {
+    background: $bg-panel;
+    color: $text-muted;
+    border-top: solid $border-subtle;
+}
+
+Footer > .footer--key {
+    background: $bg-elevated;
+    color: $cyan;
+    text-style: bold;
+}
+
+Footer > .footer--description {
+    color: $text-muted;
+}
+
+/* ── Modal overlay ───────────────────────────────────────────────────────── */
+
+ModalScreen {
+    align: center middle;
+    background: rgba(7, 7, 16, 0.85);
+    layer: overlay;
+}
+
+#modal-container {
+    background: $bg-panel;
+    border: solid $cyan;
+    min-width: 60;
+    max-width: 100;
+    padding: 2;
+}
+
+/* ── Command palette ─────────────────────────────────────────────────────── */
+
+CommandPalette {
+    background: $bg-deep;
+}
+
+CommandPalette > .command-palette--prompt {
+    background: $bg-elevated;
+    border: solid $cyan;
+    color: $text-primary;
+}
+
+CommandPalette > .command-palette--results {
+    background: $bg-panel;
+    border: solid $border-dim;
+}
+
+CommandPalette > .command-palette--highlight {
+    color: $cyan;
+    text-style: bold;
+}
+
+/* ── Tree widget ─────────────────────────────────────────────────────────── */
+
+Tree {
+    background: $bg-panel;
+    color: $text-primary;
+}
+
+Tree > .tree--cursor {
+    background: $bg-hover;
+    color: $green;
+}
+
+Tree > .tree--highlight {
+    color: $cyan;
+    text-style: bold;
+}
+
+/* ── Welcome / empty state ───────────────────────────────────────────────── */
+
+#empty-state {
+    align: center middle;
+    color: $text-muted;
+    height: 100%;
+    text-style: italic;
+}
+
+.empty-state-icon {
+    color: $purple-dim;
+    content-align: center middle;
+    width: 100%;
+}
