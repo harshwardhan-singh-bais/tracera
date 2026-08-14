@@ -116,3 +116,36 @@ def create_default_registry(workspace=None) -> ToolRegistry:
         RunCommandTool(workspace),
     ])
     return registry
+
+
+def extend_registry_with_retrieval(
+    registry: ToolRegistry,
+    retriever,
+    expander,
+) -> ToolRegistry:
+    """
+    Phase 27/28 — Extend an existing registry with code-intelligence tools.
+
+    This makes the agent retrieval-aware: it can now call search_code,
+    find_symbol, and get_context as native tools alongside read_file/grep.
+
+    Args:
+        registry: An existing ToolRegistry (from create_default_registry).
+        retriever: A SymbolAwareRetriever instance.
+        expander: A ContextExpander instance.
+
+    Returns:
+        The same registry, extended with retrieval tools.
+    """
+    from tracera.tools.code_search import SearchCodeTool, FindSymbolTool, GetContextTool
+
+    registry.register_many([
+        SearchCodeTool(retriever),
+        FindSymbolTool(retriever),
+        GetContextTool(retriever, expander),
+    ])
+    log.info(
+        "Registry extended with retrieval tools: search_code, find_symbol, get_context"
+    )
+    return registry
+

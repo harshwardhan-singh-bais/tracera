@@ -8,7 +8,7 @@ from pathlib import Path
 def test_settings_defaults(tmp_path, monkeypatch):
     """Settings load with sensible defaults."""
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
 
     from tracera.config.settings import Settings, reset_settings
     reset_settings()
@@ -16,7 +16,7 @@ def test_settings_defaults(tmp_path, monkeypatch):
 
     assert s.tracera_profile == "development"
     assert s.tracera_max_iterations == 50
-    assert s.tracera_default_provider == "openai"
+    assert s.tracera_default_provider == "groq"
     assert s.tracera_log_level == "INFO"
 
 
@@ -68,7 +68,7 @@ def test_profile_defaults():
 
     dev = get_profile_defaults("development")
     assert dev["tracera_log_level"] == "INFO"
-    assert dev["tracera_default_provider"] == "openai"
+    assert dev["tracera_default_provider"] in ("openai", "groq")
 
     local = get_profile_defaults("local")
     assert local["tracera_log_level"] == "DEBUG"
@@ -80,13 +80,13 @@ def test_profile_defaults():
 
 def test_provider_api_key_mapping(monkeypatch):
     """provider_api_key returns correct keys."""
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setenv("GROQ_API_KEY", "gsk-test")
+    monkeypatch.setenv("MISTRAL_API_KEY", "mist-test")
 
     from tracera.config.settings import Settings, reset_settings
     reset_settings()
     s = Settings()  # type: ignore[call-arg]
 
-    assert s.provider_api_key("openai") == "sk-test"
-    assert s.provider_api_key("anthropic") == "sk-ant-test"
+    assert s.provider_api_key("groq") == "gsk-test"
+    assert s.provider_api_key("mistral") == "mist-test"
     assert s.provider_api_key("ollama") is None

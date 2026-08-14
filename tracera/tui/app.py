@@ -250,8 +250,7 @@ class TraceraTUI(App):
 
                     case AgentEventType.TOOL_END:
                         total_tool_calls += 1
-                        self.call_from_thread(
-                            tool_log.add_entry,
+                        tool_log.add_entry(
                             event.tool_name or "tool",
                             event.tool_args or {},
                             success=event.tool_success,
@@ -301,7 +300,7 @@ class TraceraTUI(App):
         try:
             decomposer = TaskDecomposer(self.agent.provider)
             plan = await decomposer.decompose(task)
-            self.call_from_thread(plan_panel.set_plan, plan)
+            plan_panel.set_plan(plan)
             agent_panel.add_assistant_message(
                 f"[bold]Plan ready[/]: {len(plan.items)} steps\n\n"
                 + plan.to_markdown()

@@ -42,8 +42,8 @@ class Settings(BaseSettings):
 
     # ── Default Model ─────────────────────────────────────────────────────────
 
-    tracera_default_provider: str = Field("gemini", alias="TRACERA_DEFAULT_PROVIDER")
-    tracera_default_model: str = Field("gemini-2.5-pro", alias="TRACERA_DEFAULT_MODEL")
+    tracera_default_provider: str = Field("groq", alias="TRACERA_DEFAULT_PROVIDER")
+    tracera_default_model: str = Field("llama-3.3-70b-versatile", alias="TRACERA_DEFAULT_MODEL")
     tracera_default_temperature: float = Field(0.2, alias="TRACERA_DEFAULT_TEMPERATURE")
     tracera_default_max_tokens: int = Field(8192, alias="TRACERA_DEFAULT_MAX_TOKENS")
 
@@ -69,13 +69,16 @@ class Settings(BaseSettings):
     )
 
 
-
-    google_api_key: str | None = Field(None, alias="GOOGLE_API_KEY")
-    google_cloud_project: str | None = Field(None, alias="GOOGLE_CLOUD_PROJECT")
+    # ── LLM Providers ─────────────────────────────────────────────────────────
 
     groq_api_key: str | None = Field(None, alias="GROQ_API_KEY")
-    together_api_key: str | None = Field(None, alias="TOGETHER_API_KEY")
+    sambanova_api_key: str | None = Field(None, alias="SAMBANOVA_API_KEY")
     mistral_api_key: str | None = Field(None, alias="MISTRAL_API_KEY")
+    cerebras_api_key: str | None = Field(None, alias="CEREBRAS_API_KEY")
+    nvidia_api_key: str | None = Field(None, alias="NVIDIA_API_KEY")
+    nemotron_api_key: str | None = Field(None, alias="NEMOTRON_API_KEY")
+    openrouter_api_key: str | None = Field(None, alias="OPENROUTER_API_KEY")
+    together_api_key: str | None = Field(None, alias="TOGETHER_API_KEY")
     cohere_api_key: str | None = Field(None, alias="COHERE_API_KEY")
 
     ollama_base_url: str = Field(
@@ -176,11 +179,14 @@ class Settings(BaseSettings):
     def provider_api_key(self, provider: str) -> str | None:
         """Return the API key for a given provider name."""
         mapping: dict[str, str | None] = {
-            "gemini": self.google_api_key,
-            "google": self.google_api_key,
             "groq": self.groq_api_key,
-            "together": self.together_api_key,
+            "sambanova": self.sambanova_api_key,
             "mistral": self.mistral_api_key,
+            "cerebras": self.cerebras_api_key,
+            "nvidia": self.nvidia_api_key,
+            "nemotron": self.nemotron_api_key,
+            "openrouter": self.openrouter_api_key,
+            "together": self.together_api_key,
             "cohere": self.cohere_api_key,
             "ollama": None,  # local, no key needed
         }
