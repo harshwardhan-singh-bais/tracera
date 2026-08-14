@@ -62,7 +62,6 @@ def _build_agent(settings=None, workspace_path: Path | None = None, retrieval_pi
     if settings is None:
         settings = _get_settings()
 
-    from tracera.providers import create_provider
     from tracera.tools.registry import create_default_registry
     from tracera.workspace.sandbox import WorkspaceSandbox
     from tracera.agent.react_loop import ReActAgent
@@ -84,7 +83,8 @@ def _build_agent(settings=None, workspace_path: Path | None = None, retrieval_pi
             registry, symbol_retriever, expander, graph_retriever
         )
 
-    provider = create_provider(settings=settings)
+    # Provider with automatic failover across all configured APIs
+    provider = _build_provider(settings)
 
     # Phase 31: repository-aware system prompt
     system_prompt = (
@@ -115,8 +115,49 @@ def _build_agent(settings=None, workspace_path: Path | None = None, retrieval_pi
         max_tokens=settings.tracera_default_max_tokens,
         system_prompt=system_prompt,
         memory_provider=lambda: memory.build_context(""),
+        context_budget_tokens=settings.tracera_context_budget_tokens,
     )
     return agent, workspace, provider
+
+
+def _build_provider(settings=None):
+    """
+    Build the LLM provider for the agent.
+
+    When multiple provider keys are configured, returns a FailoverProvider
+    that automatically falls back to the next available API when a call
+    fails (rate limit, auth, overload) — Groq → OpenAI → Gemini → Ollama ….
+    """
+    if settings is None:
+        settings = _get_settings()
+
+    from tracera.providers import (
+        _PROVIDER_MODELS,
+        create_provider,
+        list_available_providers,
+    )
+    from tracera.providers.failover import FailoverProvider
+
+    ranked = list_available_providers(settings)
+    providers = []
+    for i, info in enumerate(ranked):
+        if not info["available"]:
+            continue
+        # First provider honours the user's default model; fallbacks use
+        # each provider's recommended model (a Groq model on OpenAI would
+        # be invalid).
+        model = "" if i == 0 else _PROVIDER_MODELS.get(info["name"], "")
+        try:
+            providers.append(create_provider(name=info["name"], model=model, settings=settings))
+        except Exception as e:
+            console.print(f"[dim yellow]⚠ Provider {info['name']} unavailable ({e})[/]")
+
+    if not providers:
+        # No keys at all — let create_provider raise the proper error
+        return create_provider(settings=settings)
+    if len(providers) == 1:
+        return providers[0]
+    return FailoverProvider(providers)
 
 
 
@@ -771,6 +812,7 @@ def fix(
     from tracera.agent.autonomous import AutonomousFixLoop, RetrievalDebugger, RegressionProtector
     from tracera.agent.context_engine import ContextAssemblyEngine
     from tracera.agent.compressor import ContextCompressor
+    from tracera.agent.planner import TaskDecomposer
 
     symbol_retriever = pipeline[1] if pipeline else None
     context_engine = pipeline[4] if pipeline else ContextAssemblyEngine()
@@ -779,7 +821,12 @@ def fix(
     test_runner = TestRunner(ws_path)
     debugger = RetrievalDebugger(symbol_retriever, context_engine, compressor=compressor)
     protector = RegressionProtector(ws_path, test_runner)
-    fix_loop = AutonomousFixLoop(ws_path, test_runner, debugger, max_iterations=max_iterations)
+    # Phase 9: plan the task up front and replan after failed attempts
+    decomposer = TaskDecomposer(prov)
+    fix_loop = AutonomousFixLoop(
+        ws_path, test_runner, debugger,
+        max_iterations=max_iterations, decomposer=decomposer,
+    )
 
     console.print("[dim]Taking pre-task regression baseline…[/]")
     baseline = protector.snapshot_before()

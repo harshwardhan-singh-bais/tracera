@@ -40,7 +40,64 @@ class MessageWidget(Static):
         elif self.role == "thinking":
             text.append("  ◌  ", style="dim cyan")
             text.append(self.msg_content, style="dim #606090 italic")
+        elif self.role == "meta":
+            text.append("     ", style="dim")
+            text.append(self.msg_content, style="dim #8080b0")
         return text
+
+
+_GLYPH = {
+    "think": "◇",
+    "tool": "◆",
+    "done": "✓",
+    "error": "✗",
+    "step-done": "✓",
+    "step-active": "⠋",
+    "step-pending": "○",
+}
+
+
+class ThinkingDisclosure(Widget):
+    """
+    Collapsible 'Thinking…' block attached to an assistant turn — the
+    Claude Code / gemini-cli style reasoning disclosure.
+
+    Header is clickable: ▸ Thinking… (3)  ↔  ▾ Thinking… (3). Clicking it
+    expands the per-turn trace right in the conversation. Rows use gum-style
+    status glyphs (✓ done · ⠋ active · ○ pending · ◆ tool · ✗ error).
+    """
+
+    def __init__(self, entries: list[tuple[str, str]], **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._entries = entries
+        self.expanded = False
+
+    def compose(self) -> ComposeResult:
+        yield Static(f"▸ Thinking… ({len(self._entries)})", id="reasoning-toggle")
+        with Vertical(id="reasoning-body"):
+            for kind, text in self._entries:
+                glyph = _GLYPH.get(kind, "·")
+                yield Static(
+                    f"{glyph} {text}",
+                    classes=f"reasoning-line reasoning-{kind}",
+                )
+
+    def on_mount(self) -> None:
+        self.query_one("#reasoning-body", Vertical).display = False
+
+    def on_click(self, event) -> None:
+        if getattr(event.widget, "id", None) == "reasoning-toggle":
+            self.toggle()
+
+    def toggle(self) -> None:
+        self.expanded = not self.expanded
+        toggle = self.query_one("#reasoning-toggle", Static)
+        body = self.query_one("#reasoning-body", Vertical)
+        if self.expanded:
+            toggle.update(f"▾ Thinking… ({len(self._entries)})")
+        else:
+            toggle.update(f"▸ Thinking… ({len(self._entries)})")
+        body.display = self.expanded
 
 
 _SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
@@ -142,21 +199,13 @@ class AgentPanel(Widget):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._message_widgets: list[MessageWidget] = []
+        self._stream_widget: MessageWidget | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="agent-panel"):
-            yield Static(
-                " ◈  CONVERSATION ",
-                id="agent-panel-title",
-                classes="panel-title",
-            )
+            yield Static(" CONVERSATION ", id="agent-panel-title", classes="panel-title")
             with ScrollableContainer(id="agent-log"):
-                yield Static(
-                    "\n[dim cyan]Welcome to TRACERA.[/]\n"
-                    "[dim]Ask me anything about your codebase, or give me a task to complete.[/]\n"
-                    "[dim]Type [bold cyan]/help[/] for available commands.[/]\n",
-                    markup=True,
-                )
+                pass
             yield ActivityLine(id="activity-line")
             with Horizontal(id="agent-input-area"):
                 yield Static("❯", id="agent-prompt-icon")
@@ -164,6 +213,7 @@ class AgentPanel(Widget):
                     placeholder="Ask TRACERA anything... (/help for commands)",
                     id="agent-input",
                 )
+            yield Static("Enter send · /help commands · ctrl+t thinking · ctrl+b sidebar", id="input-hints")
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         text = event.value.strip()
@@ -199,6 +249,56 @@ class AgentPanel(Widget):
     def add_error(self, text: str) -> None:
         self.add_message("error", text)
 
+    def add_meta(self, text: str) -> None:
+        """Add a compact dim meta line (e.g. turn statistics)."""
+        self.add_message("meta", text)
+
+    def add_thinking_disclosure(self, entries: list[tuple[str, str]]) -> None:
+        """Attach a collapsible per-turn reasoning block to the conversation."""
+        if not entries:
+            return
+        log_container = self.query_one("#agent-log", ScrollableContainer)
+        disclosure = ThinkingDisclosure(entries)
+        disclosure.add_class("msg-reasoning")
+        log_container.mount(disclosure)
+        log_container.scroll_end(animate=False)
+
+    async def type_message(self, text: str) -> None:
+        """Type a message into the conversation character-by-character."""
+        import asyncio
+        log_container = self.query_one("#agent-log", ScrollableContainer)
+        widget = MessageWidget("assistant", "")
+        widget.add_class("msg-assistant")
+        log_container.mount(widget)
+        for ch in text:
+            widget.msg_content += ch
+            widget.refresh()
+            log_container.scroll_end(animate=False)
+            await asyncio.sleep(0.012)
+
+    def stream_delta(self, text: str) -> None:
+        """Append a token delta to the live assistant message (streaming)."""
+        log_container = self.query_one("#agent-log", ScrollableContainer)
+        if self._stream_widget is None:
+            widget = MessageWidget("assistant", text)
+            widget.add_class("msg-assistant")
+            log_container.mount(widget)
+            self._stream_widget = widget
+        else:
+            self._stream_widget.msg_content += text
+            self._stream_widget.refresh()
+        log_container.scroll_end(animate=False)
+
+    def stream_end(self, full_text: str | None = None) -> None:
+        """Finalise the streaming message with the complete text."""
+        if self._stream_widget is not None:
+            if full_text is not None:
+                self._stream_widget.msg_content = full_text
+                self._stream_widget.refresh()
+            self._stream_widget = None
+        elif full_text:
+            self.add_assistant_message(full_text)
+
     def set_activity(self, status: str, action: str = "", detail: str = "") -> None:
         """Drive the live Claude Code-style status line (spinner + action)."""
         try:
@@ -216,4 +316,5 @@ class AgentPanel(Widget):
         log_container = self.query_one("#agent-log", ScrollableContainer)
         for child in list(log_container.children):
             child.remove()
+        self._stream_widget = None
         self.clear_activity()

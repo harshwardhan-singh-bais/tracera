@@ -15,6 +15,11 @@ from enum import Enum
 from typing import Any, Iterator
 
 from tracera.providers.base import LLMMessage, Role, ToolCallRequest
+from tracera.logging import get_logger
+
+log = get_logger("conversation.state")
+
+_CHARS_PER_TOKEN = 4  # rough heuristic used for budget estimation
 
 
 # ── Message envelope ──────────────────────────────────────────────────────────
@@ -264,6 +269,85 @@ class ConversationState:
         for msg in recent_msgs:
             new_state.add(msg)
         return new_state
+
+    def estimated_tokens(self) -> int:
+        """
+        Rough token estimate of the current history (~4 chars per token).
+        Includes tool-call argument payloads.
+        """
+        total = 0
+        for msg in self._messages:
+            total += len(msg.content or "")
+            if msg.tool_calls:
+                for tc in msg.tool_calls:
+                    total += len(str(tc.arguments))
+        return total // _CHARS_PER_TOKEN
+
+    def compact_history(self, max_tokens: int) -> None:
+        """
+        Trim old turns *in place* to fit within *max_tokens*.
+
+        Safety rules (so the LLM API never receives a broken conversation):
+        - System messages (incl. injected memory) are always kept.
+        - The newest user turn — its prompt plus ALL of its tool call/result
+          pairs — is always kept intact.
+        - Older complete turns are dropped whole (never split mid-tool-round).
+
+        This is what prevents "request too large" (413) failures on
+        low-TPM tiers such as Groq's free plan.
+        """
+        if self.estimated_tokens() <= max_tokens:
+            return
+
+        budget_chars = max_tokens * _CHARS_PER_TOKEN
+        system_msgs = [m for m in self._messages if m.type == MessageType.SYSTEM]
+        used = sum(len(m.content or "") for m in system_msgs)
+
+        # Group non-system messages into turns (a USER message starts a turn)
+        turns: list[list[ConversationMessage]] = []
+        current: list[ConversationMessage] = []
+        for msg in self._messages:
+            if msg.type == MessageType.SYSTEM:
+                continue
+            if msg.type == MessageType.USER and current:
+                turns.append(current)
+                current = []
+            current.append(msg)
+        if current:
+            turns.append(current)
+
+        kept_turns: list[list[ConversationMessage]] = []
+        for turn in reversed(turns):
+            size = sum(len(m.content or "") for m in turn)
+            if kept_turns and used + size > budget_chars:
+                break  # drop this (older) turn entirely
+            kept_turns.append(turn)
+            used += size
+
+        kept: list[ConversationMessage] = list(system_msgs)
+        for turn in reversed(kept_turns):
+            kept.extend(turn)
+        self._messages = kept
+
+        # Recompute history-derived stats to stay accurate
+        self.stats.total_messages = len(self._messages)
+        self.stats.user_messages = sum(
+            m.type == MessageType.USER for m in self._messages
+        )
+        self.stats.assistant_messages = sum(
+            m.type == MessageType.ASSISTANT for m in self._messages
+        )
+        self.stats.tool_calls = sum(
+            len(m.tool_calls or []) for m in self._messages
+        )
+        self.stats.tool_results = sum(
+            m.type == MessageType.TOOL_RESULT for m in self._messages
+        )
+        self.stats.errors = sum(m.type == MessageType.ERROR for m in self._messages)
+        log.debug(
+            "Compacted conversation: %d tokens → %d tokens",
+            self.estimated_tokens(), max_tokens,
+        )
 
     # ── Snapshot ──────────────────────────────────────────────────────────────
 

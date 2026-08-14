@@ -111,11 +111,15 @@ class AutonomousFixLoop:
         test_runner: TestRunner,
         debugger: RetrievalDebugger,
         max_iterations: int = 5,
+        decomposer: Any | None = None,
     ) -> None:
         self._workspace = workspace_root
         self._test_runner = test_runner
         self._debugger = debugger
         self._max_iterations = max_iterations
+        # Phase 9: optional planner — decomposes the task up front and replans
+        # (adds recovery steps) after each failed fix attempt.
+        self._decomposer = decomposer
 
     async def run(self, task: str, provider: Any, agent: Any) -> AutonomousFixResult:
         """
@@ -130,6 +134,15 @@ class AutonomousFixLoop:
             AutonomousFixResult with all attempts documented.
         """
         result = AutonomousFixResult(task=task)
+
+        # Phase 9: decompose the task into a plan up front
+        plan = None
+        if self._decomposer is not None:
+            try:
+                plan = await self._decomposer.decompose(task)
+                log.info("Fix loop plan: %d steps for '%s'", len(plan.items), task[:60])
+            except Exception as e:
+                log.warning("Fix loop planning failed: %s", e)
 
         for i in range(self._max_iterations):
             log.info("Autonomous fix loop: iteration %d/%d", i + 1, self._max_iterations)
@@ -156,6 +169,18 @@ class AutonomousFixLoop:
             # Build debug plans for each failure
             failure = report.failures[0]  # Focus on first failure
             log.info("Debugging failure: %s — %s", failure.test_name, failure.error_message)
+
+            # Phase 9: replan — add recovery steps after a failed attempt
+            if plan is not None and self._decomposer is not None:
+                reason = f"{failure.error_type}: {failure.error_message}"
+                try:
+                    plan = await self._decomposer.replan(plan, reason)
+                    log.info(
+                        "Replanned after failure — %d items in plan",
+                        len(plan.items),
+                    )
+                except Exception as e:
+                    log.warning("Replan failed: %s", e)
 
             debug_plan = self._debugger.build_debug_plan(failure, provider)
             attempt.patch_description = debug_plan.hypothesis

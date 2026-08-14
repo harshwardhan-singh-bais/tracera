@@ -52,6 +52,12 @@ class Settings(BaseSettings):
     tracera_max_iterations: int = Field(50, alias="TRACERA_MAX_ITERATIONS")
     tracera_max_tool_calls: int = Field(200, alias="TRACERA_MAX_TOOL_CALLS")
     tracera_max_context_tokens: int = Field(128_000, alias="TRACERA_MAX_CONTEXT_TOKENS")
+    # Budget for conversation history sent per LLM call. Old turns are
+    # compacted to stay under this — prevents "request too large" (413)
+    # errors on low-TPM tiers such as Groq's free plan.
+    tracera_context_budget_tokens: int = Field(
+        12_000, alias="TRACERA_CONTEXT_BUDGET_TOKENS"
+    )
     tracera_command_timeout: int = Field(30, alias="TRACERA_COMMAND_TIMEOUT")
     tracera_indexing_max_file_size: int = Field(
         2 * 1024 * 1024, alias="TRACERA_INDEXING_MAX_FILE_SIZE"

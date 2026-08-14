@@ -19,7 +19,13 @@ from typing import Any, AsyncIterator, Callable
 from tracera.conversation.state import ConversationMessage, ConversationState, MessageType
 from tracera.errors import AgentError, MaxIterationsError, MaxToolCallsError
 from tracera.logging import get_logger, log_agent, log_tool
-from tracera.providers.base import LLMMessage, LLMProvider, ToolCallRequest, ToolSchema
+from tracera.providers.base import (
+    LLMMessage,
+    LLMProvider,
+    LLMResponse,
+    ToolCallRequest,
+    ToolSchema,
+)
 from tracera.tools.registry import ToolRegistry
 
 log = get_logger("agent.react")
@@ -107,6 +113,8 @@ class ReActAgent:
         retry_on_tool_error: bool = True,
         max_retries: int = 3,
         memory_provider: Callable[[], str] | None = None,
+        streaming: bool = True,
+        context_budget_tokens: int = 12_000,
     ) -> None:
         self.provider = provider
         self.registry = registry
@@ -120,6 +128,13 @@ class ReActAgent:
         self.max_retries = max_retries
         # Phase 10 → 8: injects persistent memory context into the conversation
         self.memory_provider = memory_provider
+        # Phase 4/8: stream the LLM response and emit RESPONSE_DELTA events.
+        # Falls back to a plain complete() call when the provider has no real
+        # streaming support.
+        self.streaming = streaming
+        # Context budget: the conversation is compacted before each LLM call
+        # so low-TPM providers (Groq free tier etc.) don't get 413s.
+        self.context_budget_tokens = context_budget_tokens
         self._tool_call_count = 0
 
     async def run(
@@ -169,6 +184,8 @@ class ReActAgent:
         log_agent(f"Starting task: {task[:80]}")
         tools = self.registry.schemas()
 
+        terminated_by_error = False
+
         for iteration in range(self.max_iterations):
             yield AgentEvent(
                 type=AgentEventType.THINKING,
@@ -177,14 +194,33 @@ class ReActAgent:
             )
 
             # ── LLM call ──────────────────────────────────────────────────────
+            # Keep the conversation within the token budget so low-TPM
+            # providers don't reject it with a 413 (request too large).
+            conversation.compact_history(self.context_budget_tokens)
             try:
-                response = await self.provider.complete(
-                    conversation.llm_messages(),
-                    model=self.model,
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens,
-                    tools=tools if tools else None,
-                )
+                if self.streaming:
+                    response, deltas = await self._stream_response(
+                        conversation.llm_messages(),
+                        model=self.model,
+                        temperature=self.temperature,
+                        max_tokens=self.max_tokens,
+                        tools=tools,
+                    )
+                    # Phase 8: emit token-by-token response deltas for live UIs
+                    for delta in deltas:
+                        yield AgentEvent(
+                            type=AgentEventType.RESPONSE_DELTA,
+                            iteration=iteration,
+                            text=delta,
+                        )
+                else:
+                    response = await self.provider.complete(
+                        conversation.llm_messages(),
+                        model=self.model,
+                        temperature=self.temperature,
+                        max_tokens=self.max_tokens,
+                        tools=tools if tools else None,
+                    )
             except Exception as e:
                 error_msg = f"LLM call failed: {e}"
                 conversation.add_error(error_msg)
@@ -193,6 +229,7 @@ class ReActAgent:
                     iteration=iteration,
                     text=error_msg,
                 )
+                terminated_by_error = True
                 break
 
             # Record LLM usage
@@ -261,7 +298,17 @@ class ReActAgent:
             yield AgentEvent(type=AgentEventType.DONE, iteration=iteration)
             return
 
-        # Hit max iterations
+        if terminated_by_error:
+            # Already reported the real failure above — don't also claim the
+            # loop "exceeded max iterations", that's misleading.
+            yield AgentEvent(
+                type=AgentEventType.DONE,
+                iteration=self.max_iterations,
+                metadata={"terminated_by_error": True},
+            )
+            return
+
+        # Hit max iterations (genuinely ran out of iterations)
         err = MaxIterationsError(self.max_iterations)
         conversation.add_error(str(err))
         yield AgentEvent(
@@ -270,6 +317,83 @@ class ReActAgent:
             text=str(err),
         )
         yield AgentEvent(type=AgentEventType.DONE, iteration=self.max_iterations)
+
+    async def _stream_response(
+        self,
+        messages: list[LLMMessage],
+        *,
+        model: str | None,
+        temperature: float,
+        max_tokens: int,
+        tools: list[ToolSchema],
+    ) -> tuple[LLMResponse, list[str]]:
+        """
+        Stream an LLM response, collecting text deltas and tool calls.
+
+        Returns ``(response, text_deltas)``. If the provider's stream yields
+        nothing usable (no real streaming support) or raises, falls back to
+        a plain ``complete()`` call so the loop always makes progress.
+        """
+        import time as _time
+
+        from tracera.providers.base import TokenUsage
+
+        text_parts: list[str] = []
+        tool_calls: list[ToolCallRequest] = []
+        usage = TokenUsage()
+        t0 = _time.perf_counter()
+
+        try:
+            async for ev in self.provider.stream(
+                messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                tools=tools if tools else None,
+            ):
+                if ev.type == "text_delta" and ev.text:
+                    text_parts.append(ev.text)
+                elif ev.type == "tool_call_complete" and ev.tool_call is not None:
+                    tool_calls.append(ev.tool_call)
+                elif ev.type == "usage" and ev.usage is not None:
+                    usage = ev.usage
+        except Exception as e:
+            # Streaming failed → fall back to a plain call
+            log.debug("Streaming failed (%s), falling back to complete()", e)
+            response = await self.provider.complete(
+                messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                tools=tools if tools else None,
+            )
+            if response.content:
+                return response, [response.content]
+            return response, []
+
+        # Nothing usable streamed (provider without real streaming)
+        if not text_parts and not tool_calls:
+            response = await self.provider.complete(
+                messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                tools=tools if tools else None,
+            )
+            if response.content:
+                return response, [response.content]
+            return response, []
+
+        latency_ms = (_time.perf_counter() - t0) * 1000
+        response = LLMResponse(
+            content="".join(text_parts) or None,
+            tool_calls=tool_calls or None,
+            usage=usage,
+            model=model or self.provider.default_model,
+            finish_reason="stop",
+            latency_ms=latency_ms,
+        )
+        return response, text_parts
 
     async def _execute_with_retry(self, tool_call: ToolCallRequest):
         """Execute a tool call with retry on error."""

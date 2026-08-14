@@ -134,6 +134,58 @@ async def test_fix_loop_drives_agent_on_failure(tmp_path):
     assert len(agent.tasks_run) == 1  # agent driven once to fix the failure
 
 
+# ── Phase 9 → 36: fix loop plans and replans after failures ───────────────────
+
+class _ReplanDecomposer:
+    def __init__(self):
+        self.decompose_calls = 0
+        self.replan_calls = 0
+
+    async def decompose(self, task):
+        from tracera.agent.planner import Plan
+        self.decompose_calls += 1
+        plan = Plan(task)
+        plan.add_item("Step 1")
+        return plan
+
+    async def replan(self, plan, reason):
+        self.replan_calls += 1
+        plan.add_item(f"[Recovery] {reason}")
+        return plan
+
+
+@pytest.mark.asyncio
+async def test_fix_loop_replans_on_failure(tmp_path):
+    from tracera.agent.autonomous import AutonomousFixLoop, RetrievalDebugger
+    from tracera.agent.context_engine import ContextAssemblyEngine
+
+    class _FailThenPassRunner:
+        def __init__(self):
+            self.calls = 0
+
+        def run(self, framework=None, test_paths=None):
+            self.calls += 1
+            if self.calls >= 2:
+                return Report(framework="pytest", passed=2, total=2, success=True)
+            return Report(
+                framework="pytest", passed=1, total=2, success=False,
+                failures=[Failure(test_name="t", error_type="E", error_message="m")],
+            )
+
+    decomposer = _ReplanDecomposer()
+    debugger = RetrievalDebugger(None, ContextAssemblyEngine())
+    loop = AutonomousFixLoop(
+        tmp_path, _FailThenPassRunner(), debugger,
+        max_iterations=3, decomposer=decomposer,
+    )
+
+    result = await loop.run("fix the bug", provider=None, agent=_FakeAgent())
+
+    assert result.final_success is True
+    assert decomposer.decompose_calls == 1
+    assert decomposer.replan_calls == 1  # replanned after the first failed attempt
+
+
 # ── Phase 38: RegressionProtector ─────────────────────────────────────────────
 
 class _CountingRunner:
