@@ -375,6 +375,20 @@ def test_phase_09_planning_system():
     assert replanned.replanned_count == 1
     assert any("Rollback" in i.title for i in replanned.items)
 
+    # Wired into the ReAct loop (Phase 9 → 8): PLAN_UPDATE events emitted,
+    # todo items advance to in_progress/done during execution.
+    from tracera.agent.react_loop import AgentEventType, ReActAgent
+    from tracera.tools.registry import ToolRegistry
+
+    decomposer = TaskDecomposer(PlanProvider())
+    agent = ReActAgent(provider=PlanProvider(), registry=ToolRegistry(),
+                       decomposer=decomposer)
+    events = _run_agent(agent, "Add tests")
+    plan_updates = [e for e in events if e.type == AgentEventType.PLAN_UPDATE]
+    assert plan_updates  # loop emitted the plan
+    final_plan = plan_updates[-1].metadata["plan"]
+    assert all(item["status"] == "done" for item in final_plan["items"])
+
 
 def test_phase_10_persistent_memory(tmp_path):
     """Phase 10: memory stores, persists, retrieves, and injects into the agent."""
@@ -397,6 +411,19 @@ def test_phase_10_persistent_memory(tmp_path):
                        memory_provider=lambda: m2.build_context("auth"))
     _run_agent(agent, "hi", conversation=conv)
     assert any(m.type == MessageType.SYSTEM and m.metadata.get("memory") for m in conv.messages)
+
+    # Agent WRITES back to memory on completion (Phase 10 → 8 write path)
+    from tracera.agent.react_loop import AgentEventType
+    written: list[tuple[str, str]] = []
+    writer_agent = ReActAgent(
+        provider=FakeProvider(response_text="JWT middleware added."),
+        registry=ToolRegistry(),
+        memory_writer=lambda kind, content: written.append((kind, content)),
+    )
+    events = _run_agent(writer_agent, "add auth")
+    assert any(e.type == AgentEventType.MEMORY_UPDATE for e in events)
+    assert written and written[0][0] == "decision"
+    assert "JWT" in written[0][1]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -536,6 +563,27 @@ def test_phase_17_embedding_pipeline(tmp_path):
     batch = embedder.embed_batch([text, other])
     assert len(batch) == 2 and batch[0] == [0.5, 0.5, 0.5]
 
+    # Real model path (no download): stub model injected, real encode pipeline
+    class _Vec(list):
+        def tolist(self):
+            return list(self)
+
+    class StubSentenceModel:
+        def encode(self, texts, normalize_embeddings=True, show_progress_bar=False):
+            if isinstance(texts, str):
+                return _Vec([1.0, 0.0, 0.0, 0.0])
+            return _Vec([_Vec([1.0, 0.0, 0.0, 0.0]), _Vec([0.0, 1.0, 0.0, 0.0])])
+
+        def get_sentence_embedding_dimension(self):
+            return 4
+
+    embedder._model = StubSentenceModel()
+    assert embedder.dimension == 4  # real dimension property
+    vec = embedder.embed_single("brand new text")
+    assert len(vec) == 4 and abs(sum(vec) - 1.0) < 1e-6
+    batch2 = embedder.embed_batch(["a", "b"], batch_size=1)
+    assert len(batch2) == 2
+
 
 def test_phase_18_vector_index_lancedb(tmp_path):
     """Phase 18: real LanceDB insert, search, filter, delete, persistence."""
@@ -644,16 +692,30 @@ def test_phase_22_context_expansion():
 
 
 def test_phase_23_cross_encoder_reranker(monkeypatch):
-    """Phase 23: reranker truncates to top-k via passthrough when model absent."""
+    """Phase 23: reranker rescales via real cross-encoder scoring path."""
     from tracera.retrieval.reranker import CrossEncoderReranker
 
-    # Model unavailable (no download in CI) → documented passthrough fallback
-    monkeypatch.setattr(CrossEncoderReranker, "_load_model", lambda self: False)
+    # Real model path (no download): stub cross-encoder injected, the actual
+    # predict → score-attach → sort pipeline is exercised.
+    class StubCrossEncoder:
+        def predict(self, pairs):
+            return [float(i) for i in range(len(pairs))]  # later pairs score higher
+
     reranker = CrossEncoderReranker(top_n=5)
-    results = [{"id": f"c{i}", "content": f"chunk {i}"} for i in range(5)]
-    ranked = reranker.rerank("query", results, k=2)
-    assert len(ranked) == 2  # truncated to requested k
-    assert reranker.rerank("q", results)  # default top_n path works
+    reranker._model = StubCrossEncoder()
+    results = [
+        {"id": f"c{i}", "content": f"chunk {i}"} for i in range(5)
+    ]
+    ranked = reranker.rerank("query", results, k=3)
+    assert len(ranked) == 3  # trimmed to k
+    assert all("_rerank_score" in r for r in ranked)
+    # Stub scores increase with index → highest index chunk ranks first
+    assert ranked[0]["id"] == "c4"
+
+    # Documented passthrough fallback when the model cannot load
+    monkeypatch.setattr(CrossEncoderReranker, "_load_model", lambda self: False)
+    fallback = CrossEncoderReranker(top_n=5)
+    assert len(fallback.rerank("q", results, k=2)) == 2
 
 
 def test_phase_24_incremental_indexer(tmp_path):
@@ -768,7 +830,7 @@ def test_phase_26_dependency_aware_retrieval():
 def test_phase_27_code_search_tools():
     """Phase 27: all six retrieval tools execute and return structured results."""
     from tracera.tools.code_search import (
-        SearchCodeTool, FindSymbolTool, FindReferencesTool,
+        SearchCodeTool, FindSymbolTool, FindDefinitionTool, FindReferencesTool,
         GetDependenciesTool, GetContextTool,
     )
     from tracera.graph.symbol_graph import SymbolGraph
@@ -791,11 +853,28 @@ def test_phase_27_code_search_tools():
     async def _run():
         assert (await SearchCodeTool(FakeRetriever()).execute(query="auth")).success
         assert (await FindSymbolTool(FakeRetriever()).execute(name="AuthMiddleware")).success
+        # Phase 27 spec tool: find_definition returns the full definition source
+        def_result = await FindDefinitionTool(FakeRetriever()).execute(name="AuthMiddleware")
+        assert def_result.success
+        assert "Definition of" in def_result.output
         assert (await FindReferencesTool(g).execute(symbol="AuthMiddleware")).success
         assert (await GetDependenciesTool(g).execute(symbol="AuthMiddleware")).success
         assert (await GetContextTool(FakeRetriever(), FakeExpander()).execute(symbol="AuthMiddleware")).success
 
     asyncio.run(_run())
+
+
+def test_phase_27b_find_definition_registered():
+    """Phase 27: find_definition is registered by the retrieval extension."""
+    from tracera.tools.registry import ToolRegistry, extend_registry_with_retrieval
+
+    class FakeRetriever:
+        def search(self, query, k=5, language=None):
+            return []
+
+    registry = ToolRegistry()
+    extend_registry_with_retrieval(registry, FakeRetriever(), None, None)
+    assert "find_definition" in registry.names
 
 
 def test_phase_28_retrieval_aware_agent(tmp_path, monkeypatch):
@@ -841,6 +920,20 @@ def test_phase_29_context_assembly_engine():
     assert ctx.index("import os") < ctx.index("class C") < ctx.index("def a")
     assert ctx.count("def a(): pass") == 1
 
+    # Wired into the agent's search_code tool (Phase 29 → 27)
+    from tracera.tools.code_search import SearchCodeTool
+
+    class FakeRetriever:
+        def search(self, query, k=5, language=None):
+            return [{"id": "c1", "symbol": "auth", "symbol_type": "function",
+                     "file_path": "auth.py", "content": "def auth(): pass",
+                     "_rrf_score": 1.0}]
+
+    tool = SearchCodeTool(FakeRetriever(), context_engine=engine)
+    result = asyncio.run(tool.execute(query="auth"))
+    assert result.success
+    assert "# Retrieved Code Context" in result.output  # assembled, not raw
+
 
 def test_phase_30_context_compression():
     """Phase 30: compression shrinks oversized context and is wired into debugging."""
@@ -874,6 +967,25 @@ def test_phase_30_context_compression():
     plan = debugger.build_debug_plan(tr.TestFailure(test_name="t", error_type="E", error_message="m"), None)
     assert spy.called
     assert "auth" in plan.retrieved_context
+
+    # Wired into the agent's get_context tool (Phase 30 → 27)
+    from tracera.tools.code_search import GetContextTool
+
+    class FakeRetriever2:
+        def search(self, query, k=5, language=None):
+            return [{"id": "c1", "symbol": "auth", "symbol_type": "function",
+                     "file_path": "auth.py", "content": "def auth(): pass",
+                     "_rrf_score": 1.0}]
+
+    class FakeExpander2:
+        def expand(self, results, max_additional=3):
+            return results
+
+    spy2 = SpyCompressor()
+    tool = GetContextTool(FakeRetriever2(), FakeExpander2(), compressor=spy2)
+    result = asyncio.run(tool.execute(symbol="auth"))
+    assert result.success
+    assert spy2.called  # the tool compressed its output
 
 
 def test_phase_31_repository_aware_agent(tmp_path, monkeypatch):

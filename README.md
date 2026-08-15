@@ -37,6 +37,7 @@
 | 29–31 | Context assembly, context compression, repository-aware agent |
 | 32–34 | Test discovery, safe test execution, failure analysis |
 | 35–38 | Retrieval-driven debugging, autonomous fix loop, self-review, regression protection |
+| 39–41 | MCP server (7 capabilities as MCP tools), MCP client, unified tool registry |
 | TUI | Futuristic Textual terminal UI with full scrolling (PgUp/PgDn + mouse) |
 
 ---
@@ -71,7 +72,55 @@ tracera status
 
 # Manage memory
 tracera memory list
+
+# List the tools exposed by the MCP server (Phase 39)
+tracera mcp serve --check
+
+# Run the MCP server on stdio (connect from Claude Desktop, Cursor, ...)
+tracera mcp serve
 ```
+
+## MCP Integration (Phases 39–41)
+
+TRACERA speaks the Model Context Protocol in both directions:
+
+**As an MCP server** — your existing capabilities become MCP tools:
+
+```text
+search_code · find_symbol · find_references · get_context
+· get_dependencies · run_tests · inspect_repository
+```
+
+```bash
+# List them without serving
+tracera mcp serve --check
+
+# Serve on stdio (default transport)
+tracera mcp serve
+```
+
+Any MCP client (Claude Desktop, Cursor, custom agents) can now call these tools.
+The retrieval pipeline is loaded lazily only when a code index exists.
+
+**As an MCP client** — connect to external MCP servers and merge their tools
+into the unified registry alongside native tools:
+
+```json
+// mcp_servers.json
+[
+  {"name": "filesystem", "command": "npx",
+   "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]}
+]
+```
+
+```bash
+tracera mcp connect mcp_servers.json
+```
+
+Remote tools are registered as `{server}_{tool}` (e.g. `filesystem_read_file`)
+so multiple servers and native tools coexist without name collisions.
+Programmatically, `MCPClient` and `MCPManager` (in `tracera/mcp/`) give the
+same unified-registry behaviour inside the agent.
 
 ## Configuration
 

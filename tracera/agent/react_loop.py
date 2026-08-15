@@ -113,6 +113,13 @@ class ReActAgent:
         retry_on_tool_error: bool = True,
         max_retries: int = 3,
         memory_provider: Callable[[], str] | None = None,
+        # Phase 10: called with (kind, content) when the agent learns something
+        # worth persisting — 'decision' on completion, 'error' on failure.
+        memory_writer: Callable[[str, str], None] | None = None,
+        # Phase 9: optional TaskDecomposer. When set, the loop decomposes the
+        # task up front, emits PLAN_UPDATE events, and marks items done as
+        # the work progresses.
+        decomposer: Any | None = None,
         streaming: bool = True,
         context_budget_tokens: int = 12_000,
     ) -> None:
@@ -128,6 +135,12 @@ class ReActAgent:
         self.max_retries = max_retries
         # Phase 10 → 8: injects persistent memory context into the conversation
         self.memory_provider = memory_provider
+        # Phase 10: writes agent outcomes (decisions/errors) back to memory
+        self.memory_writer = memory_writer
+        # Phase 9: planning — decompose the task and track todo progress.
+        self.decomposer = decomposer
+        self._active_plan: Any | None = None
+        self._plan_item_index = 0
         # Phase 4/8: stream the LLM response and emit RESPONSE_DELTA events.
         # Falls back to a plain complete() call when the provider has no real
         # streaming support.
@@ -180,6 +193,30 @@ class ReActAgent:
 
         conversation.add_user(task)
         self._tool_call_count = 0
+        self._plan_item_index = 0
+
+        # Phase 9: decompose the task into a plan up front (best-effort —
+        # falls back to a single-step plan if decomposition fails).
+        if self.decomposer is not None:
+            try:
+                self._active_plan = await self.decomposer.decompose(task)
+                log.info(
+                    "Plan ready: %d steps for %r",
+                    len(self._active_plan.items), task[:60],
+                )
+            except Exception as e:
+                log.warning("Task decomposition failed: %s", e)
+                self._active_plan = None
+            if self._active_plan is not None:
+                yield AgentEvent(
+                    type=AgentEventType.PLAN_UPDATE,
+                    iteration=0,
+                    text=self._active_plan.to_markdown(),
+                    metadata={
+                        "plan": self._active_plan.to_dict(),
+                        "progress": self._active_plan.progress,
+                    },
+                )
 
         log_agent(f"Starting task: {task[:80]}")
         tools = self.registry.schemas()
@@ -224,6 +261,14 @@ class ReActAgent:
             except Exception as e:
                 error_msg = f"LLM call failed: {e}"
                 conversation.add_error(error_msg)
+                # Phase 10: remember recurring provider/LLM failures
+                if self.memory_writer is not None:
+                    self.memory_writer("error", error_msg)
+                    yield AgentEvent(
+                        type=AgentEventType.MEMORY_UPDATE,
+                        iteration=iteration,
+                        text="error pattern saved",
+                    )
                 yield AgentEvent(
                     type=AgentEventType.ERROR,
                     iteration=iteration,
@@ -248,6 +293,25 @@ class ReActAgent:
                     self._tool_call_count += 1
                     if self._tool_call_count > self.max_tool_calls:
                         raise MaxToolCallsError(self.max_tool_calls)
+
+                    # Phase 9: advance the plan — mark the next pending item
+                    # in_progress so todo state reflects the actual work.
+                    if self._active_plan is not None:
+                        items = [
+                            i for i in self._active_plan.items
+                            if i.status.value == "pending"
+                        ]
+                        if items:
+                            items[0].start()
+                            yield AgentEvent(
+                                type=AgentEventType.PLAN_UPDATE,
+                                iteration=iteration,
+                                text=self._active_plan.to_markdown(),
+                                metadata={
+                                    "plan": self._active_plan.to_dict(),
+                                    "progress": self._active_plan.progress,
+                                },
+                            )
 
                     yield AgentEvent(
                         type=AgentEventType.TOOL_START,
@@ -284,6 +348,30 @@ class ReActAgent:
             final_text = response.content or ""
             conversation.add_assistant(final_text, iteration=iteration)
 
+            # Phase 9: mark the remaining plan items done and report progress
+            if self._active_plan is not None:
+                for item in self._active_plan.items:
+                    if item.status.value in ("pending", "in_progress"):
+                        item.complete()
+                yield AgentEvent(
+                    type=AgentEventType.PLAN_UPDATE,
+                    iteration=iteration,
+                    text=self._active_plan.to_markdown(),
+                    metadata={
+                        "plan": self._active_plan.to_dict(),
+                        "progress": self._active_plan.progress,
+                    },
+                )
+
+            # Phase 10: persist the completed decision to memory
+            if self.memory_writer is not None and final_text:
+                self.memory_writer("decision", final_text)
+                yield AgentEvent(
+                    type=AgentEventType.MEMORY_UPDATE,
+                    iteration=iteration,
+                    text="decision saved",
+                )
+
             yield AgentEvent(
                 type=AgentEventType.RESPONSE_COMPLETE,
                 iteration=iteration,
@@ -311,6 +399,14 @@ class ReActAgent:
         # Hit max iterations (genuinely ran out of iterations)
         err = MaxIterationsError(self.max_iterations)
         conversation.add_error(str(err))
+        # Phase 10: persist the error pattern to memory
+        if self.memory_writer is not None:
+            self.memory_writer("error", str(err))
+            yield AgentEvent(
+                type=AgentEventType.MEMORY_UPDATE,
+                iteration=self.max_iterations,
+                text="error pattern saved",
+            )
         yield AgentEvent(
             type=AgentEventType.ERROR,
             iteration=self.max_iterations,

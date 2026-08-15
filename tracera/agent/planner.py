@@ -239,6 +239,26 @@ class Plan:
         lines.append(f"\n**Progress: {done}/{total} ({self.progress_pct:.0f}%)**")
         return "\n".join(lines)
 
+    @classmethod
+    def from_dict(cls, data: dict) -> "Plan":
+        """Rebuild a Plan (with its todo states) from ``to_dict()`` output."""
+        plan = cls(data.get("task", ""), plan_id=data.get("id"))
+        plan.created_at = data.get("created_at", plan.created_at)
+        plan.replanned_count = data.get("replanned_count", 0)
+        for item_data in data.get("items", []):
+            status = TodoStatus(item_data.get("status", "pending"))
+            item = TodoItem(
+                id=item_data["id"],
+                title=item_data.get("title", ""),
+                description=item_data.get("description", ""),
+                status=status,
+                priority=item_data.get("priority", 0),
+                depends_on=item_data.get("depends_on", []),
+            )
+            plan._items[item.id] = item
+            plan._order.append(item.id)
+        return plan
+
     def __repr__(self) -> str:
         done, total = self.progress
         return f"<Plan task={self.task[:40]!r} progress={done}/{total}>"

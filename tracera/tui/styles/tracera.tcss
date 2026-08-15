@@ -1,20 +1,14 @@
 /* ═══════════════════════════════════════════════════════════════════════════
-   TRACERA — monochrome terminal-agent theme (Claude Code / gum inspired).
+   TRACERA — terminal-agent theme (Claude Code / gum inspired).
 
-   Standard boxes and text. No colored fills, no neon — only thin borders,
-   monochrome text, and semantic accent colors (green ✓, red ✗, yellow ●).
+   Boxes and text only. No opaque fills: every panel is transparent so the
+   background of the terminal the app runs on shows through as-is.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /* ── Design tokens ──────────────────────────────────────────────────────── */
 
-$bg:            #0d0d0f;
-$bg-panel:      #121214;
-$bg-elevated:   #16161a;
-$bg-hover:      #1d1d24;
-$bg-active:     #24242c;
-
-$border:        #2f2f38;
-$border-subtle: #222227;
+$border:        #3a3a44;
+$border-subtle: #26262e;
 
 $text:          #e8e8ea;
 $text-muted:    #9a9aa3;
@@ -29,34 +23,29 @@ $purple:        #d2a8ff;
 /* ── Root ──────────────────────────────────────────────────────────────── */
 
 Screen {
-    background: $bg;
+    background: transparent;
     color: $text;
-    layers: base overlay;
 }
 
-/* ── Splash overlay (typewriter animation) ──────────────────────────────── */
+/* ── Typewriter splash banner (top of the page — the UI builds below it) ── */
 
-#splash-overlay {
-    layer: overlay;
-    align: center middle;
+#splash-banner {
     width: 100%;
-    height: 100%;
-    background: $bg;
+    height: auto;
     layout: vertical;
-    padding: 0 6;
+    padding: 3 4 1 4;
 }
 
 #splash-logo {
     content-align: center middle;
-    color: $text;
+    color: $blue;
     text-style: bold;
-    height: 3;
 }
 
 #splash-status {
     content-align: center middle;
     color: $text-muted;
-    height: 3;
+    height: 1;
 }
 
 /* ── Header (single slim row) ───────────────────────────────────────────── */
@@ -64,7 +53,7 @@ Screen {
 #app-header {
     height: 1;
     layout: horizontal;
-    background: $bg-panel;
+    background: transparent;
     border-bottom: solid $border-subtle;
     padding: 0 2;
 }
@@ -87,7 +76,7 @@ Screen {
     height: 1fr;
     width: 100%;
     layout: horizontal;
-    background: $bg;
+    background: transparent;
 }
 
 #agent-panel-widget {
@@ -98,7 +87,7 @@ Screen {
 #right-sidebar {
     width: 44;
     height: 100%;
-    background: $bg-panel;
+    background: transparent;
     border-left: solid $border;
     layout: vertical;
 }
@@ -107,7 +96,7 @@ Screen {
 
 #status-bar {
     height: 1;
-    background: $bg-panel;
+    background: transparent;
     border-top: solid $border-subtle;
     layout: horizontal;
     padding: 0 1;
@@ -121,13 +110,8 @@ Screen {
     text-style: bold;
     padding: 0 2;
     border-bottom: solid $border-subtle;
-    background: $bg-elevated;
+    background: transparent;
 }
-
-.panel-title-cyan { color: $text; }
-.panel-title-green { color: $text; }
-.panel-title-gold { color: $text; }
-.panel-title-purple { color: $text; }
 
 /* ── Thinking panel (live agent trace) ──────────────────────────────────── */
 
@@ -136,7 +120,7 @@ Screen {
     max-height: 26%;
     min-height: 5;
     layout: vertical;
-    background: $bg-panel;
+    background: transparent;
     border-bottom: solid $border-subtle;
 }
 
@@ -146,15 +130,14 @@ Screen {
 }
 
 #thinking-toggle:hover {
-    background: $bg-hover;
-    color: $text;
+    color: $blue;
 }
 
 #thinking-trace {
     height: 11;
-    background: $bg;
+    background: transparent;
     padding: 0 1;
-    scrollbar-color: $text-dim $bg-panel;
+    scrollbar-color: $text-dim $border-subtle;
     scrollbar-size: 1 1;
     border: none;
 }
@@ -176,7 +159,6 @@ Screen {
 #reasoning-toggle:hover {
     color: $text;
     text-style: bold italic;
-    background: $bg-hover;
 }
 
 #reasoning-body {
@@ -203,21 +185,21 @@ Screen {
 #agent-panel {
     height: 1fr;
     border: none;
-    background: $bg;
+    background: transparent;
 }
 
 #agent-log {
     height: 1fr;
-    background: $bg;
+    background: transparent;
     padding: 1 2;
     border: none;
-    scrollbar-color: $text-dim $bg-panel;
+    scrollbar-color: $text-dim $border-subtle;
     scrollbar-size: 1 1;
 }
 
 #activity-line {
     height: 1;
-    background: $bg;
+    background: transparent;
     color: $blue;
     padding: 0 2;
     border-top: solid $border-subtle;
@@ -225,7 +207,7 @@ Screen {
 
 #agent-input-area {
     height: 3;
-    background: $bg-elevated;
+    background: transparent;
     border-top: solid $border-subtle;
     layout: horizontal;
     padding: 0 1;
@@ -234,7 +216,7 @@ Screen {
 #input-hints {
     height: 1;
     color: $text-dim;
-    background: $bg;
+    background: transparent;
     padding: 0 3;
     border-top: solid $border-subtle;
 }
@@ -262,7 +244,7 @@ Screen {
 /* ── Message bubbles — standard boxes ───────────────────────────────────── */
 
 .msg-user {
-    background: $bg-panel;
+    background: transparent;
     color: $text;
     border: solid $border-subtle;
     border-left: solid $blue;
@@ -271,7 +253,7 @@ Screen {
 }
 
 .msg-assistant {
-    background: $bg;
+    background: transparent;
     color: $text;
     border: solid $border-subtle;
     padding: 1 2;
@@ -279,7 +261,7 @@ Screen {
 }
 
 .msg-tool {
-    background: $bg;
+    background: transparent;
     color: $text-muted;
     border-left: solid $border;
     padding: 0 2;
@@ -287,7 +269,7 @@ Screen {
 }
 
 .msg-error {
-    background: $bg;
+    background: transparent;
     color: $red;
     border-left: solid $red;
     padding: 1 2;
@@ -316,51 +298,59 @@ Screen {
 
 #tool-log {
     height: 1fr;
-    background: $bg-panel;
+    background: transparent;
     padding: 0 1;
-    scrollbar-color: $text-dim $bg-panel;
+    scrollbar-color: $text-dim $border-subtle;
     scrollbar-size: 1 1;
     border: none;
 }
 
-/* ── Plan panel ─────────────────────────────────────────────────────────── */
+/* ── Plan / Memory / Tools panels ───────────────────────────────────────── */
 
 #plan-panel {
     height: 1fr;
-    background: $bg-panel;
+    background: transparent;
     border: none;
 }
 
 #plan-list {
     height: 1fr;
-    background: $bg-panel;
+    background: transparent;
     padding: 1 1;
-    scrollbar-color: $text-dim $bg-panel;
+    scrollbar-color: $text-dim $border-subtle;
     scrollbar-size: 1 1;
     border: none;
 }
 
-/* ── Memory panel ───────────────────────────────────────────────────────── */
-
 #memory-panel {
     height: 1fr;
-    background: $bg-panel;
+    background: transparent;
 }
 
 #memory-list {
     height: 1fr;
-    background: $bg-panel;
+    background: transparent;
     padding: 1 1;
-    scrollbar-color: $text-dim $bg-panel;
+    scrollbar-color: $text-dim $border-subtle;
     scrollbar-size: 1 1;
     border: none;
 }
 
-/* ── Stats / Status card ────────────────────────────────────────────────── */
+#tools-panel {
+    height: 1fr;
+    background: transparent;
+    padding: 1 1;
+}
+
+#tools-list {
+    color: $text-muted;
+}
+
+/* ── Stats / Status / Context / History cards ───────────────────────────── */
 
 #stats-panel {
     height: auto;
-    background: $bg-panel;
+    background: transparent;
     padding: 1 2;
     border-top: solid $border-subtle;
 }
@@ -368,7 +358,7 @@ Screen {
 #context-panel,
 #history-panel {
     height: auto;
-    background: $bg-panel;
+    background: transparent;
     padding: 0 2 1 2;
     border-top: solid $border-subtle;
 }
@@ -418,46 +408,45 @@ Screen {
 TabbedContent {
     height: 26%;
     min-height: 7;
-    background: $bg-panel;
+    background: transparent;
     border: none;
     border-top: solid $border-subtle;
 }
 
 TabPane {
-    background: $bg-panel;
+    background: transparent;
     border: none;
     padding: 0;
 }
 
 Tabs {
-    background: $bg-elevated;
+    background: transparent;
     border-bottom: solid $border-subtle;
     height: 2;
 }
 
 Tab {
     color: $text-muted;
-    background: $bg-elevated;
+    background: transparent;
     padding: 0 2;
     border: none;
 }
 
 Tab:hover {
     color: $text;
-    background: $bg-hover;
 }
 
 Tab.-active {
     color: $text;
     text-style: bold;
-    background: $bg-panel;
+    background: transparent;
     border-bottom: solid $blue;
 }
 
 /* ── Input ──────────────────────────────────────────────────────────────── */
 
 Input {
-    background: $bg-elevated;
+    background: transparent;
     border: solid $border-subtle;
     color: $text;
     padding: 0 1;
@@ -465,20 +454,19 @@ Input {
 
 Input:focus {
     border: solid $border;
-    background: $bg-panel;
+    background: transparent;
 }
 
 /* ── Buttons ────────────────────────────────────────────────────────────── */
 
 Button {
-    background: $bg-elevated;
+    background: transparent;
     color: $text;
     border: solid $border;
     padding: 0 2;
 }
 
 Button:hover {
-    background: $bg-hover;
     color: $text;
     border: solid $border;
 }
@@ -486,7 +474,7 @@ Button:hover {
 /* ── Scrollbar ──────────────────────────────────────────────────────────── */
 
 ScrollBar {
-    background: $bg-panel;
+    background: transparent;
     color: $text-dim;
 }
 
@@ -497,13 +485,13 @@ ScrollBar > .scrollbar--bar {
 /* ── Footer / key binding hints ─────────────────────────────────────────── */
 
 Footer {
-    background: $bg-panel;
+    background: transparent;
     color: $text-muted;
     border-top: solid $border-subtle;
 }
 
 Footer > .footer--key {
-    background: $bg-elevated;
+    background: transparent;
     color: $text;
     text-style: bold;
 }

@@ -60,8 +60,12 @@ class TestReport:
 class TestDiscovery:
     """Phase 32: Discover which test framework(s) a project uses."""
 
-    def __init__(self, workspace_root: Path) -> None:
+    def __init__(self, workspace_root: Path, *, python: str = "python") -> None:
         self._root = workspace_root
+        # Interpreter used for python-based test frameworks. Defaults to
+        # resolving `python` on PATH; callers (e.g. the MCP server) can pass
+        # their own interpreter (sys.executable) for reliability.
+        self._python = python
 
     def detect_framework(self) -> TestFramework:
         """Auto-detect the primary test framework."""
@@ -91,8 +95,8 @@ class TestDiscovery:
         """Return the command to run tests for the detected framework."""
         fw = framework or self.detect_framework()
         commands = {
-            "pytest": ["python", "-m", "pytest", "-v", "--tb=short"],
-            "unittest": ["python", "-m", "unittest", "discover", "-v"],
+            "pytest": [self._python, "-m", "pytest", "-v", "--tb=short"],
+            "unittest": [self._python, "-m", "unittest", "discover", "-v"],
             "npm": ["npm", "test"],
             "cargo": ["cargo", "test"],
             "unknown": [],
@@ -107,10 +111,12 @@ class TestRunner:
         self,
         workspace_root: Path,
         timeout: int = 120,
+        *,
+        python: str = "python",
     ) -> None:
         self._root = workspace_root
         self._timeout = timeout
-        self._discovery = TestDiscovery(workspace_root)
+        self._discovery = TestDiscovery(workspace_root, python=python)
 
     def run(
         self,

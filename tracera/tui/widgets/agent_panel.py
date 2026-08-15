@@ -24,22 +24,22 @@ class MessageWidget(Static):
     def render(self) -> Text:
         text = Text()
         if self.role == "user":
-            text.append("  YOU  ", style="bold black on cyan")
+            text.append("  YOU  ", style="bold cyan")
             text.append("  ")
-            text.append(self.msg_content, style="#e0e0ff")
+            text.append(self.msg_content, style="#dcdcf5")
         elif self.role == "assistant":
-            text.append("  TRACERA  ", style="bold black on #bd00ff")
+            text.append("  TRACERA  ", style="bold magenta")
             text.append("  ")
             text.append(self.msg_content, style="#e0e0ff")
         elif self.role == "tool":
-            text.append("  ⚙  ", style="#00ff88")
+            text.append("  ⚙  ", style="#4ac26b")
             text.append(self.msg_content[:200], style="dim #60c060")
         elif self.role == "error":
             text.append("  ✗  ", style="bold red")
             text.append(self.msg_content, style="red")
         elif self.role == "thinking":
             text.append("  ◌  ", style="dim cyan")
-            text.append(self.msg_content, style="dim #606090 italic")
+            text.append(self.msg_content, style="dim #9090b0 italic")
         elif self.role == "meta":
             text.append("     ", style="dim")
             text.append(self.msg_content, style="dim #8080b0")

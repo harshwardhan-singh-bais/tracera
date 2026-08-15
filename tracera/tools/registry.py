@@ -125,21 +125,29 @@ def extend_registry_with_retrieval(
     retriever,
     expander,
     graph_retriever=None,
+    context_engine=None,
+    compressor=None,
 ) -> ToolRegistry:
     """
     Phase 27/28 — Extend an existing registry with code-intelligence tools.
 
     This makes the agent retrieval-aware: it can now call search_code,
-    find_symbol, and get_context as native tools alongside read_file/grep.
-    When a symbol graph is available (Phases 25-26), the graph-backed tools
-    find_references and get_dependencies are registered too, and get_context
-    includes graph neighbours.
+    find_symbol, find_definition, and get_context as native tools alongside
+    read_file/grep. When a symbol graph is available (Phases 25-26), the
+    graph-backed tools find_references and get_dependencies are registered
+    too, and get_context includes graph neighbours.
+
+    Phases 29/30: when context_engine/compressor are provided, retrieval
+    tool output is assembled + compressed into LLM-ready context blocks
+    instead of raw chunk dumps.
 
     Args:
         registry: An existing ToolRegistry (from create_default_registry).
         retriever: A SymbolAwareRetriever instance.
         expander: A ContextExpander instance.
         graph_retriever: A GraphRetriever instance (optional).
+        context_engine: A ContextAssemblyEngine instance (optional).
+        compressor: A ContextCompressor instance (optional).
 
     Returns:
         The same registry, extended with retrieval tools.
@@ -147,23 +155,31 @@ def extend_registry_with_retrieval(
     from tracera.tools.code_search import (
         SearchCodeTool,
         FindSymbolTool,
+        FindDefinitionTool,
         GetContextTool,
         FindReferencesTool,
         GetDependenciesTool,
     )
 
     tools: list[Tool] = [
-        SearchCodeTool(retriever),
+        SearchCodeTool(retriever, compressor, context_engine),
         FindSymbolTool(retriever),
+        FindDefinitionTool(retriever, compressor),
     ]
 
     if graph_retriever is not None:
         graph = graph_retriever.graph
-        tools.append(GetContextTool(retriever, expander, graph_retriever))
+        tools.append(GetContextTool(
+            retriever, expander, graph_retriever,
+            compressor=compressor, context_engine=context_engine,
+        ))
         tools.append(FindReferencesTool(graph))
         tools.append(GetDependenciesTool(graph))
     else:
-        tools.append(GetContextTool(retriever, expander))
+        tools.append(GetContextTool(
+            retriever, expander,
+            compressor=compressor, context_engine=context_engine,
+        ))
 
     registry.register_many(tools)
     log.info(

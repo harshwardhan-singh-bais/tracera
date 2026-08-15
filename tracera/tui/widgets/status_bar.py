@@ -32,8 +32,8 @@ class StatusBar(Widget):
     StatusBar {
         height: 1;
         layout: horizontal;
-        background: #0d0d1e;
-        border-top: solid #007a9a;
+        background: transparent;
+        border-top: solid #26262e;
     }
     """
 

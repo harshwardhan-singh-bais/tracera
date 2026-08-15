@@ -163,6 +163,11 @@ class TraceraTUI(App):
     # ── Layout ────────────────────────────────────────────────────────────────
 
     def compose(self) -> ComposeResult:
+        # Typewriter ASCII banner at the top — the UI assembles below it,
+        # on the same page (no full-screen overlay / page switch).
+        with Vertical(id="splash-banner"):
+            yield Static("", id="splash-logo")
+            yield Static("", id="splash-status")
         yield self._build_header()
         with Horizontal(id="main-layout"):
             # Single-column conversation (the terminal) — full focus
@@ -185,10 +190,6 @@ class TraceraTUI(App):
 
         yield StatusBar(id="status-bar")
         yield Footer()
-        # Typewriter splash overlay — covers the screen while it animates
-        with Vertical(id="splash-overlay"):
-            yield Static("", id="splash-logo")
-            yield Static("", id="splash-status")
 
     def _build_header(self) -> Horizontal:
         from rich.text import Text
@@ -395,6 +396,7 @@ class TraceraTUI(App):
         tool_log = self.query_one("#tool-log-widget", ToolLogPanel)
         thinking = self.query_one("#thinking-panel-widget", ThinkingPanel)
         status_bar = self.query_one("#status-bar", StatusBar)
+        plan_panel = self.query_one("#plan-panel-widget", PlanPanel)
 
         provider = self.agent.provider
         status_bar.update_stats(
@@ -471,6 +473,23 @@ class TraceraTUI(App):
                         # Live token-by-token rendering, Claude Code style
                         if event.text:
                             agent_panel.stream_delta(event.text)
+
+                    case AgentEventType.PLAN_UPDATE:
+                        # Phase 9: live plan → PlanPanel + thinking trace
+                        plan_data = event.metadata.get("plan")
+                        if plan_data:
+                            from tracera.agent.planner import Plan
+                            try:
+                                plan_panel.set_plan(Plan.from_dict(plan_data))
+                            except Exception:
+                                pass
+                        thinking.add_thinking("plan updated")
+                        turn_trace.append(("think", "plan updated"))
+
+                    case AgentEventType.MEMORY_UPDATE:
+                        # Phase 10: memory was written — refresh the memory tab
+                        thinking.add_thinking(event.text or "memory saved")
+                        self.action_show_memory()
 
                     case AgentEventType.RESPONSE_COMPLETE:
                         total_iterations = event.metadata.get("iterations", 0)
@@ -630,8 +649,21 @@ class TraceraTUI(App):
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
+    # ASCII-art TRACERA (block letters) typed out at the top of the page.
+    _SPLASH_ART = [
+        " ████████╗██████╗  █████╗  ██████╗███████╗██████╗  █████╗ ",
+        " ╚══██╔══╝██╔══██╗██╔══██╗██╔════╝██╔════╝██╔══██╗██╔══██╗",
+        "    ██║   ██████╔╝███████║██║     █████╗  ██████╔╝███████║",
+        "    ██║   ██╔══██╗██╔══██║██║     ██╔══╝  ██╔══██╗██╔══██║",
+        "    ██║   ██║  ██║██║  ██║╚██████╗███████╗██║  ██║██║  ██║",
+        "    ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝",
+    ]
+
     def on_mount(self) -> None:
-        """Initialise status bar, then play the typewriter splash animation."""
+        """Hide the UI sections, then play the typewriter banner animation.
+
+        The UI assembles BELOW the banner on the same page — no page switch.
+        """
         status_bar = self.query_one("#status-bar", StatusBar)
         status_bar.update_stats(
             provider=self.agent.provider.name,
@@ -639,44 +671,76 @@ class TraceraTUI(App):
             status="idle",
             workspace=str(self.workspace_path),
         )
+        # Hide the interface initially — it builds in below the banner.
+        for selector in ("#app-header", "#main-layout", "#status-bar", "Footer"):
+            try:
+                self.query_one(selector).display = False
+            except Exception:
+                pass
         self.run_worker(self._animate_splash(), exclusive=True)
 
-    # ── Typewriter splash (gum-style) ────────────────────────────────────────
+    # ── Typewriter splash (gum-style, assembles the UI below it) ────────────
+
+    def _show(self, selector: str) -> None:
+        """Reveal a section of the interface in place."""
+        try:
+            self.query_one(selector).display = True
+        except Exception:
+            pass
 
     async def _animate_splash(self) -> None:
         """
-        Startup animation: types 'TRACERA', then a tagline, then cycles
-        through init steps with a spinner — like a live boot sequence.
+        Startup animation: the TRACERA ASCII art types out at the top of the
+        page, then the interface assembles below it — header, then the main
+        layout, then the status bar — while boot steps cycle underneath.
         """
         try:
             logo = self.query_one("#splash-logo", Static)
             status = self.query_one("#splash-status", Static)
 
-            word = "TRACERA"
-            buf = ""
-            for ch in word:
-                buf += ch
-                logo.update(f"\n  {buf}▌\n")
-                await asyncio.sleep(0.09)
+            # 1) Type the ASCII-art banner line by line (typewriter).
+            completed: list[str] = []
+            for line in self._SPLASH_ART:
+                buf = ""
+                for ch in line:
+                    buf += ch
+                    logo.update("\n".join(completed + [buf + "▌"]))
+                    await asyncio.sleep(0.004)
+                    if self._splash_done:
+                        return
+                completed.append(line)
+                logo.update("\n".join(completed))
+                await asyncio.sleep(0.06)
                 if self._splash_done:
                     return
-            logo.update(f"\n  {word}\n")
-            await asyncio.sleep(0.12)
-            if self._splash_done:
-                return
 
+            # 2) Type the tagline beneath the art.
             sub = "your terminal coding agent"
             sbuf = ""
             for ch in sub:
                 sbuf += ch
                 status.update(f"  {sbuf}▌")
-                await asyncio.sleep(0.02)
+                await asyncio.sleep(0.018)
                 if self._splash_done:
                     return
+            status.update(f"  {sub}")
+            await asyncio.sleep(0.1)
+            if self._splash_done:
+                return
 
-            for step in ("checking providers", "loading memory", "loading code index", "ready"):
+            # 3) Boot steps — each one assembles another section of the UI
+            #    below the banner (no page switch).
+            boot_steps = [
+                ("checking providers", "#app-header"),
+                ("loading memory", "#main-layout"),
+                ("loading code index", "#status-bar"),
+                ("ready", None),
+            ]
+            for step, selector in boot_steps:
                 status.update(f"  ⠋ {step}")
-                await asyncio.sleep(0.18)
+                if selector:
+                    self._show(selector)
+                await asyncio.sleep(0.2)
                 if self._splash_done:
                     return
             status.update("  ✓ ready")
@@ -687,11 +751,14 @@ class TraceraTUI(App):
         await self._finish_splash()
 
     async def _finish_splash(self) -> None:
-        """Remove the overlay and type the welcome message into the terminal."""
+        """Remove the banner (the UI is already in place below it)."""
         try:
-            self.query_one("#splash-overlay").remove()
+            self.query_one("#splash-banner").remove()
         except Exception:
             pass
+        # Safety: make sure every section is visible even if a step was skipped.
+        for selector in ("#app-header", "#main-layout", "#status-bar", "Footer"):
+            self._show(selector)
         try:
             self.query_one("#agent-input", Input).focus()
         except Exception:
@@ -714,7 +781,7 @@ class TraceraTUI(App):
         """Any key during the splash skips straight into the terminal."""
         if not self._splash_done:
             try:
-                if self.query_one("#splash-overlay"):
+                if self.query_one("#splash-banner"):
                     self._splash_done = True
                     self.run_worker(self._finish_splash())
             except Exception:

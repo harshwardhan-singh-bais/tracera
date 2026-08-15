@@ -73,14 +73,20 @@ def _build_agent(settings=None, workspace_path: Path | None = None, retrieval_pi
     )
     registry = create_default_registry(workspace)
 
-    # Phase 28: extend registry with code-search tools if index is available
+    # Phase 28: extend registry with code-search tools if index is available.
+    # Phases 29/30: pass the context engine + compressor so retrieval tool
+    # output is assembled + compressed before it reaches the LLM.
     if retrieval_pipeline is not None:
         from tracera.tools.registry import extend_registry_with_retrieval
         symbol_retriever = retrieval_pipeline[1]
         expander = retrieval_pipeline[2]
         graph_retriever = retrieval_pipeline[-1]
+        context_engine = retrieval_pipeline[4]
+        compressor = retrieval_pipeline[5]
         extend_registry_with_retrieval(
-            registry, symbol_retriever, expander, graph_retriever
+            registry, symbol_retriever, expander, graph_retriever,
+            context_engine=context_engine,
+            compressor=compressor,
         )
 
     # Provider with automatic failover across all configured APIs
@@ -105,6 +111,10 @@ def _build_agent(settings=None, workspace_path: Path | None = None, retrieval_pi
     from tracera.agent.memory import AgentMemory
     memory = AgentMemory(settings.memory_dir)
 
+    # Phase 9: let the agent plan every task up front (todo tracking + replan)
+    from tracera.agent.planner import TaskDecomposer
+    decomposer = TaskDecomposer(provider)
+
     agent = ReActAgent(
         provider=provider,
         registry=registry,
@@ -115,9 +125,42 @@ def _build_agent(settings=None, workspace_path: Path | None = None, retrieval_pi
         max_tokens=settings.tracera_default_max_tokens,
         system_prompt=system_prompt,
         memory_provider=lambda: memory.build_context(""),
+        # Phase 10: the agent writes decisions/errors back to persistent memory
+        memory_writer=lambda kind, content: _write_memory(memory, kind, content),
+        # Phase 9: decompose tasks into tracked todo lists
+        decomposer=decomposer,
         context_budget_tokens=settings.tracera_context_budget_tokens,
     )
     return agent, workspace, provider
+
+
+def _write_memory(memory, kind: str, content: str) -> None:
+    """
+    Phase 10 — persist agent outcomes into memory.
+
+    kind: 'decision' → PAST_DECISION · 'error' → ERROR_PATTERN
+    """
+    from tracera.agent.memory import MemoryCategory
+    try:
+        text = content.strip()
+        if not text:
+            return
+        if kind == "error":
+            memory.add(
+                text[:300],
+                MemoryCategory.ERROR_PATTERN,
+                source="agent",
+                importance=0.5,
+            )
+        else:
+            memory.add(
+                text[:300],
+                MemoryCategory.PAST_DECISION,
+                source="agent",
+                importance=0.4,
+            )
+    except Exception:
+        pass
 
 
 def _build_provider(settings=None):
@@ -931,6 +974,141 @@ def review(
         console.print(Panel(result, title="[bold cyan]Self-Review Report[/]", border_style="cyan"))
 
     asyncio.run(_run())
+
+
+# ── mcp ──────────────────────────────────────────────────────────────────────
+
+mcp_app = typer.Typer(
+    name="mcp",
+    help="MCP server & client integration (Phases 39-41).",
+)
+app.add_typer(mcp_app)
+
+
+@mcp_app.command("serve")
+def mcp_serve(
+    workspace: Annotated[
+        Optional[Path],
+        typer.Option("--workspace", "-w", help="Workspace root."),
+    ] = None,
+    transport: Annotated[
+        str,
+        typer.Option("--transport", "-t", help="stdio | sse | streamable-http"),
+    ] = "stdio",
+    check: Annotated[
+        bool,
+        typer.Option("--check", help="List exposed tools and exit (no server)."),
+    ] = False,
+) -> None:
+    """
+    Run the TRACERA MCP server (Phase 39).
+
+    Exposes the existing capabilities — search_code, find_symbol,
+    find_references, get_context, get_dependencies, run_tests,
+    inspect_repository — over the Model Context Protocol.
+    """
+    _setup()
+    settings = _get_settings()
+    ws_path = (workspace or settings.tracera_workspace).resolve()
+
+    from tracera.mcp.server import EXPOSED_TOOLS, TraceraMCPServer
+    server = TraceraMCPServer(settings, ws_path)
+
+    if check:
+        tools = asyncio.run(server.mcp.list_tools())
+        table = Table(
+            title=f"MCP Server Tools ({len(tools)})",
+            border_style="cyan",
+            show_header=True,
+        )
+        table.add_column("Tool", style="bold cyan")
+        table.add_column("Description", style="white")
+        for t in tools:
+            table.add_row(
+                t.name,
+                (t.description or "").replace("\n", " ")[:80],
+            )
+        console.print(table)
+        return
+
+    console.print(f"[dim]TRACERA MCP server — transport={transport} workspace={ws_path}[/]")
+    console.print(f"[dim]Tools: {', '.join(EXPOSED_TOOLS)}[/]")
+    server.mcp.run(transport=transport)
+
+
+@mcp_app.command("connect")
+def mcp_connect(
+    config: Annotated[
+        Path,
+        typer.Argument(help="JSON file with MCP server declarations."),
+    ],
+    workspace: Annotated[
+        Optional[Path],
+        typer.Option("--workspace", "-w", help="Workspace root for native tools."),
+    ] = None,
+) -> None:
+    """
+    Connect to external MCP servers (Phases 40-41).
+
+    Loads server declarations from a JSON file, connects over the MCP
+    protocol, and merges every remote tool into the unified ToolRegistry
+    alongside the native tools.
+    """
+    _setup()
+    settings = _get_settings()
+    ws_path = (workspace or settings.tracera_workspace).resolve()
+
+    from tracera.mcp.manager import MCPManager
+    from tracera.tools.registry import create_default_registry
+    from tracera.workspace.sandbox import WorkspaceSandbox
+
+    try:
+        manager = MCPManager.from_file(config)
+    except Exception as e:
+        console.print(f"[bold red]Failed to load config:[/] {e}")
+        raise typer.Exit(1)
+
+    registry = create_default_registry(WorkspaceSandbox(ws_path))
+    native_names = list(registry.names)
+
+    async def _run() -> int:
+        merged = await manager.connect_all()
+        for name, tools in merged.items():
+            table = Table(
+                title=f"Server: {name} — {len(tools)} tools",
+                border_style="cyan",
+                show_header=True,
+            )
+            table.add_column("Tool", style="bold cyan")
+            table.add_column("Description", style="white")
+            for t in tools:
+                table.add_row(
+                    t["name"],
+                    (t.get("description") or "").replace("\n", " ")[:70],
+                )
+            console.print(table)
+        added = await manager.register(merged, registry)
+        await manager.disconnect_all()
+        return added
+
+    try:
+        added = asyncio.run(_run())
+    except Exception as e:
+        console.print(f"[bold red]Connection failed:[/] {e}")
+        raise typer.Exit(1)
+
+    console.print(
+        f"\n[bold]Unified Tool Registry:[/] {len(native_names)} native + "
+        f"{added} MCP tools"
+    )
+    unified = Table(show_header=True, border_style="green")
+    unified.add_column("#", style="dim", width=3)
+    unified.add_column("Tool", style="bold cyan")
+    unified.add_column("Origin", style="dim")
+    for i, name in enumerate(registry.names, 1):
+        origin = "mcp" if name not in native_names else "native"
+        unified.add_row(str(i), name, origin)
+    console.print(unified)
 
 
 if __name__ == "__main__":

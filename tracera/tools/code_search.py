@@ -48,8 +48,15 @@ class SearchCodeTool(Tool):
         "required": ["query"],
     }
 
-    def __init__(self, retriever: Any) -> None:
+    def __init__(
+        self,
+        retriever: Any,
+        compressor: Any | None = None,
+        context_engine: Any | None = None,
+    ) -> None:
         self._retriever = retriever
+        self._compressor = compressor
+        self._context_engine = context_engine
 
     @property
     def parameters_schema(self) -> dict[str, Any]:
@@ -66,6 +73,23 @@ class SearchCodeTool(Tool):
                     query=query,
                     count=0,
                 )
+
+            # Phases 29/30: assemble + compress the retrieved pool into an
+            # LLM-ready context block instead of dumping raw chunks.
+            if self._context_engine is not None or self._compressor is not None:
+                if self._compressor is not None:
+                    results = self._compressor.compress(results)
+                if self._context_engine is not None:
+                    assembled = self._context_engine.assemble(
+                        results, query=f"Search: {query}"
+                    )
+                    return ToolResult.ok(
+                        tool_name=self.name,
+                        tool_call_id="",
+                        output=assembled,
+                        query=query,
+                        count=len(results),
+                    )
 
             output_parts = [f"## Search Results for: '{query}'\n"]
             for i, r in enumerate(results, 1):
@@ -91,6 +115,83 @@ class SearchCodeTool(Tool):
         except Exception as e:
             log.error("search_code failed: %s", e)
             return ToolResult.fail(self.name, "", str(e), query=query)
+
+
+class FindDefinitionTool(Tool):
+    """Find the exact definition (full source) of a symbol by name."""
+
+    name = "find_definition"
+    description = (
+        "Find the full definition source of a specific class, function, or method "
+        "by name. Returns the complete implementation, not just a snippet."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": "The exact name of the symbol whose definition to find.",
+            },
+            "symbol_type": {
+                "type": "string",
+                "enum": ["class", "function", "method", "any"],
+                "description": "Type of symbol to look for.",
+                "default": "any",
+            },
+        },
+        "required": ["name"],
+    }
+
+    def __init__(self, retriever: Any, compressor: Any | None = None) -> None:
+        self._retriever = retriever
+        self._compressor = compressor
+
+    @property
+    def parameters_schema(self) -> dict[str, Any]:
+        return self.parameters
+
+    async def execute(self, name: str, symbol_type: str = "any") -> ToolResult:
+        try:
+            query = f"definition of {name}"
+            if symbol_type != "any":
+                query = f"{symbol_type} {name}"
+
+            results = self._retriever.search(query, k=8)
+            # Prioritize exact symbol name matches
+            results.sort(
+                key=lambda r: (r.get("symbol") or "").lower() == name.lower(),
+                reverse=True,
+            )
+            results = [r for r in results if r.get("content")]
+
+            if not results:
+                return ToolResult.ok(
+                    tool_name=self.name,
+                    tool_call_id="",
+                    output=f"Definition of '{name}' not found in the index.",
+                    symbol=name,
+                )
+
+            # Phase 30: compress oversized results before returning to the LLM
+            if self._compressor is not None:
+                results = self._compressor.compress(results)
+
+            parts = [f"## Definition of `{name}`\n"]
+            for r in results:
+                fp = r.get("file_path") or "unknown"
+                start = r.get("start_line", "?")
+                end = r.get("end_line", "?")
+                content = r.get("content", "")
+                parts.append(f"### `{fp}` (lines {start}-{end})\n```\n{content}\n```\n")
+            return ToolResult.ok(
+                tool_name=self.name,
+                tool_call_id="",
+                output="\n".join(parts),
+                symbol=name,
+                matches=len(results),
+            )
+        except Exception as e:
+            return ToolResult.fail(self.name, "", str(e), symbol=name)
 
 
 class FindSymbolTool(Tool):
@@ -188,10 +289,19 @@ class GetContextTool(Tool):
         "required": ["symbol"],
     }
 
-    def __init__(self, retriever: Any, expander: Any, graph_retriever: Any = None) -> None:
+    def __init__(
+        self,
+        retriever: Any,
+        expander: Any,
+        graph_retriever: Any = None,
+        compressor: Any | None = None,
+        context_engine: Any | None = None,
+    ) -> None:
         self._retriever = retriever
         self._expander = expander
         self._graph_retriever = graph_retriever
+        self._compressor = compressor
+        self._context_engine = context_engine
 
     @property
     def parameters_schema(self) -> dict[str, Any]:
@@ -216,6 +326,22 @@ class GetContextTool(Tool):
                     output=f"No context found for '{symbol}'.",
                     symbol=symbol,
                 )
+
+            # Phases 29/30: compress + assemble into a single context block.
+            if self._compressor is not None or self._context_engine is not None:
+                if self._compressor is not None:
+                    expanded = self._compressor.compress(expanded)
+                if self._context_engine is not None:
+                    assembled = self._context_engine.assemble(
+                        expanded, query=f"Context for: {symbol}"
+                    )
+                    return ToolResult.ok(
+                        tool_name=self.name,
+                        tool_call_id="",
+                        output=assembled,
+                        symbol=symbol,
+                        chunks=len(expanded),
+                    )
 
             output_parts = [f"## Context for `{symbol}`\n"]
             for r in expanded:
