@@ -122,6 +122,72 @@ so multiple servers and native tools coexist without name collisions.
 Programmatically, `MCPClient` and `MCPManager` (in `tracera/mcp/`) give the
 same unified-registry behaviour inside the agent.
 
+**What credentials each external MCP server needs** (GitHub token, Postgres
+connection string, Slack tokens, ...) is documented in
+[`MCP_CONNECTIONS.md`](MCP_CONNECTIONS.md).
+
+## Multi-Agent Delegation (Phases 42–44)
+
+Specialized sub-agents — **Researcher, Coder, Tester, Reviewer, Debugger** —
+built on the same ReAct loop with role-specific prompts and tool subsets.
+The orchestrator decomposes a task, assigns each step a role, runs the
+sub-agents, and aggregates the results (conflict detection + shared task
+state).
+
+```bash
+# Delegate a task across the sub-agent fleet
+tracera delegate "Implement login and review the diff"
+
+tracera delegate --parallel "..."   # run independent steps concurrently
+```
+
+Code: `tracera/agent/subagents.py` (roles, tool filtering) +
+`tracera/agent/orchestrator.py` (delegation, shared state, aggregation).
+
+## Evaluation & Benchmarking (Phases 45–50)
+
+```bash
+# 45 · write the example retrieval-eval dataset (edit ground truth first!)
+tracera eval dataset -o .tracera/eval/dataset.json
+
+# 46-48 · compare grep / BM25 / dense / hybrid / hybrid+reranker
+#         (Recall@k, MRR, nDCG@k, latency, context size)
+tracera eval retrieval .tracera/eval/dataset.json -o .tracera/eval/report.md
+
+# 49 · end-to-end agent benchmark (success, tests, tokens, latency, cost)
+tracera eval agent --tasks "task one,task two"
+
+# 50 · ablation study (Agent → +BM25 → +Dense → +Hybrid → +Reranker → +Graph)
+tracera eval ablation
+```
+
+Code: `tracera/evaluation/` — `dataset.py` (45), `metrics.py` (46),
+`strategies.py` (47-48), `retrieval_benchmark.py` (46-48),
+`agent_benchmark.py` (49), `ablation.py` (50).
+
+## Security (Phases 51–55)
+
+| Phase | Defense | Module |
+|-------|---------|--------|
+| 51 | Prompt-injection detection/neutralization (repo, retrieval, web, MCP) | `tracera/security/injection.py` |
+| 52 | Secret detection & redaction (API keys, tokens, .env) | `tracera/security/secrets.py` |
+| 53 | Command safety (blocklist, allowlist, confirmation, sandbox cwd guard) | `tracera/security/command_safety.py` |
+| 54 | MCP trust model, tool permissions, output validation | `tracera/security/mcp_security.py` |
+| 55 | Resource-limit monitoring (iterations, tool calls, tokens) | `tracera/security/resources.py` |
+
+## Terminal UI (Phases 56–59)
+
+`tracera tui` (or just `tracera`) now includes:
+
+- **56 · REPL commands:** `/code` `/search` `/debug` `/index` `/test` `/review`
+  `/tools` `/mcp` `/cost` `/inspect` `/deps` `/plan` `/memory` `/model` …
+- **57 · Rich execution display:** live phases (`Searching…`, `Running tests…`,
+  `✓ N passed`) in the thinking trace and status bar.
+- **58 · Repository inspection:** Repo tab — files, symbols, dependency chains
+  (`/inspect`, `/deps <symbol>`).
+- **59 · Retrieval debugging:** Debug tab — per-strategy results for any query
+  (`/debug <query>` shows BM25 / Dense / Hybrid / Reranker side by side).
+
 ## Configuration
 
 ```bash

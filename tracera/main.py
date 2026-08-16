@@ -265,7 +265,12 @@ def main(
     from tracera.tui.app import TraceraTUI
 
     memory = AgentMemory(settings.memory_dir)
-    tui = TraceraTUI(agent=agent, memory=memory, workspace_path=workspace_path)
+    tui = TraceraTUI(
+        agent=agent,
+        memory=memory,
+        workspace_path=workspace_path,
+        retrieval_pipeline=retrieval_pipeline,
+    )
     tui.run()
 
 
@@ -974,6 +979,287 @@ def review(
         console.print(Panel(result, title="[bold cyan]Self-Review Report[/]", border_style="cyan"))
 
     asyncio.run(_run())
+
+
+# ── delegate ─────────────────────────────────────────────────────────────────
+
+@app.command()
+def delegate(
+    task: Annotated[str, typer.Argument(help="Task to delegate to the sub-agent fleet.")],
+    workspace: Annotated[
+        Optional[Path],
+        typer.Option("--workspace", "-w"),
+    ] = None,
+    parallel: Annotated[
+        bool,
+        typer.Option("--parallel", help="Run independent steps concurrently."),
+    ] = False,
+) -> None:
+    """
+    Delegate a task to specialized sub-agents (Phases 42-44).
+
+    The main agent's task is decomposed into steps, each assigned to a
+    role (Researcher / Coder / Tester / Reviewer / Debugger), then the
+    results are aggregated into a report.
+    """
+    _setup()
+    settings = _get_settings()
+    ws_path = (workspace or settings.tracera_workspace).resolve()
+
+    console.print(f"\n[bold cyan]TRACERA Delegation[/] — {task[:80]}\n")
+
+    try:
+        agent, workspace_sandbox, prov = _build_agent(settings, ws_path)
+        registry = agent.registry
+    except Exception as e:
+        console.print(f"[bold red]Init failed:[/] {e}")
+        raise typer.Exit(1)
+
+    from tracera.agent.orchestrator import TaskOrchestrator
+    from tracera.agent.subagents import build_sub_agent_fleet
+
+    fleet = build_sub_agent_fleet(
+        prov, registry,
+        model=settings.tracera_default_model,
+        max_iterations=settings.tracera_max_iterations,
+        max_tool_calls=settings.tracera_max_tool_calls,
+    )
+    orchestrator = TaskOrchestrator(fleet, parallel=parallel)
+
+    async def _run():
+        async for event in orchestrator.delegate(task):
+            etype = event["type"]
+            if etype == "plan_ready":
+                console.print(event["plan"].to_markdown())
+                console.print()
+            elif etype == "agent_start":
+                step = event["step"]
+                console.print(f"[bold cyan]>> {step.role.value.title()}[/] {step.task[:70]}")
+            elif etype == "agent_end":
+                step, result = event["step"], event["result"]
+                icon = "[green]OK[/]" if result.status.value == "success" else "[red]FAIL[/]"
+                console.print(
+                    f"  {icon} {result.label} — {result.latency_ms:.0f}ms · "
+                    f"{result.iterations} iter · {result.tool_calls} tools"
+                )
+                if result.output:
+                    console.print(Panel(
+                        result.output[:800],
+                        title=f"[bold]{result.label} result[/]",
+                        border_style="dim",
+                    ))
+                if result.error:
+                    console.print(f"  [red]error:[/] {result.error[:300]}")
+            elif etype == "report":
+                report = event["report"]
+                console.print("\n[bold]Aggregated report[/]")
+                console.print(Panel(
+                    report.to_markdown(),
+                    title="[bold cyan]Delegation Report[/]",
+                    border_style="cyan",
+                ))
+
+    asyncio.run(_run())
+
+
+# ── eval ─────────────────────────────────────────────────────────────────────
+
+eval_app = typer.Typer(
+    name="eval",
+    help="Evaluation & benchmarking (Phases 45-50).",
+)
+app.add_typer(eval_app)
+
+
+@eval_app.command("dataset")
+def eval_dataset(
+    output: Annotated[Path, typer.Option("--output", "-o", help="Where to write the dataset JSON.")] = Path(".tracera/eval/dataset.json"),
+) -> None:
+    """
+    Phase 45 — write the example retrieval-evaluation dataset to disk.
+
+    Edit the generated JSON to match your codebase (real file paths / symbols
+    as ground truth), then run `tracera eval retrieval`.
+    """
+    from tracera.evaluation.dataset import example_dataset
+    dataset = example_dataset()
+    path = dataset.save(output)
+    console.print(
+        f"[bold green]OK[/] Wrote {len(dataset)} benchmark queries to [cyan]{path}[/]\n\n"
+        "Edit the ground-truth files/symbols to match your codebase before "
+        "running the benchmark."
+    )
+
+
+@eval_app.command("retrieval")
+def eval_retrieval(
+    dataset_path: Annotated[
+        Path,
+        typer.Argument(help="Path to the evaluation dataset JSON."),
+    ] = Path(".tracera/eval/dataset.json"),
+    workspace: Annotated[Optional[Path], typer.Option("--workspace", "-w")] = None,
+    output: Annotated[Path, typer.Option("--output", "-o")] = Path(".tracera/eval/retrieval_report.md"),
+    include: Annotated[Optional[str], typer.Option("--include", help="Comma-separated strategy names.")] = None,
+) -> None:
+    """
+    Phases 46-48 — run the retrieval benchmark.
+
+    Compares grep / BM25 / dense / hybrid / hybrid+reranker on the dataset
+    and reports Recall@k, MRR, nDCG@k, latency, and context size.
+    """
+    _setup()
+    settings = _get_settings()
+    ws_path = (workspace or settings.tracera_workspace).resolve()
+
+    if not dataset_path.exists():
+        console.print(
+            f"[bold red]Dataset not found:[/] {dataset_path}\n"
+            "Run `tracera eval dataset` to create the example dataset first."
+        )
+        raise typer.Exit(1)
+
+    from tracera.evaluation.dataset import EvaluationDataset
+    from tracera.evaluation.retrieval_benchmark import RetrievalBenchmark
+    from tracera.evaluation.strategies import build_doc_resolver, build_strategies
+
+    dataset = EvaluationDataset.load(dataset_path)
+
+    pipeline = _build_retrieval_pipeline(settings, ws_path)
+    _, _, _, reranker, _, _, embedder, vector_store, bm25, _ = pipeline
+
+    from tracera.retrieval.dense import DenseRetriever
+    from tracera.retrieval.hybrid import HybridRetriever
+    dense = DenseRetriever(embedder, vector_store)
+    hybrid = HybridRetriever(bm25, dense)
+
+    include_list = [s.strip() for s in include.split(",")] if include else None
+    strategies = build_strategies(
+        workspace=ws_path,
+        bm25=bm25,
+        dense=dense,
+        hybrid=hybrid,
+        reranker=reranker,
+        resolve_doc=build_doc_resolver(vector_store),
+        include=include_list,
+    )
+    if not strategies:
+        console.print("[bold red]No strategies could be built — is the code index present?[/]")
+        raise typer.Exit(1)
+
+    console.print(f"[bold cyan]Retrieval benchmark[/] — {len(dataset)} queries, {len(strategies)} strategies\n")
+    report = RetrievalBenchmark(dataset, strategies).run()
+    console.print(report.to_markdown())
+    report.save(output)
+    console.print(f"\n[bold green]OK[/] Report saved to [cyan]{output}[/]")
+
+
+@eval_app.command("agent")
+def eval_agent(
+    tasks: Annotated[
+        Optional[str],
+        typer.Option("--tasks", help="Comma-separated coding tasks to run."),
+    ] = None,
+    workspace: Annotated[Optional[Path], typer.Option("--workspace", "-w")] = None,
+    output: Annotated[Path, typer.Option("--output", "-o")] = Path(".tracera/eval/agent_report.md"),
+) -> None:
+    """
+    Phase 49 — run the end-to-end agent benchmark.
+
+    Each task is run through the agent; metrics: success, tests passed,
+    iterations, tool calls, retrieval calls, tokens, latency, cost.
+    """
+    _setup()
+    settings = _get_settings()
+    ws_path = (workspace or settings.tracera_workspace).resolve()
+
+    default_tasks = [
+        "Where is JWT authentication implemented? Summarize the flow.",
+        "Find the function that handles database retries and explain it.",
+    ]
+    task_list = [t.strip() for t in tasks.split(",")] if tasks else default_tasks
+
+    from tracera.evaluation.agent_benchmark import AgentBenchmark
+
+    agent, _, prov = _build_agent(settings, ws_path)
+
+    async def runner(task: str) -> dict:
+        outcome = {"tool_names": set()}
+        async for event in await agent.run(task):
+            if event.type.value == "response_complete":
+                outcome["output"] = event.text or ""
+                outcome["success"] = True
+                outcome["iterations"] = event.metadata.get("iterations", 0)
+            elif event.type.value == "tool_end":
+                outcome["tool_names"].add(event.tool_name or "")
+            elif event.type.value == "error":
+                outcome["error"] = event.text
+        return outcome
+
+    bench = AgentBenchmark(runner, tasks=task_list, name="cli-agent")
+    report = asyncio.run(bench.run())
+    console.print(report.to_markdown())
+    report_path = output
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    import json
+    report_path.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
+    console.print(f"\n[bold green]OK[/] Report saved to [cyan]{report_path}[/]")
+
+
+@eval_app.command("ablation")
+def eval_ablation(
+    tasks: Annotated[
+        Optional[str],
+        typer.Option("--tasks", help="Comma-separated coding tasks to run per arm."),
+    ] = None,
+    workspace: Annotated[Optional[Path], typer.Option("--workspace", "-w")] = None,
+    output: Annotated[Path, typer.Option("--output", "-o")] = Path(".tracera/eval/ablation_report.md"),
+) -> None:
+    """
+    Phase 50 — run the ablation study.
+
+    Compares Agent / +BM25 / +Dense / +Hybrid / +Hybrid+Reranker /
+    +Hybrid+Graph on the same tasks to show which components matter.
+    """
+    _setup()
+    settings = _get_settings()
+    ws_path = (workspace or settings.tracera_workspace).resolve()
+
+    default_tasks = [
+        "Find where authentication is handled and explain the flow.",
+        "Locate the retry logic for database calls.",
+    ]
+    task_list = [t.strip() for t in tasks.split(",")] if tasks else default_tasks
+
+    from tracera.evaluation.ablation import AblationFramework, AblationConfig
+
+    # Build an agent runner per ablation config, then benchmark it.
+    async def build_agent(config: AblationConfig):
+        agent, _, prov = _build_agent(settings, ws_path)
+        enabled = config
+        tool_filter = None
+        if not (enabled.bm25 or enabled.dense or enabled.hybrid):
+            tool_filter = lambda name: not name.startswith(("search_", "find_", "get_"))
+
+        async def runner(task: str) -> dict:
+            outcome = {"tool_names": set()}
+            async for event in await agent.run(task):
+                if event.type.value == "response_complete":
+                    outcome["output"] = event.text or ""
+                    outcome["success"] = True
+                    outcome["iterations"] = event.metadata.get("iterations", 0)
+                elif event.type.value == "tool_end":
+                    outcome["tool_names"].add(event.tool_name or "")
+                elif event.type.value == "error":
+                    outcome["error"] = event.text
+            return outcome
+
+        return runner
+
+    framework = AblationFramework(task_list, build_agent, name="cli-ablation")
+    report = asyncio.run(framework.run())
+    console.print(report.to_markdown())
+    report.save(output)
+    console.print(f"\n[bold green]OK[/] Report saved to [cyan]{output}[/]")
 
 
 # ── mcp ──────────────────────────────────────────────────────────────────────

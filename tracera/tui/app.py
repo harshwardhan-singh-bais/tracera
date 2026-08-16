@@ -22,6 +22,7 @@ Layout:
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +48,8 @@ from tracera.tui.widgets.plan_panel import PlanPanel
 from tracera.tui.widgets.memory_panel import MemoryPanel
 from tracera.tui.widgets.status_bar import StatusBar
 from tracera.tui.widgets.thinking_panel import ThinkingPanel
+from tracera.tui.widgets.repo_panel import RepoPanel
+from tracera.tui.widgets.debug_panel import DebugPanel
 from tracera.agent.react_loop import AgentEvent, AgentEventType, ReActAgent
 from tracera.agent.memory import AgentMemory
 from tracera.agent.planner import TaskDecomposer
@@ -67,13 +70,24 @@ def _format_args(args: dict) -> str:
 _HELP_TEXT = """
 [bold cyan]TRACERA — Commands[/]
 
-[bold]/help[/]         Show this help
-[bold]/clear[/]        Clear conversation
-[bold]/status[/]       Show system status
-[bold]/memory[/]       Show memory contents
-[bold]/model[/] [name]  Switch model
-[bold]/plan[/] [task]   Decompose a task into steps
-[bold]/reset[/]        Reset conversation state
+[bold]/help[/]          Show this help
+[bold]/clear[/]         Clear conversation
+[bold]/status[/]        Show system status
+[bold]/memory[/]        Show memory contents
+[bold]/model[/] [name]   Switch model
+[bold]/plan[/] [task]    Decompose a task into steps
+[bold]/code[/] [task]    Run a coding task (same as plain input)
+[bold]/search[/] <q>     Search the code index (hybrid)
+[bold]/debug[/] <q>      Compare retrieval strategies (BM25/Dense/Hybrid/Reranker)
+[bold]/index[/]          Index the workspace (Phase 16-24 pipeline)
+[bold]/test[/]           Run the project's test suite
+[bold]/review[/]         Ask the agent to review current changes
+[bold]/tools[/]          List available tools
+[bold]/mcp[/]            Show MCP status & config
+[bold]/cost[/]           Show session token/cost estimate
+[bold]/inspect[/]        Repository inspection (files, symbols, git)
+[bold]/deps[/] <symbol>   Show a symbol's dependency chain
+[bold]/reset[/]          Reset conversation state
 
 [bold cyan]Keys[/]
 
@@ -148,12 +162,14 @@ class TraceraTUI(App):
         agent: ReActAgent,
         memory: AgentMemory,
         workspace_path: Path = Path("."),
+        retrieval_pipeline=None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.agent = agent
         self.memory = memory
         self.workspace_path = workspace_path
+        self.retrieval_pipeline = retrieval_pipeline
         self._conversation = ConversationState()
         self._running_task: asyncio.Task | None = None
         self._hovered_scrollable: ScrollableContainer | None = None
@@ -184,6 +200,10 @@ class TraceraTUI(App):
                         yield MemoryPanel(id="memory-panel-widget")
                     with TabPane("Tools", id="tab-tools"):
                         yield self._build_tools_panel()
+                    with TabPane("Repo", id="tab-repo"):
+                        yield RepoPanel(id="repo-panel-widget")
+                    with TabPane("Debug", id="tab-debug"):
+                        yield DebugPanel(id="debug-panel-widget")
                 yield self._build_stats_panel()
                 yield self._build_context_panel()
                 yield self._build_history_panel()
@@ -369,8 +389,267 @@ class TraceraTUI(App):
                 panel.add_assistant_message(f"Model switched to: [bold cyan]{new_model}[/]")
             else:
                 panel.add_error("Usage: /model <model-name>")
+        elif cmd in ("/code", "/ask"):
+            task = text[len(cmd):].strip()
+            if task:
+                panel.add_user_message(task)
+                self._append_history(task)
+                self._run_agent_task(task)
+            else:
+                panel.add_error(f"Usage: {cmd} <task description>")
+        elif cmd == "/search":
+            query = text[len(cmd):].strip()
+            if query:
+                self._run_search(query, panel)
+            else:
+                panel.add_error("Usage: /search <query>")
+        elif cmd == "/debug":
+            query = text[len(cmd):].strip()
+            if query:
+                self._run_debug(query)
+            else:
+                panel.add_error("Usage: /debug <query>")
+        elif cmd == "/index":
+            self._run_indexing(panel)
+        elif cmd == "/test":
+            self._run_tests(panel)
+        elif cmd == "/review":
+            self._run_review(panel)
+        elif cmd == "/tools":
+            self._show_tools(panel)
+        elif cmd == "/mcp":
+            self._show_mcp(panel)
+        elif cmd == "/cost":
+            self._show_cost(panel)
+        elif cmd == "/inspect":
+            self._run_inspect()
+        elif cmd == "/deps":
+            symbol = text[len(cmd):].strip()
+            if symbol:
+                self._run_deps(symbol)
+            else:
+                panel.add_error("Usage: /deps <symbol>")
         else:
             panel.add_error(f"Unknown command: {cmd}. Type /help for available commands.")
+
+    # ── Phase 56: REPL command implementations ───────────────────────────────
+
+    def _show_tools(self, panel: AgentPanel) -> None:
+        names = [t.name for t in self.agent.registry.tools]
+        if not names:
+            panel.add_error("No tools registered.")
+            return
+        lines = "\n".join(f"  [dim]▪[/] {n}" for n in sorted(names))
+        panel.add_assistant_message(f"[bold]Available tools ({len(names)})[/]\n{lines}")
+
+    def _show_mcp(self, panel: AgentPanel) -> None:
+        config_path = Path(self.workspace_path) / ".tracera" / "mcp_servers.json"
+        lines = ["[bold]MCP[/]"]
+        if config_path.exists():
+            lines.append(f"  config: [cyan]{config_path}[/]")
+        else:
+            lines.append(
+                "  [dim]No mcp_servers.json yet — see MCP_CONNECTIONS.md for "
+                "server configs and required credentials.[/]"
+            )
+        lines.append("  [dim]Use `tracera mcp serve` (server) or `tracera mcp connect <file>` (client).[/]")
+        panel.add_assistant_message("\n".join(lines))
+
+    def _show_cost(self, panel: AgentPanel) -> None:
+        stats = self._conversation.stats
+        tokens_in = stats.total_tokens_in
+        tokens_out = stats.total_tokens_out
+        cost_in = tokens_in / 1_000_000 * 0.30
+        cost_out = tokens_out / 1_000_000 * 1.20
+        panel.add_assistant_message(
+            f"[bold]Session cost estimate[/]\n\n"
+            f"  Tokens in:   [cyan]{tokens_in:,}[/]\n"
+            f"  Tokens out:  [cyan]{tokens_out:,}[/]\n"
+            f"  Total:       [bold]{tokens_in + tokens_out:,}[/]\n"
+            f"  Est. cost:   [bold green]${cost_in + cost_out:.4f}[/]\n"
+            f"[dim](estimate @ $0.30/$1.20 per 1M tokens)[/]"
+        )
+
+    @work(exclusive=False)
+    async def _run_search(self, query: str, panel: AgentPanel) -> None:
+        """Hybrid search over the code index, rendered in the conversation."""
+        panel.set_activity("running", "searching", query[:40])
+        try:
+            if self.retrieval_pipeline is None:
+                panel.add_error("Code index not loaded — run /index first.")
+                return
+            symbol_retriever = self.retrieval_pipeline[1]
+            hits = symbol_retriever.search(query, k=8)
+            if not hits:
+                panel.add_assistant_message(f"[bold]Search:[/] {query}\n\n[dim]No results.[/]")
+                return
+            lines = [f"[bold]Search:[/] {query}\n"]
+            for i, hit in enumerate(hits[:8], 1):
+                path = hit.get("file_path") or hit.get("id") or "?"
+                symbol = hit.get("symbol") or ""
+                score = hit.get("_relevance_score") or hit.get("_rrf_score") or ""
+                line = f"  {i}. [bold]{path}[/]"
+                if symbol:
+                    line += f" [dim]({symbol})[/]"
+                if score:
+                    line += f" [dim]· {float(score):.3f}[/]"
+                lines.append(line)
+            panel.add_assistant_message("\n".join(lines))
+        except Exception as e:
+            panel.add_error(f"Search failed: {e}")
+        finally:
+            panel.clear_activity()
+
+    @work(exclusive=False)
+    async def _run_debug(self, query: str) -> None:
+        """Phase 59: retrieval debugging — compare every strategy."""
+        panel = self.query_one("#agent-panel-widget", AgentPanel)
+        debug_panel = self.query_one("#debug-panel-widget", DebugPanel)
+        panel.set_activity("running", "debugging retrieval", query[:40])
+        try:
+            if self.retrieval_pipeline is None:
+                debug_panel.show_error("Code index not loaded — run /index first.")
+                panel.add_error("Code index not loaded — run /index first.")
+                return
+            from tracera.evaluation.strategies import (
+                build_doc_resolver,
+                build_strategies,
+            )
+            from tracera.retrieval.dense import DenseRetriever
+            from tracera.retrieval.hybrid import HybridRetriever
+            (
+                _, _, _, reranker, _, _, embedder, vector_store, bm25, _,
+            ) = self.retrieval_pipeline
+            dense_retriever = DenseRetriever(embedder, vector_store)
+            hybrid = HybridRetriever(bm25, dense_retriever)
+            strategies = build_strategies(
+                workspace=self.workspace_path,
+                bm25=bm25,
+                dense=dense_retriever,
+                hybrid=hybrid,
+                reranker=reranker,
+                resolve_doc=build_doc_resolver(vector_store),
+            )
+            results: dict[str, list[dict]] = {}
+            for name, strategy in strategies.items():
+                hits = strategy.retrieve(query, k=5)
+                results[name] = [h.to_dict() for h in hits]
+            debug_panel.show_query(query, results)
+            panel.add_assistant_message(
+                f"[bold]Debug:[/] {query} — compared "
+                f"{', '.join(results.keys())}. See the Debug tab."
+            )
+        except Exception as e:
+            debug_panel.show_error(str(e))
+            panel.add_error(f"Debug failed: {e}")
+        finally:
+            panel.clear_activity()
+
+    @work(exclusive=False)
+    async def _run_indexing(self, panel: AgentPanel) -> None:
+        """Phase 56 /index — run the Phase 16-24 indexing pipeline."""
+        panel.add_assistant_message("[dim]Indexing workspace… this may take a while.[/]")
+        panel.set_activity("running", "indexing", str(self.workspace_path)[:40])
+        try:
+            from tracera.config.settings import get_settings
+            from tracera.main import _build_retrieval_pipeline
+            settings = get_settings()
+            pipeline = _build_retrieval_pipeline(settings, self.workspace_path)
+            indexer = pipeline[0]
+            stats = await asyncio.to_thread(indexer.run, full_rebuild=False)
+            self.retrieval_pipeline = pipeline
+            panel.add_assistant_message(
+                f"[bold green]✓ Index complete[/]\n"
+                f"  new: {stats.get('new', 0)} · modified: {stats.get('modified', 0)} · "
+                f"deleted: {stats.get('deleted', 0)} · skipped: {stats.get('skipped', 0)}\n"
+                f"  chunks: {stats.get('chunks_indexed', 0)}"
+            )
+        except Exception as e:
+            panel.add_error(f"Indexing failed: {e}")
+        finally:
+            panel.clear_activity()
+
+    @work(exclusive=False)
+    async def _run_tests(self, panel: AgentPanel) -> None:
+        """Phase 56 /test — run the project test suite with a rich report."""
+        panel.set_activity("running", "running tests", "pytest")
+        try:
+            from tracera.tools.test_runner import TestRunner
+            import sys
+            runner = TestRunner(self.workspace_path, python=sys.executable)
+            report = await asyncio.to_thread(runner.run)
+            lines = [report.summary, ""]
+            for f in report.failures[:10]:
+                location = f"{f.file_path}:{f.line_number}" if f.file_path else f.test_name
+                lines.append(f"  [red]✗[/] {location}: {f.error_type}: {f.error_message[:120]}")
+            if not report.failures and not report.success and report.raw_output:
+                lines.append(report.raw_output[:800])
+            panel.add_assistant_message("\n".join(lines) or "[dim]No tests detected.[/]")
+        except Exception as e:
+            panel.add_error(f"Test run failed: {e}")
+        finally:
+            panel.clear_activity()
+
+    @work(exclusive=False)
+    async def _run_review(self, panel: AgentPanel) -> None:
+        """Phase 56 /review — ask the agent to review current changes."""
+        panel.add_user_message("Review the current uncommitted changes and report issues.")
+        self._append_history("Review the current changes")
+        self._run_agent_task(
+            "Review the current uncommitted changes in the workspace: "
+            "check git diff for bugs, security issues, and style problems. "
+            "Report findings with file locations."
+        )
+
+    @work(exclusive=False)
+    async def _run_inspect(self) -> None:
+        """Phase 58 /inspect — repository inspection panel."""
+        from tracera.config.settings import get_settings
+        repo_panel = self.query_one("#repo-panel-widget", RepoPanel)
+        panel = self.query_one("#agent-panel-widget", AgentPanel)
+        try:
+            await repo_panel.show_repository(self.workspace_path, get_settings())
+        except Exception as e:
+            await repo_panel.show_repository(self.workspace_path)
+            panel.add_error(f"Inspect failed: {e}")
+
+    def _run_deps(self, symbol: str) -> None:
+        """Phase 58 /deps — symbol dependency chain in the repo panel."""
+        from tracera.config.settings import get_settings
+        repo_panel = self.query_one("#repo-panel-widget", RepoPanel)
+        repo_panel.show_dependencies(symbol, get_settings())
+
+    # ── Phase 57: rich execution display ─────────────────────────────────────
+
+    @staticmethod
+    def _phase_for_tool(name: str) -> str | None:
+        """Map a tool call to a human execution-phase label."""
+        if name in ("search_code", "find_symbol", "find_definition", "grep"):
+            return "Searching"
+        if name in ("get_context", "get_dependencies", "find_references"):
+            return "Analyzing"
+        if name in ("read_file", "list_dir"):
+            return "Reading"
+        if name in ("write_file", "edit_file", "delete_file"):
+            return "Editing"
+        if name == "run_command":
+            return "Running command"
+        if name == "git":
+            return "Git"
+        return None
+
+    @staticmethod
+    def _count_tests_passed(output: str | None) -> str | None:
+        """Extract a '✓ N passed' summary from pytest output (Phase 57)."""
+        if not output:
+            return None
+        match = re.search(r"(\d+) passed", output)
+        if not match:
+            return None
+        total = match.group(1)
+        failed = re.search(r"(\d+) failed", output)
+        suffix = f", {failed.group(1)} failed" if failed else ""
+        return f"{total} passed{suffix}"
 
     def _show_status(self, panel: AgentPanel) -> None:
         provider = self.agent.provider
@@ -433,6 +712,12 @@ class TraceraTUI(App):
                     case AgentEventType.TOOL_START:
                         name = event.tool_name or "tool"
                         args_preview = _format_args(event.tool_args or {})
+                        # Phase 57: rich execution display — annotate each
+                        # tool with its human execution phase.
+                        phase = self._phase_for_tool(name)
+                        if phase:
+                            thinking.add_thinking(phase)
+                            turn_trace.append(("think", phase))
                         status_bar.update_stats(
                             status="running",
                             activity=f"{name}{args_preview}",
@@ -463,6 +748,12 @@ class TraceraTUI(App):
                                 "done", name, f"{duration_ms:.0f}ms"
                             )
                             turn_trace.append(("done", f"{name}  {duration_ms:.0f}ms"))
+                            # Phase 57: "Running N tests… → ✓ N passed"
+                            if name == "run_command" and event.tool_output:
+                                passed = self._count_tests_passed(event.tool_output)
+                                if passed is not None:
+                                    thinking.add_thinking(f"✓ {passed} passed")
+                                    turn_trace.append(("done", f"✓ {passed} passed"))
                         else:
                             agent_panel.set_activity(
                                 "error", name, (event.tool_output or "")[:60]
