@@ -7,9 +7,12 @@ widgets are the conversation stream panel and the row types it renders.
 
 from tracera.tui.widgets.agent_panel import (
     AgentPanel,
+    AttachmentChip,
     CollapsibleRow,
     InlineStatus,
+    LoaderPill,
     MessageWidget,
+    PhaseRow,
     ToolRow,
     ThinkingDisclosure,
     format_args,
@@ -17,9 +20,12 @@ from tracera.tui.widgets.agent_panel import (
 
 __all__ = [
     "AgentPanel",
+    "AttachmentChip",
     "CollapsibleRow",
     "InlineStatus",
+    "LoaderPill",
     "MessageWidget",
+    "PhaseRow",
     "ToolRow",
     "ThinkingDisclosure",
     "format_args",

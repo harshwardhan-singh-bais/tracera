@@ -34,19 +34,26 @@ from textual import events, on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, ScrollableContainer
-from textual.widgets import Input, Static
+from textual.screen import Screen
+from textual.widgets import DirectoryTree, Input, Static
 from textual.command import Hit, Provider
 
+from tracera.tui.diffutil import DIFFABLE_TOOLS, MAX_DIFF_BYTES, compute_diff, is_image
 from tracera.tui.widgets.agent_panel import (
     AgentPanel,
     CollapsibleRow,
     InlineStatus,
+    LoaderPill,
+    _PHASE_LABELS,
     format_args,
 )
 from tracera.agent.react_loop import AgentEvent, AgentEventType, ReActAgent
 from tracera.agent.memory import AgentMemory
 from tracera.agent.planner import TaskDecomposer
 from tracera.conversation.state import ConversationState
+
+#: Attached text files larger than this (bytes) are not injected into context.
+_ATTACH_TEXT_MAX_BYTES = 200_000
 
 
 _HELP_TEXT = """\
@@ -84,11 +91,42 @@ _HELP_TEXT = """\
 
 [bold cyan]Stream[/]
 
-Everything the agent does streams inline: tool calls, file reads, command
-runs — ✓ success, ✗ failure (with the error line beneath), an animated
-spinner while in flight. Click any [bold]→ row[/] (memory, search results,
-plans, repo info) to expand its content inline.
+Everything the agent does streams inline: phase markers (◇ Thinking,
+◇ Generating), tool calls, file reads, command runs — ✓ success, ✗ failure
+(with the error line beneath), an animated spinner while in flight.
+[bold]File edits[/] collapse to a [bold]📝 path +N -M[/] summary row — click
+it to expand the full inline diff (green added, red removed). Click any
+[bold]→ row[/] (memory, search results, plans, repo info) to expand it.
+
+[bold cyan]Attachments[/]
+
+Click [bold]＋[/] next to the input to attach files (text files are read and
+injected into the agent's context; images show a [bold][!][/] badge when the
+active model cannot view them). While a request runs, the input is replaced
+by a loader pill showing the live phase — click [bold]●[/] to stop it.
 """
+
+
+class FilePicker(Screen):
+    """Modal directory-tree picker for attachments. Dismisses with the path."""
+
+    BINDINGS = [("escape", "dismiss", "Cancel")]
+
+    def __init__(self, root: Path, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._root = root
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="picker-panel"):
+            yield Static(f"Attach file from {self._root}", id="picker-title")
+            yield DirectoryTree(str(self._root), id="picker-tree")
+            yield Static(
+                "enter: attach · esc: cancel",
+                id="picker-hint",
+            )
+
+    def on_directory_tree_file_selected(self, event: DirectoryTree.FileSelected) -> None:
+        self.dismiss(event.path)
 
 
 class TraceraCommands(Provider):
@@ -137,6 +175,7 @@ class TraceraTUI(App):
         memory: AgentMemory,
         workspace_path: Path = Path("."),
         retrieval_pipeline=None,
+        banner: str | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -144,19 +183,20 @@ class TraceraTUI(App):
         self.memory = memory
         self.workspace_path = workspace_path
         self.retrieval_pipeline = retrieval_pipeline
+        # The CLI already printed this banner to scrollback; the app reproduces
+        # it at the top of its own first frame so the (unavoidable on Windows)
+        # alt-screen switch looks continuous rather than like a new screen.
+        self._banner = banner
         self._conversation = ConversationState()
-        self._running_task: asyncio.Task | None = None
+        self._running_worker: Any = None
         self._hovered_scrollable: ScrollableContainer | None = None
-        self._splash_done = False
         self._plan_row: CollapsibleRow | None = None
 
     # ── Layout ────────────────────────────────────────────────────────────────
 
     def compose(self) -> ComposeResult:
-        # Typewriter ASCII banner at the top — the UI assembles below it.
-        with Vertical(id="splash-banner"):
-            yield Static("", id="splash-logo")
-            yield Static("", id="splash-status")
+        # The ASCII banner was already printed to scrollback by the CLI before
+        # the app started — the TUI renders directly below it, no clear.
         yield self._build_header()
         # The single main panel — conversation stream, status line, input.
         yield AgentPanel(id="agent-panel-widget")
@@ -229,7 +269,15 @@ class TraceraTUI(App):
             return
         panel = self._panel()
         panel.add_user_message(text)
-        self._run_agent_task(text)
+        self._start_agent_task(text)
+
+    @on(AgentPanel.AttachRequested)
+    def on_attach_requested(self, event: AgentPanel.AttachRequested) -> None:
+        self._open_picker()
+
+    @on(LoaderPill.StopRequested)
+    def on_loader_stop_requested(self, event: LoaderPill.StopRequested) -> None:
+        self.action_cancel_task()
 
     def _handle_command(self, text: str) -> None:
         panel = self._panel()
@@ -264,7 +312,7 @@ class TraceraTUI(App):
             task = text[len(cmd):].strip()
             if task:
                 panel.add_user_message(task)
-                self._run_agent_task(task)
+                self._start_agent_task(task)
             else:
                 panel.add_error(f"Usage: {cmd} <task description>")
         elif cmd == "/search":
@@ -484,7 +532,7 @@ class TraceraTUI(App):
         """/review — ask the agent to review current changes."""
         panel = self._panel()
         panel.add_user_message("Review the current uncommitted changes and report issues.")
-        self._run_agent_task(
+        self._start_agent_task(
             "Review the current uncommitted changes in the workspace: "
             "check git diff for bugs, security issues, and style problems. "
             "Report findings with file locations."
@@ -602,18 +650,121 @@ class TraceraTUI(App):
 
     # ── Agent execution ───────────────────────────────────────────────────────
 
+    def _start_agent_task(self, text: str) -> None:
+        """Kick off an agent run, injecting attachments and tracking the worker."""
+        panel = self._panel()
+        if self._running_worker is not None and self._running_worker.is_running:
+            panel.add_error("A task is already running — press esc to stop it first.")
+            return
+        task_text = self._build_task_with_attachments(text)
+        if panel.attachments:
+            panel.clear_attachments()
+        self._running_worker = self._run_agent_task(task_text)
+
+    def _build_task_with_attachments(self, text: str) -> str:
+        """Append attached files to the task prompt the agent actually sees."""
+        panel = self._panel()
+        parts = [text]
+        vision = bool(getattr(self.agent.provider, "supports_vision", False))
+        model = self.agent.provider.default_model or "?"
+        for path in panel.attachments:
+            p = Path(path)
+            if is_image(path):
+                if vision:
+                    parts.append(f"\n[Image attachment: {path}]")
+                else:
+                    parts.append(
+                        f"\n[Image attachment: {path} — the active model ({model}) "
+                        f"cannot view images, so only its path was attached]"
+                    )
+                continue
+            try:
+                size = p.stat().st_size
+                if size > _ATTACH_TEXT_MAX_BYTES:
+                    parts.append(
+                        f"\n[Attached file: {path} — skipped: {size} bytes exceeds the "
+                        f"{_ATTACH_TEXT_MAX_BYTES}-byte limit]"
+                    )
+                    continue
+                content = p.read_text(encoding="utf-8", errors="replace")
+                parts.append(f"\n\n--- Attached file: {path} ---\n{content}")
+            except Exception as e:
+                parts.append(f"\n[Attached file: {path} — failed to read: {e}]")
+        return "\n".join(parts)
+
+    def _open_picker(self) -> None:
+        root = Path(self.workspace_path)
+        if not root.is_dir():
+            root = Path(".")
+        self.push_screen(FilePicker(root), callback=self._on_file_picked)
+
+    def _on_file_picked(self, path: Any) -> None:
+        if not path:
+            return
+        path = Path(path)
+        try:
+            root = Path(self.workspace_path).resolve()
+            resolved = path.resolve()
+            if not str(resolved).startswith(str(root)) or not resolved.is_file():
+                self._panel().add_error(f"Not a workspace file: {path}")
+                return
+        except Exception as e:
+            self._panel().add_error(f"Cannot attach {path}: {e}")
+            return
+        vision = bool(getattr(self.agent.provider, "supports_vision", False))
+        warning = is_image(str(resolved)) and not vision
+        self._panel().add_attachment(str(resolved), warning=warning)
+        if warning:
+            self._panel().add_meta(
+                f"[dim]⚠ {path.name} is an image — the active model "
+                f"({self.agent.provider.default_model or '?'}) can't view images, "
+                f"only its path will reach the agent.[/]"
+            )
+
+    def _show_loader(self) -> None:
+        try:
+            self.query_one("#loader-pill").display = True
+            self.query_one("#agent-input-area").display = False
+        except Exception:
+            pass
+
+    def _reset_loader(self) -> None:
+        try:
+            self.query_one("#loader-pill").display = False
+            self.query_one("#agent-input-area").display = True
+        except Exception:
+            pass
+
+    async def _read_file_snapshot(self, path: str) -> str | None:
+        """Read a workspace file for diff snapshots; None if unreadable/too big."""
+        try:
+            root = Path(self.workspace_path).resolve()
+            target = (root / path).resolve()
+            if not str(target).startswith(str(root)):
+                return None
+            if not target.is_file() or target.stat().st_size > MAX_DIFF_BYTES:
+                return None
+            return await asyncio.to_thread(
+                target.read_text, encoding="utf-8", errors="replace"
+            )
+        except Exception:
+            return None
+
     @work(exclusive=False)
     async def _run_agent_task(self, task: str) -> None:
-        """Run the agent loop, streaming every action inline."""
+        """Run the agent loop, streaming every phase, tool call and diff inline."""
         panel = self._panel()
         status = self._status_line()
         provider = self.agent.provider
+        pill = self.query_one("#loader-pill", LoaderPill)
 
         status.update_stats(
             state="thinking",
             session=self._conversation.id[:8],
             model=provider.default_model or "—",
         )
+        pill.set_phase("planning")
+        self._show_loader()
 
         total_iterations = 0
         total_tool_calls = 0
@@ -629,27 +780,61 @@ class TraceraTUI(App):
                         )
                         turn_trace.append(("think", f"iteration {event.iteration + 1}"))
 
+                    case AgentEventType.PHASE_UPDATE:
+                        # v3: normalized phase from the agent loop → loader pill,
+                        # status line, and stream marker.
+                        phase = event.phase or "thinking"
+                        pill.set_phase(phase)
+                        status.update_stats(
+                            state="running" if phase == "running" else "thinking"
+                        )
+                        if phase in ("planning", "thinking", "generating"):
+                            panel.add_phase(
+                                _PHASE_LABELS.get(phase, phase.title())
+                            )
+
                     case AgentEventType.TOOL_START:
                         name = event.tool_name or "tool"
-                        args_str = format_args(event.tool_args or {})
+                        args = event.tool_args or {}
+                        args_str = format_args(args)
                         status.update_stats(state="running")
                         # Phase 57: remember the phase for the turn trace.
                         phase = self._phase_for_tool(name)
                         if phase:
                             turn_trace.append(("think", phase))
-                        panel.tool_start(name, args_str)
+                        row = panel.tool_start(name, args_str)
+                        # v3: snapshot the file before a write/edit runs so the
+                        # tool row can show an inline diff once it finishes.
+                        if name in DIFFABLE_TOOLS and args.get("path"):
+                            before = await self._read_file_snapshot(str(args["path"]))
+                            if before is not None:
+                                row.set_snapshot(str(args["path"]), before)
                         turn_trace.append(("tool", f"{name} {args_str}"))
 
                     case AgentEventType.TOOL_END:
                         total_tool_calls += 1
                         name = event.tool_name or "tool"
                         duration_ms = event.metadata.get("duration_ms", 0.0)
-                        panel.tool_end(
+                        row = panel.tool_end(
                             name,
                             event.tool_success,
                             duration_ms=duration_ms,
                             output=event.tool_output or "",
                         )
+                        # v3: compute the diff for file-touching tools and render
+                        # the 📝 path +N -M summary (expandable on click).
+                        if (
+                            event.tool_success
+                            and row.snapshot is not None
+                            and row.snapshot_path
+                        ):
+                            after = await self._read_file_snapshot(row.snapshot_path)
+                            if after is not None:
+                                lines, added, removed = compute_diff(
+                                    row.snapshot, after, row.snapshot_path
+                                )
+                                if lines:
+                                    row.set_diff(row.snapshot_path, lines, added, removed)
                         status.update_stats(tool_calls=total_tool_calls)
                         if event.tool_success:
                             turn_trace.append(("done", f"{name}  {duration_ms:.0f}ms"))
@@ -725,6 +910,12 @@ class TraceraTUI(App):
         except Exception as e:
             panel.add_error(f"Agent error: {e}")
             status.update_stats(state="error")
+        finally:
+            # Back to the input the instant the run ends (or is cancelled).
+            panel.freeze_phase()
+            pill.set_phase("done")
+            self._reset_loader()
+            self._running_worker = None
 
     @work(exclusive=False)
     async def _run_planning(self, task: str) -> None:
@@ -804,20 +995,15 @@ class TraceraTUI(App):
         )
 
     def action_cancel_task(self) -> None:
-        if self._running_task and not self._running_task.done():
-            self._running_task.cancel()
+        """Stop the in-flight request: cancel the worker, fail open rows, reset."""
+        if self._running_worker is not None:
+            self._running_worker.cancel()
+            self._running_worker = None
+        self._panel().finalize_pending("cancelled")
         self._status_line().update_stats(state="idle")
+        self._reset_loader()
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
-
-    _SPLASH_ART = [
-        " ████████╗██████╗  █████╗  ██████╗███████╗██████╗  █████╗ ",
-        " ╚══██╔══╝██╔══██╗██╔══██╗██╔════╝██╔════╝██╔══██╗██╔══██╗",
-        "    ██║   ██████╔╝███████║██║     █████╗  ██████╔╝███████║",
-        "    ██║   ██╔══██╗██╔══██║██║     ██╔══╝  ██╔══██╗██╔══██║",
-        "    ██║   ██║  ██║██║  ██║╚██████╗███████╗██║  ██║██║  ██║",
-        "    ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝",
-    ]
 
     def on_mount(self) -> None:
         status = self._status_line()
@@ -826,100 +1012,26 @@ class TraceraTUI(App):
             session=self._conversation.id[:8],
             model=self.agent.provider.default_model,
         )
-        # Hide the interface initially — it builds in below the banner.
-        for selector in ("#app-header", "#agent-panel-widget"):
-            try:
-                self.query_one(selector).display = False
-            except Exception:
-                pass
-        self.run_worker(self._animate_splash(), exclusive=True)
-
-    def _show(self, selector: str) -> None:
-        try:
-            self.query_one(selector).display = True
-        except Exception:
-            pass
-
-    async def _animate_splash(self) -> None:
-        try:
-            logo = self.query_one("#splash-logo", Static)
-            status = self.query_one("#splash-status", Static)
-
-            completed: list[str] = []
-            for line in self._SPLASH_ART:
-                buf = ""
-                for ch in line:
-                    buf += ch
-                    logo.update("\n".join(completed + [buf + "▌"]))
-                    await asyncio.sleep(0.004)
-                    if self._splash_done:
-                        return
-                completed.append(line)
-                logo.update("\n".join(completed))
-                await asyncio.sleep(0.06)
-                if self._splash_done:
-                    return
-
-            sub = "your terminal coding agent"
-            sbuf = ""
-            for ch in sub:
-                sbuf += ch
-                status.update(f"  {sbuf}▌")
-                await asyncio.sleep(0.018)
-                if self._splash_done:
-                    return
-            status.update(f"  {sub}")
-            await asyncio.sleep(0.1)
-            if self._splash_done:
-                return
-
-            boot_steps = [
-                ("checking providers", "#app-header"),
-                ("loading code index", "#agent-panel-widget"),
-                ("ready", None),
-            ]
-            for step, selector in boot_steps:
-                status.update(f"  ⠋ {step}")
-                if selector:
-                    self._show(selector)
-                await asyncio.sleep(0.2)
-                if self._splash_done:
-                    return
-            status.update("  ✓ ready")
-            await asyncio.sleep(0.15)
-        except Exception:
-            pass
-        self._splash_done = True
-        await self._finish_splash()
-
-    async def _finish_splash(self) -> None:
-        try:
-            self.query_one("#splash-banner").remove()
-        except Exception:
-            pass
-        for selector in ("#app-header", "#agent-panel-widget"):
-            self._show(selector)
+        # Show the whole UI immediately — the banner already sits in scrollback
+        # above us (printed once by the CLI). No splash, no clears.
         try:
             self.query_one("#agent-input", Input).focus()
         except Exception:
             pass
-        await self._type_welcome()
+        self.run_worker(self._type_welcome())
 
     async def _type_welcome(self) -> None:
         try:
-            await self._panel().type_message(
+            panel = self._panel()
+            # First frame: reproduce the CLI banner at the top of the app's own
+            # screen, then the welcome message below it.
+            if self._banner:
+                panel.add_banner(self._banner)
+                panel.add_meta(f"booted from {self.workspace_path}")
+            await panel.type_message(
                 "I'm ready to help with your coding tasks.\n"
                 "Everything I do streams inline — tool calls, file reads, "
                 "command runs. Type /help for commands.\n"
             )
         except Exception:
             pass
-
-    def on_key(self, event) -> None:
-        if not self._splash_done:
-            try:
-                if self.query_one("#splash-banner"):
-                    self._splash_done = True
-                    self.run_worker(self._finish_splash())
-            except Exception:
-                pass

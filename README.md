@@ -179,14 +179,38 @@ Code: `tracera/evaluation/` — `dataset.py` (45), `metrics.py` (46),
 
 `tracera tui` (or just `tracera`) is a Claude Code / Charm-style Textual app —
 one continuous, auto-scrolling stream of everything the agent does, inside a
-single rounded panel. No sidebar, no tabs to click:
+single rounded panel. No sidebar, no tabs to click. The ASCII banner and boot
+log print once as normal scrollback output and the TUI renders below them.
+The app requests **inline mode** (`run(inline=True)`), so on Linux/macOS/WSL
+there is no alternate-screen takeover and scrolling up shows the banner still
+sitting above the first message. Textual's inline driver is POSIX-only, so on
+native Windows the alternate-screen switch still happens — to keep that
+transition looking continuous, the TUI's own first frame reproduces the same
+banner at the top of its screen.
 
 - **Single main panel** (rounded border, full width) holding the whole
   conversation: agent replies in a cyan-bordered `TRACERA` bubble, user
-  echoes in a muted purple `YOU` bubble, errors in a red box.
+  echoes in a muted purple `YOU` bubble, errors in a red box. Panels are
+  **transparent** — colored border + colored text only, your terminal theme
+  shows through.
+- **Phase markers** for the full agent loop, in real order: `◇ Planning`,
+  `⠋ Thinking`, the tool rows themselves, `◇ Generating` — repeating as many
+  times as the loop actually cycles (one Thinking marker per LLM call).
 - **Inline tool rows** in execution order, one compact line per action —
   `✓ search_code 8ms`, `✗ run_command 3ms` with the error auto-expanded on
   the line beneath, and an animated braille spinner while in flight.
+- **Code-gen summary rows:** file edits collapse to `📝 main.py  +500 -230`
+  (the diff is computed from the real file state before/after the tool call) —
+  click the row to expand the inline diff (green added, red removed, dim
+  context), click again to collapse.
+- **Loader pill:** while a request runs, the input is replaced by a rounded
+  pill showing the live phase (`⠋ Running`) with a `●` stop button that
+  cancels the in-flight request (esc works too). The input returns the
+  instant the agent goes idle.
+- **Attachments:** click `＋` next to the input to open a file picker;
+  attached files show as removable chips above the pill. Text files are read
+  and injected into the agent's context; images get a `[!]` badge when the
+  active model can't view them (per-provider `supports_vision` capability).
 - **Auto-scroll:** the stream always snaps to the latest event while a task
   runs; scroll up to pause it, and it only re-snaps once you return to the
   bottom (never fights manual scrolling).
@@ -209,7 +233,9 @@ single rounded panel. No sidebar, no tabs to click:
 - **59 · Retrieval debugging:** `/debug <query>` shows BM25 / Dense / Hybrid /
   Reranker results side by side in one expandable row.
 
-See `tui_stream.svg` for a rendered preview of the redesigned UI.
+See `tui_v3_loader.svg` (mid-run loader pill) and `tui_v3_stream.svg`
+(post-run: phase markers, diff summary row, attachment chips) for rendered
+previews.
 
 ## Configuration
 

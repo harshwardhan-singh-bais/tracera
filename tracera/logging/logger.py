@@ -113,9 +113,9 @@ def get_console() -> Console:
     return _console
 
 
-def print_banner() -> None:
-    """Print the TRACERA ASCII art banner to the console."""
-    _console.print(
+def banner_text() -> str:
+    """The TRACERA ASCII art banner, as Rich markup."""
+    return (
         "\n"
         "[bold bright_cyan]"
         " ████████╗██████╗  █████╗  ██████╗███████╗██████╗  █████╗ \n"
@@ -124,9 +124,14 @@ def print_banner() -> None:
         "    ██║   ██╔══██╗██╔══██║██║     ██╔══╝  ██╔══██╗██╔══██║\n"
         "    ██║   ██║  ██║██║  ██║╚██████╗███████╗██║  ██║██║  ██║\n"
         "    ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝[/]\n"
-        "[dim]   Agentic Code Intelligence & Autonomous Coding Engine[/]\n",
-        highlight=False,
+        "[dim]   Agentic Code Intelligence & Autonomous Coding Engine[/]\n"
     )
+
+
+def print_banner() -> str:
+    """Print the TRACERA ASCII art banner to the console; returns the text."""
+    _console.print(banner_text(), highlight=False)
+    return banner_text()
 
 
 # ── Styled log helpers (used by non-logging code for visual output) ───────────

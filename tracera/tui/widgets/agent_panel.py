@@ -1,31 +1,33 @@
 """
-TRACERA Conversation Stream — the single main panel.
+TRACERA Conversation Stream — the single main panel (Claude Code style).
 
-Claude Code style: one continuous, auto-scrolling stream of everything the
-agent does, inline in the main panel:
+One continuous, auto-scrolling stream of everything the agent does, inline:
 
     ┌─ YOU ────────────────────────────────┐
     │  add jwt validation to the middleware│
     └──────────────────────────────────────┘
+    ◇ Planning
+    ⠋ Thinking
     ✓ search_code (query='jwt auth')   8ms
-    ✓ read_file  (path='auth/middleware.py')  2ms
+    ✓ edit_file  📝 auth/middleware.py  +12 -4   8ms   ← click → inline diff
     ✗ run_command  (command='pytest')  0ms
       └ pytest: error: unrecognized arguments
-    → Memory: recalled architecture notes          ← collapsible
     ┌─ TRACERA ──────────────────────────┐
     │  Done. All tests pass.            │
     └────────────────────────────────────┘
-    ● ACTIVE  session 8f2c · model gemini · 5 tools · 3 iter · 1.2k tok · 0:42
-    ❯ [ input pill ............. ]
+    ● DONE  session 8f2c · model gemini · 5 tools · 3 iter · 1.2k tok · 0:42
+    ⠋ Thinking  ●            ← loader pill while a request is in flight
+    ＋ ❯ [ input pill ......... ]
     Enter send · /help commands · ctrl+t verbose rows
 
-Every row auto-scrolls into view while the user is at the bottom; scrolling
-up during a run pauses the auto-scroll until the user returns to the bottom.
+While a task runs the loader pill replaces the input; attachments show as
+removable chips above the pill.
 """
 
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 from textual.app import ComposeResult
 from textual.message import Message
@@ -33,6 +35,8 @@ from textual.widget import Widget
 from textual.widgets import Static, Input
 from textual.containers import Horizontal, Vertical, ScrollableContainer
 from rich.text import Text
+
+from tracera.tui.diffutil import is_image
 
 _SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
@@ -123,16 +127,73 @@ class ThinkingDisclosure(Widget):
         body.display = self.expanded
 
 
+# ── Phase marker rows (full agent-loop visualization) ────────────────────────
+
+class PhaseRow(Static):
+    """A phase marker in the stream, in real execution order:
+
+        ⠋ Thinking      ← active (animated)
+        ◇ Thinking      ← superseded by the next phase (dim)
+    """
+
+    def __init__(self, label: str, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.phase_label = label
+        self._frame = 0
+        self._spinning = True
+
+    def on_mount(self) -> None:
+        if self._spinning:
+            self.set_interval(0.1, self._tick)
+
+    def freeze(self) -> None:
+        self._spinning = False
+        self.refresh()
+
+    def _tick(self) -> None:
+        if self._spinning:
+            self._frame += 1
+            self.refresh()
+
+    def render(self) -> Text:
+        text = Text()
+        if self._spinning:
+            text.append(
+                f" {_SPINNER[self._frame % len(_SPINNER)]} ",
+                style="bold #6cb6ff",
+            )
+            text.append(self.phase_label, style="bold #6cb6ff")
+        else:
+            text.append(" ◇ ", style="dim #9a9aa3")
+            text.append(self.phase_label, style="dim #9a9aa3")
+        return text
+
+
 # ── Inline tool rows ─────────────────────────────────────────────────────────
+
+_DIFF_STYLES = {
+    "add": "#4ac26b",
+    "del": "#f47067",
+    "ctx": "#9a9aa3",
+    "hunk": "#d2a8ff",
+    "ellipsis": "#55555e",
+}
+_DIFF_PREFIX = {"add": "+", "del": "-", "hunk": "  ", "ctx": "  ", "ellipsis": "  "}
+
 
 class ToolRow(Static):
     """
-    One compact inline row per tool call, in the stream:
+    One compact inline row per tool call:
 
         ⠋ run_command (command='pytest')        ← in-flight (animated)
         ✓ read_file  (path='a.py')   12ms
         ✗ edit_file  (path='b.py')   3ms
           └ ERROR: merge conflict               ← auto-expanded on failure
+        ✓ edit_file  📝 main.py  +12 -4   8ms   ← diffable tools (click to
+          ▾ 14 lines                            ←   expand the inline diff)
+            @@ -1,3 +1,5 @@
+            - old line
+            + new line
     """
 
     def __init__(
@@ -153,6 +214,14 @@ class ToolRow(Static):
         self._frame = 0
         # NOTE: not named ``_running`` — Textual's MessagePump owns that.
         self._spinning = False
+        # Diff state — filled by the app when the tool touched a file.
+        self.diff_path: str | None = None
+        self.snapshot: str | None = None
+        self.snapshot_path: str | None = None
+        self._diff_lines: list[tuple[str, str]] = []
+        self._diff_added = 0
+        self._diff_removed = 0
+        self.expanded = False
 
     # ── Lifecycle ────────────────────────────────────────────────────────────
 
@@ -172,9 +241,28 @@ class ToolRow(Static):
         self.output = output
         self.refresh()
 
+    def set_snapshot(self, path: str, content: str) -> None:
+        """Record the file content before the tool ran (for the diff)."""
+        self.snapshot_path = path
+        self.snapshot = content
+
+    def set_diff(self, path: str, lines: list[tuple[str, str]], added: int, removed: int) -> None:
+        self.diff_path = path
+        self._diff_lines = lines
+        self._diff_added = added
+        self._diff_removed = removed
+        self.refresh()
+
     def _tick(self) -> None:
         if self._spinning:
             self._frame = (self._frame + 1) % len(_SPINNER)
+            self.refresh()
+
+    # ── Interaction ──────────────────────────────────────────────────────────
+
+    def on_click(self, event) -> None:
+        if self.diff_path and self._diff_lines:
+            self.expanded = not self.expanded
             self.refresh()
 
     # ── Rendering ────────────────────────────────────────────────────────────
@@ -192,8 +280,18 @@ class ToolRow(Static):
         icon_style = "bold #4ac26b" if self.success else "bold #f47067"
         text.append(f" {icon} ", style=icon_style)
         text.append(self.tool_name, style="bold #dcdcf5")
-        if self.verbose and self.args_str:
+
+        if self.diff_path and self.success:
+            # Code-gen summary: 📝 path  +N -M
+            text.append(f"  📝 {self.diff_path}", style="bold #d2a8ff")
+            if self._diff_added or self._diff_removed:
+                text.append(f"  +{self._diff_added}", style="bold #4ac26b")
+                text.append(f" -{self._diff_removed}", style="bold #f47067")
+            elif self.verbose and self.args_str:
+                text.append(f"  {self.args_str}", style="dim #8a8a96")
+        elif self.verbose and self.args_str:
             text.append(f"  {self.args_str}", style="dim #8a8a96")
+
         if self.duration_ms is not None:
             text.append(f"  {self.duration_ms:.0f}ms", style="dim #6cb6ff")
 
@@ -202,10 +300,24 @@ class ToolRow(Static):
             first = preview[0][:90] if preview else ""
             if first:
                 text.append(f"\n   └ {first}", style="dim #f47067")
+
+        if self.expanded and self._diff_lines:
+            text.append(self._render_diff())
         return text
 
+    def _render_diff(self) -> Text:
+        d = Text("\n")
+        d.append(f"   ▾ {len(self._diff_lines)} lines", style="dim #9a9aa3")
+        for kind, line in self._diff_lines:
+            style = _DIFF_STYLES.get(kind, "dim #9a9aa3")
+            prefix = _DIFF_PREFIX.get(kind, "  ")
+            if len(line) > 140:
+                line = line[:137] + "…"
+            d.append(f"\n   {prefix} {line}", style=style)
+        return d
 
-# ── Collapsible info rows (memory / repo / debug / plan content) ─────────────
+
+# ── Collapsible info rows (memory / search / repo / debug / plan) ─────────────
 
 class CollapsibleRow(Widget):
     """
@@ -278,6 +390,94 @@ class CollapsibleRow(Widget):
                 f" {self._prefix} {self._title}"
             )
         body.display = self.expanded
+
+
+# ── Attachment chips ─────────────────────────────────────────────────────────
+
+class AttachmentChip(Static):
+    """A removable chip for an attached file, shown above the input pill."""
+
+    class Removed(Message):
+        def __init__(self, path: str) -> None:
+            super().__init__()
+            self.path = path
+
+    def __init__(self, path: str, *, warning: bool = False, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.path = path
+        self.warning = warning
+
+    def render(self) -> Text:
+        name = Path(self.path).name or self.path
+        icon = "🖼" if is_image(self.path) else "📄"
+        t = Text()
+        t.append(f" {icon} ", style="#6cb6ff")
+        t.append(name, style="bold #dcdcf5")
+        if self.warning:
+            t.append(" [!]", style="bold #d4a72c")
+        t.append("  ✕", style="dim #f47067")
+        return t
+
+    def on_click(self, event) -> None:
+        self.post_message(self.Removed(self.path))
+
+
+# ── Loader pill (in place of the input while a request is in flight) ─────────
+
+_PHASE_LABELS = {
+    "planning": "Planning",
+    "thinking": "Thinking",
+    "running": "Running",
+    "generating": "Generating",
+    "done": "Done",
+}
+
+
+class LoaderPill(Widget):
+    """Rounded pill shown in place of the input while the agent works.
+
+    Shows the live phase label with an animated glyph and a stop button.
+    """
+
+    class StopRequested(Message):
+        pass
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._phase = "thinking"
+        self._frame = 0
+
+    def compose(self) -> ComposeResult:
+        yield Static("⠋", id="loader-icon")
+        yield Static("Thinking", id="loader-label")
+        yield Static(" ● ", id="loader-stop")
+
+    def on_mount(self) -> None:
+        self.set_interval(0.1, self._tick)
+
+    def set_phase(self, phase: str) -> None:
+        self._phase = phase if phase in _PHASE_LABELS else "thinking"
+        try:
+            self.query_one("#loader-label", Static).update(
+                _PHASE_LABELS[self._phase]
+            )
+        except Exception:
+            pass
+
+    def _tick(self) -> None:
+        if self._phase == "done":
+            return
+        self._frame += 1
+        try:
+            self.query_one("#loader-icon", Static).update(
+                _SPINNER[self._frame % len(_SPINNER)]
+            )
+        except Exception:
+            pass
+
+    def on_click(self, event) -> None:
+        if getattr(event.widget, "id", None) == "loader-stop":
+            self.post_message(self.StopRequested())
 
 
 # ── Inline status line (thin, above the input) ───────────────────────────────
@@ -379,9 +579,10 @@ class InlineStatus(Static):
 
 class AgentPanel(Widget):
     """
-    The single main panel: conversation stream + inline status + input.
+    The single main panel: conversation stream + status + loader/input.
 
-    Emits 'submit_task' message when the user sends input.
+    Emits 'submit_task' when the user sends input, 'attach_requested' when
+    the attach button is clicked, and 'stop_requested' via the loader pill.
     """
 
     DEFAULT_CSS = """
@@ -397,10 +598,15 @@ class AgentPanel(Widget):
             super().__init__()
             self.text = text
 
+    class AttachRequested(Message):
+        pass
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._stream_widget: MessageWidget | None = None
         self._pending_tools: list[ToolRow] = []
+        self._active_phase: PhaseRow | None = None
+        self._attachments: list[str] = []
         self.verbose = True
 
     def compose(self) -> ComposeResult:
@@ -408,12 +614,17 @@ class AgentPanel(Widget):
             with ScrollableContainer(id="stream"):
                 pass
             yield InlineStatus(id="status-line")
-            with Horizontal(id="agent-input-area"):
-                yield Static("❯", id="agent-prompt-icon")
-                yield Input(
-                    placeholder="Ask TRACERA anything... (/help for commands)",
-                    id="agent-input",
-                )
+            yield LoaderPill(id="loader-pill")
+            with Vertical(id="agent-input-area"):
+                with Horizontal(id="attach-chips"):
+                    pass
+                with Horizontal(id="agent-input-bar"):
+                    yield Static("＋", id="attach-button")
+                    yield Static("❯", id="agent-prompt-icon")
+                    yield Input(
+                        placeholder="Ask TRACERA anything... (/help for commands)",
+                        id="agent-input",
+                    )
             yield Static(
                 "Enter send · /help commands · ctrl+t verbose rows",
                 id="input-hints",
@@ -454,16 +665,12 @@ class AgentPanel(Widget):
     def add_assistant_message(self, text: str) -> None:
         self._append(MessageWidget("assistant", text))
 
-    def add_tool_message(self, tool_name: str, output: str | None = None) -> None:
-        preview = tool_name
-        if output:
-            first_line = output.strip().splitlines()
-            if first_line:
-                preview += f"  →  {first_line[0][:80]}"
-        self._append(MessageWidget("tool", preview))
-
     def add_error(self, text: str) -> None:
         self._append(MessageWidget("error", text))
+
+    def add_banner(self, text: str) -> None:
+        """Render the CLI banner at the top of the app's first frame."""
+        self._append(Static(text, markup=True, classes="banner-block"))
 
     def add_meta(self, text: str) -> None:
         self._append(MessageWidget("meta", text))
@@ -503,14 +710,31 @@ class AgentPanel(Widget):
         elif full_text:
             self.add_assistant_message(full_text)
 
+    # ── Phase markers ────────────────────────────────────────────────────────
+
+    def add_phase(self, label: str) -> PhaseRow:
+        """Stream a phase marker (◇ Planning / ⠋ Thinking …), freezing the last."""
+        if self._active_phase is not None:
+            self._active_phase.freeze()
+        row = PhaseRow(label)
+        self._active_phase = row
+        self._append(row)
+        return row
+
+    def freeze_phase(self) -> None:
+        if self._active_phase is not None:
+            self._active_phase.freeze()
+            self._active_phase = None
+
     # ── Inline tool rows ─────────────────────────────────────────────────────
 
-    def tool_start(self, name: str, detail: str = "") -> None:
+    def tool_start(self, name: str, detail: str = "") -> ToolRow:
         """Open an in-flight tool row with an animated spinner."""
         row = ToolRow(name, detail, verbose=self.verbose)
         row.start_spinner()
         self._pending_tools.append(row)
         self._append(row)
+        return row
 
     def tool_end(
         self,
@@ -518,8 +742,8 @@ class AgentPanel(Widget):
         success: bool,
         duration_ms: float = 0.0,
         output: str = "",
-    ) -> None:
-        """Finalize the most recent pending row for *name*."""
+    ) -> ToolRow:
+        """Finalize the most recent pending row for *name*; returns the row."""
         for i in range(len(self._pending_tools) - 1, -1, -1):
             row = self._pending_tools[i]
             if row.tool_name == name:
@@ -532,6 +756,14 @@ class AgentPanel(Widget):
             row.finish(success, duration_ms, output)
             self._append(row)
         self._scroll_bottom_if_pinned()
+        return row
+
+    def finalize_pending(self, reason: str = "cancelled") -> None:
+        """Mark in-flight tool rows as failed (used when the task is cancelled)."""
+        for row in self._pending_tools:
+            row.finish(False, 0.0, reason)
+        self._pending_tools.clear()
+        self.freeze_phase()
 
     # ── Collapsible info rows (memory / repo / debug / plan) ─────────────────
 
@@ -546,6 +778,46 @@ class AgentPanel(Widget):
         self._append(row)
         return row
 
+    # ── Attachments ──────────────────────────────────────────────────────────
+
+    def _chips(self) -> Horizontal:
+        return self.query_one("#attach-chips", Horizontal)
+
+    @property
+    def attachments(self) -> list[str]:
+        return list(self._attachments)
+
+    def add_attachment(self, path: str, *, warning: bool = False) -> bool:
+        """Add an attachment chip; returns False if it is already attached."""
+        if path in self._attachments:
+            return False
+        self._attachments.append(path)
+        self._chips().display = True
+        self._chips().mount(AttachmentChip(path, warning=warning))
+        return True
+
+    def remove_attachment(self, path: str) -> None:
+        for chip in list(self.query("AttachmentChip")):
+            if chip.path == path:
+                # remove() is deferred to the message pump — hide it now so
+                # the chip disappears immediately.
+                chip.display = False
+                chip.remove()
+        if path in self._attachments:
+            self._attachments.remove(path)
+        if not self._attachments:
+            self._chips().display = False
+
+    def clear_attachments(self) -> None:
+        for chip in list(self.query("AttachmentChip")):
+            chip.display = False
+            chip.remove()
+        self._attachments.clear()
+        self._chips().display = False
+
+    def on_attachment_chip_removed(self, event: AttachmentChip.Removed) -> None:
+        self.remove_attachment(event.path)
+
     # ── Lifecycle ────────────────────────────────────────────────────────────
 
     def clear(self) -> None:
@@ -554,3 +826,5 @@ class AgentPanel(Widget):
             child.remove()
         self._stream_widget = None
         self._pending_tools.clear()
+        self._active_phase = None
+        self.clear_attachments()

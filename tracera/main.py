@@ -242,7 +242,11 @@ def main(
     workspace_path = (workspace or settings.tracera_workspace).resolve()
 
     from tracera.logging import print_banner
-    print_banner()
+    # The banner prints once as scrollback output — the TUI also receives the
+    # text so its own first frame can reproduce it (the alt-screen switch on
+    # Windows can't be avoided, so the app shows the same banner at the top of
+    # its screen to keep the transition looking continuous).
+    banner = print_banner()
 
     # Load retrieval pipeline if index exists (Phase 31: repository-aware agent)
     retrieval_pipeline = None
@@ -270,8 +274,13 @@ def main(
         memory=memory,
         workspace_path=workspace_path,
         retrieval_pipeline=retrieval_pipeline,
+        banner=banner,
     )
-    tui.run()
+    # Inline mode keeps the TUI in the normal terminal buffer, appended below
+    # the banner printed above — no alternate-screen takeover, no clears.
+    # The banner and boot log stay in scrollback, above the first message.
+    # (inline_no_clear keeps the app's final frame in scrollback on exit too.)
+    tui.run(inline=True, inline_no_clear=True)
 
 
 # ── ask ───────────────────────────────────────────────────────────────────────

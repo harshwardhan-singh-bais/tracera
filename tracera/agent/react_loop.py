@@ -40,9 +40,15 @@ class AgentEventType(str, Enum):
     RESPONSE_DELTA = "response_delta"
     RESPONSE_COMPLETE = "response_complete"
     PLAN_UPDATE = "plan_update"
+    PHASE_UPDATE = "phase_update"
     MEMORY_UPDATE = "memory_update"
     ERROR = "error"
     DONE = "done"
+
+
+# Phases of the agent loop, normalized into one schema regardless of which
+# provider answered. The TUI maps these to loader labels and stream markers.
+AGENT_PHASES = ("planning", "thinking", "running", "generating")
 
 
 @dataclass
@@ -51,6 +57,7 @@ class AgentEvent:
     type: AgentEventType
     iteration: int = 0
     text: str | None = None
+    phase: str | None = None   # PHASE_UPDATE only: one of AGENT_PHASES
     tool_name: str | None = None
     tool_args: dict[str, Any] | None = None
     tool_output: str | None = None
@@ -195,6 +202,9 @@ class ReActAgent:
         self._tool_call_count = 0
         self._plan_item_index = 0
 
+        # Phase (v3): announce the planning phase while the task is decomposed.
+        yield AgentEvent(type=AgentEventType.PHASE_UPDATE, phase="planning")
+
         # Phase 9: decompose the task into a plan up front (best-effort —
         # falls back to a single-step plan if decomposition fails).
         if self.decomposer is not None:
@@ -229,6 +239,8 @@ class ReActAgent:
                 iteration=iteration,
                 text=f"Iteration {iteration + 1}/{self.max_iterations}",
             )
+            # v3: waiting on the model — the loop is blocked in provider.complete().
+            yield AgentEvent(type=AgentEventType.PHASE_UPDATE, phase="thinking")
 
             # ── LLM call ──────────────────────────────────────────────────────
             # Keep the conversation within the token budget so low-TPM
@@ -244,6 +256,12 @@ class ReActAgent:
                         tools=tools,
                     )
                     # Phase 8: emit token-by-token response deltas for live UIs
+                    if deltas:
+                        # v3: text is streaming — the final response is generating.
+                        yield AgentEvent(
+                            type=AgentEventType.PHASE_UPDATE,
+                            phase="generating",
+                        )
                     for delta in deltas:
                         yield AgentEvent(
                             type=AgentEventType.RESPONSE_DELTA,
@@ -258,6 +276,13 @@ class ReActAgent:
                         max_tokens=self.max_tokens,
                         tools=tools if tools else None,
                     )
+                    if response.content:
+                        # v3: non-streaming providers still get the same phase
+                        # schema — the final response was generated.
+                        yield AgentEvent(
+                            type=AgentEventType.PHASE_UPDATE,
+                            phase="generating",
+                        )
             except Exception as e:
                 error_msg = f"LLM call failed: {e}"
                 conversation.add_error(error_msg)
@@ -313,6 +338,8 @@ class ReActAgent:
                                 },
                             )
 
+                    # v3: a tool is executing (file edit, command, …).
+                    yield AgentEvent(type=AgentEventType.PHASE_UPDATE, phase="running")
                     yield AgentEvent(
                         type=AgentEventType.TOOL_START,
                         iteration=iteration,

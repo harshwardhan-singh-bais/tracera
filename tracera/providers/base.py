@@ -184,6 +184,11 @@ class LLMProvider(abc.ABC):
     def default_model(self) -> str:
         """Default model ID for this provider."""
 
+    #: Whether the provider's models accept image inputs. Providers that
+    #: support vision set this to True; the TUI shows a badge on image
+    #: attachments when the active provider cannot see them.
+    supports_vision: bool = False
+
     @abc.abstractmethod
     async def complete(
         self,

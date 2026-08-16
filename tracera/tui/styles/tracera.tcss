@@ -1,34 +1,19 @@
 /*
 TRACERA — single-stream terminal-agent TUI (Claude Code style).
 
-One main panel (rounded border) holding the conversation stream, a thin
-inline status line, and the input pill. Color coding per row:
+Panels are transparent: colored rounded borders + colored text only, never
+a filled background, so the user's terminal theme shows through.
+Color coding per row:
   cyan    = agent branding / in-flight
   green   = success
   red     = failure / errors
-  purple  = user echo / collapsible rows
+  purple  = user echo / collapsible rows / file-change summaries
   dim     = in-progress / metadata
 */
 
 Screen {
-    background: #0e0e14;
+    background: transparent;
     color: #e0e0ff;
-}
-
-/* ── Splash ─────────────────────────────────────────────────────────────── */
-
-#splash-banner {
-    width: 1fr;
-    height: 1fr;
-    align: center middle;
-}
-
-#splash-logo {
-    color: #6cb6ff;
-}
-
-#splash-status {
-    color: #9a9aa3;
 }
 
 /* ── Header (thin) ──────────────────────────────────────────────────────── */
@@ -36,7 +21,6 @@ Screen {
 #app-header {
     width: 1fr;
     height: 1;
-    background: #14141c;
     padding: 0 2;
 }
 
@@ -63,7 +47,6 @@ Screen {
     height: 1fr;
     layout: vertical;
     border: round #3a3a4a;
-    background: #12121a;
     padding: 0 1;
 }
 
@@ -87,21 +70,18 @@ MessageWidget {
 
 MessageWidget.msg-user {
     border: round #7a5aa0;
-    background: #201730 90%;
     color: #dcdcf5;
     padding: 0 1;
 }
 
 MessageWidget.msg-assistant {
     border: round #3f6fb0;
-    background: #10203a 90%;
     color: #e0e0ff;
     padding: 0 1;
 }
 
 MessageWidget.msg-error {
     border: round #f47067;
-    background: #2a1513 90%;
     color: #ffb4ad;
     padding: 0 1;
 }
@@ -115,9 +95,25 @@ MessageWidget.msg-meta {
     text-style: dim;
 }
 
+/* ── Boot banner (reproduced from the CLI's scrollback output) ──────────── */
+
+.banner-block {
+    width: 1fr;
+    height: auto;
+    margin: 1 0 0 0;
+    padding: 0 1;
+    color: #6cb6ff;
+}
+
 /* ── Inline tool rows ───────────────────────────────────────────────────── */
 
 ToolRow {
+    width: 1fr;
+    height: auto;
+    padding: 0 1;
+}
+
+PhaseRow {
     width: 1fr;
     height: auto;
     padding: 0 1;
@@ -139,7 +135,6 @@ ToolRow {
     height: auto;
     margin: 1 0;
     border: round #3a3a4a;
-    background: #10101a;
     padding: 0 1;
 }
 
@@ -207,13 +202,78 @@ CollapsibleRow {
 #status-line {
     width: 1fr;
     height: 1;
-    background: #0e0e14;
     color: #9a9aa3;
+}
+
+/* ── Loader pill (replaces the input while a request is in flight) ──────── */
+
+#loader-pill {
+    display: none;
+    width: 1fr;
+    height: 3;
+    layout: horizontal;
+    align-vertical: middle;
+    margin: 1 0 0 0;
+    padding: 0 1;
+    border: round #6cb6ff;
+    color: #6cb6ff;
+}
+
+#loader-icon {
+    width: auto;
+    height: 1;
+    content-align: center middle;
+    margin-right: 1;
+    color: #6cb6ff;
+    text-style: bold;
+}
+
+#loader-label {
+    width: 1fr;
+    height: 1;
+    content-align: left middle;
+    color: #6cb6ff;
+    text-style: bold;
+}
+
+#loader-stop {
+    width: auto;
+    height: 1;
+    content-align: center middle;
+    margin-left: 1;
+    color: #f47067;
+    text-style: bold;
+    pointer: pointer;
 }
 
 /* ── Input pill (rounded, docked at the bottom) ─────────────────────────── */
 
 #agent-input-area {
+    width: 1fr;
+    height: auto;
+    layout: vertical;
+}
+
+/* Attachment chips — above the pill, hidden until something is attached. */
+#attach-chips {
+    display: none;
+    width: 1fr;
+    height: auto;
+    layout: horizontal;
+    margin: 1 0 0 0;
+}
+
+AttachmentChip {
+    width: auto;
+    height: auto;
+    margin: 0 1 0 0;
+    padding: 0 1;
+    border: round #4a4a5a;
+    color: #dcdcf5;
+    pointer: pointer;
+}
+
+#agent-input-bar {
     width: 1fr;
     height: 3;
     layout: horizontal;
@@ -221,11 +281,20 @@ CollapsibleRow {
     margin: 1 0 0 0;
     padding: 0 1;
     border: round #4a4a5a;
-    background: #1a1a24;
 }
 
-#agent-input-area:focus-within {
+#agent-input-bar:focus-within {
     border: round #6cb6ff;
+}
+
+#attach-button {
+    width: auto;
+    height: 1;
+    content-align: center middle;
+    margin-right: 1;
+    color: #d2a8ff;
+    text-style: bold;
+    pointer: pointer;
 }
 
 #agent-prompt-icon {
@@ -257,4 +326,40 @@ CollapsibleRow {
     margin: 0 0 1 0;
     color: #55555e;
     text-style: dim;
+}
+
+/* ── Attachment file picker (modal) ─────────────────────────────────────── */
+
+#picker-panel {
+    width: 70;
+    height: 24;
+    layout: vertical;
+    align: center middle;
+    border: round #3f6fb0;
+    padding: 1 1;
+}
+
+#picker-title {
+    width: 1fr;
+    height: auto;
+    color: #6cb6ff;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#picker-tree {
+    width: 1fr;
+    height: 1fr;
+    color: #dcdcf5;
+    scrollbar-size: 1 1;
+    scrollbar-color: #6cb6ff #1a1a24;
+}
+
+#picker-hint {
+    width: 1fr;
+    height: 1;
+    content-align: center middle;
+    color: #55555e;
+    text-style: dim;
+    margin-top: 1;
 }
