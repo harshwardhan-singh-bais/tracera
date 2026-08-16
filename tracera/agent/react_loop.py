@@ -408,6 +408,9 @@ class ReActAgent:
                     "tool_calls": self._tool_call_count,
                     "total_tokens": conversation.stats.total_tokens,
                     "total_latency_ms": conversation.stats.total_latency_ms,
+                    # The model the API actually reported for THIS response —
+                    # lets the UI prove which backend really answered.
+                    "model": response.model,
                 },
             )
             yield AgentEvent(type=AgentEventType.DONE, iteration=iteration)

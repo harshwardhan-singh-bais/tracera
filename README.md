@@ -221,6 +221,21 @@ banner at the top of its screen.
   model … · 5 tools · 3 iter · tokens … · elapsed 0:42`, updating live.
 - **Input pill** — rounded box docked at the bottom with a cyan focus ring
   and a hint line (`Enter send · /help commands · ctrl+t verbose rows`).
+- **Provider/model switcher (`ctrl+p`):** opens a rounded, transparent
+  dropdown listing every provider/model discovered at runtime from the
+  project's own config (nothing hardcoded). The active one is checkmarked;
+  providers missing an API key show a dimmed `[!] missing <ENV>` warning and
+  can't be selected. Selecting with `enter` really swaps the backend (the
+  screen dismisses with the chosen `(name, model)` — the picker callback
+  receives it, not `None`), streams an explicit `→ Provider switched:
+  groq (…model…) → nvidia (…model…)` confirmation row, and updates the
+  header/status line immediately. After a run, the status line's model shows
+  the identifier the API actually reported for that response (sourced from
+  the response, not from what the UI thinks is selected). The conversation,
+  memory and session survive the swap.
+- **Per-turn trace, only real events:** the `▸ Thinking…` disclosure lists
+  exactly what the loop did — real iterations, real tool calls, real
+  plan/memory updates — never templated step names.
 - **Boxes size to their content** — when idle, only the ready message and
   the status bar take up space; no fixed-height empty containers.
 - **Commands:** `/code` `/search` `/debug` `/index` `/test` `/review`
@@ -233,8 +248,9 @@ banner at the top of its screen.
 - **59 · Retrieval debugging:** `/debug <query>` shows BM25 / Dense / Hybrid /
   Reranker results side by side in one expandable row.
 
-See `tui_v3_loader.svg` (mid-run loader pill) and `tui_v3_stream.svg`
-(post-run: phase markers, diff summary row, attachment chips) for rendered
+See `tui_v3_loader.svg` (mid-run loader pill), `tui_v3_stream.svg`
+(post-run: phase markers, diff summary row, attachment chips) and
+`tui_provider_switcher.svg` (the `ctrl+p` provider dropdown) for rendered
 previews.
 
 ## Configuration

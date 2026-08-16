@@ -185,18 +185,6 @@ CollapsibleRow {
     color: #dcdcf5;
 }
 
-.reasoning-step-done {
-    color: #4ac26b;
-}
-
-.reasoning-step-active {
-    color: #6cb6ff;
-}
-
-.reasoning-step-pending {
-    color: #55555e;
-}
-
 /* ── Inline status line (thin, above the input, not a box) ──────────────── */
 
 #status-line {
@@ -356,6 +344,58 @@ AttachmentChip {
 }
 
 #picker-hint {
+    width: 1fr;
+    height: 1;
+    content-align: center middle;
+    color: #55555e;
+    text-style: dim;
+    margin-top: 1;
+}
+
+/* ── Provider / model switcher (modal) ───────────────────────────────────── */
+
+#provider-panel {
+    width: 64;
+    height: auto;
+    layout: vertical;
+    align: center middle;
+    border: round #b071e8;
+    padding: 1 1;
+}
+
+#provider-title {
+    width: 1fr;
+    height: auto;
+    color: #b071e8;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#provider-list {
+    width: 1fr;
+    height: auto;
+    color: #dcdcf5;
+    border: none;
+}
+
+#provider-list:focus {
+    border: none;
+}
+
+#provider-list > ListItem {
+    height: 1;
+    padding: 0 0;
+}
+
+#provider-list > ListItem:hover {
+    background: #2a2a3d;
+}
+
+#provider-list > ListItem.provider-active {
+    background: #2a2a3d;
+}
+
+#provider-hint {
     width: 1fr;
     height: 1;
     content-align: center middle;

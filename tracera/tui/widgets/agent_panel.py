@@ -85,9 +85,6 @@ _GLYPH = {
     "tool": "◆",
     "done": "✓",
     "error": "✗",
-    "step-done": "✓",
-    "step-active": "⠋",
-    "step-pending": "○",
 }
 
 

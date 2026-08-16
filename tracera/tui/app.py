@@ -35,7 +35,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, ScrollableContainer
 from textual.screen import Screen
-from textual.widgets import DirectoryTree, Input, Static
+from textual.widgets import DirectoryTree, Input, ListItem, ListView, Static
 from textual.command import Hit, Provider
 
 from tracera.tui.diffutil import DIFFABLE_TOOLS, MAX_DIFF_BYTES, compute_diff, is_image
@@ -83,7 +83,8 @@ _HELP_TEXT = """\
 [bold]ctrl+q[/]        Quit
 [bold]ctrl+l[/]        Clear conversation
 [bold]ctrl+t[/]        Toggle verbose tool rows (show/hide args)
-[bold]ctrl+p[/]        Command palette
+[bold]ctrl+p[/]        Switch provider/model (rounded dropdown, live)
+[bold]ctrl+shift+p[/]  Command palette
 [bold]ctrl+m[/]        Show memory
 [bold]f1[/]            Help
 [bold]esc[/]           Cancel running task
@@ -129,10 +130,83 @@ class FilePicker(Screen):
         self.dismiss(event.path)
 
 
+class ProviderSwitcher(Screen):
+    """
+    Modal dropdown listing every configured provider/model.
+
+    The list is discovered at runtime from ``list_available_providers`` — the
+    same source the CLI uses — so config changes show up with no code change.
+    Providers without an API key are listed dimmed with a warning marker and
+    cannot be selected (no silent failures later).
+    """
+
+    BINDINGS = [
+        Binding("escape", "dismiss", "Cancel"),
+        Binding("up", "cursor_up", "Up", show=False),
+        Binding("down", "cursor_down", "Down", show=False),
+        Binding("enter", "select", "Select", show=False),
+    ]
+
+    def __init__(self, entries: list[dict], *, active_name: str | None = None, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._entries = entries
+        self._active_name = active_name
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="provider-panel"):
+            yield Static(" Provider / Model ", id="provider-title")
+            yield ListView(id="provider-list")
+            yield Static("↑↓ navigate · enter select · esc close", id="provider-hint")
+
+    def on_mount(self) -> None:
+        from rich.text import Text
+        lst = self.query_one("#provider-list", ListView)
+        active_index = 0
+        for i, info in enumerate(self._entries):
+            name = str(info.get("name", "?"))
+            model = str(info.get("model") or "")
+            available = bool(info.get("available", False))
+            is_active = name == self._active_name
+            if is_active:
+                active_index = i
+
+            row = Text()
+            row.append(" ✓ " if is_active else "   ", style="bold #4ac26b")
+            row.append(
+                name,
+                style="bold #dcdcf5" if available else "dim #9a9aa3",
+            )
+            row.append(f"   {model}", style="dim #6cb6ff" if available else "dim #55555e")
+            if not available:
+                env = str(info.get("key_env") or "API_KEY").upper()
+                row.append(f"   [!] missing {env}", style="bold #d4a72c")
+            item = ListItem(Static(row), disabled=not available)
+            if is_active:
+                item.add_class("provider-active")
+            lst.append(item)
+        # Open with the active provider highlighted.
+        if self._entries:
+            lst.index = active_index
+        lst.focus()
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        lst = self.query_one("#provider-list", ListView)
+        idx = lst.index
+        if idx is None or not (0 <= idx < len(self._entries)):
+            return
+        info = self._entries[idx]
+        if not info.get("available"):
+            return  # disabled rows can't be selected — never fail silently
+        # The dismissal RESULT is what the push_screen callback receives —
+        # this is the (name, model) that flows into _apply_provider.
+        self.dismiss((str(info["name"]), str(info.get("model") or "")))
+
+
 class TraceraCommands(Provider):
     """Command-palette entries (ctrl+p)."""
 
     _COMMANDS = [
+        ("Switch provider/model", "action_switch_provider", "Open the provider/model selector (ctrl+p)"),
         ("Toggle verbose rows", "action_toggle_verbose", "Show/hide tool call arguments"),
         ("Clear conversation", "action_clear_conversation", "Reset the chat"),
         ("Show memory", "action_show_memory", "List persistent memory entries"),
@@ -161,7 +235,8 @@ class TraceraTUI(App):
         Binding("ctrl+q", "quit", "Quit", priority=True),
         Binding("ctrl+l", "clear_conversation", "Clear", show=True),
         Binding("ctrl+t", "toggle_verbose", "Rows", show=True),
-        Binding("ctrl+p", "command_palette", "Commands", show=True),
+        Binding("ctrl+p", "switch_provider", "Provider", show=True),
+        Binding("ctrl+shift+p", "command_palette", "Commands", show=True),
         Binding("ctrl+m", "show_memory", "Memory", show=True),
         Binding("f1", "show_help", "Help", show=True),
         Binding("escape", "cancel_task", "Cancel", show=False),
@@ -882,16 +957,23 @@ class TraceraTUI(App):
                         total_iterations = event.metadata.get("iterations", 0)
                         total_tokens = event.metadata.get("total_tokens", 0)
                         total_latency = event.metadata.get("total_latency_ms", 0.0)
+                        # The model the backend ACTUALLY reported for this
+                        # response — proof of which provider really answered.
+                        actual_model = event.metadata.get("model") or provider.default_model or "—"
 
                         panel.stream_end(event.text or "")
-                        steps = self._build_turn_steps(turn_trace)
-                        panel.add_thinking_disclosure(steps + turn_trace)
+                        # Only REAL events go in the disclosure — every entry in
+                        # turn_trace corresponds to an actual loop event (real
+                        # iteration, real tool call, real plan/memory update).
+                        panel.add_thinking_disclosure(turn_trace)
                         panel.add_meta(
                             f"⏱ {total_iterations} iter · ⚙ {total_tool_calls} tools · "
-                            f"{total_tokens:,} tok · {total_latency:.0f}ms"
+                            f"{total_tokens:,} tok · {total_latency:.0f}ms · "
+                            f"model {actual_model}"
                         )
                         status.update_stats(
                             state="done",
+                            model=actual_model,
                             iterations=total_iterations,
                             tool_calls=total_tool_calls,
                             tokens=total_tokens,
@@ -937,20 +1019,6 @@ class TraceraTUI(App):
         finally:
             status.update_stats(state="idle")
 
-    @staticmethod
-    def _build_turn_steps(trace: list[tuple[str, str]]) -> list[tuple[str, str]]:
-        kinds = {k for k, _ in trace}
-        ran_tools = bool(kinds & {"tool", "done", "error"})
-        return [
-            ("step-done", "Understanding user request"),
-            (
-                "step-done" if ran_tools else "step-pending",
-                "Analyzing available tools",
-            ),
-            ("step-done", "Planning next action"),
-            ("step-done", "Preparing response"),
-        ]
-
     # ── Actions ───────────────────────────────────────────────────────────────
 
     def action_clear_conversation(self) -> None:
@@ -993,6 +1061,82 @@ class TraceraTUI(App):
             + ("[green]on[/]" if panel.verbose else "[red]off[/]")
             + " — new rows show/hide their arguments.[/]"
         )
+
+    # ── Provider / model switching ────────────────────────────────────────────
+
+    def action_switch_provider(self) -> None:
+        """Open the provider/model selector (ctrl+p)."""
+        if self._running_worker is not None and self._running_worker.is_running:
+            self._panel().add_error("A task is running — press esc to stop it first.")
+            return
+        try:
+            from tracera.config.settings import get_settings
+            from tracera.providers import list_available_providers
+            entries = list_available_providers(get_settings())
+            active = getattr(self.agent.provider, "name", None)
+            self.push_screen(
+                ProviderSwitcher(entries, active_name=active),
+                callback=self._on_provider_picked,
+            )
+        except Exception as e:
+            self._panel().add_error(f"Cannot open provider switcher: {e}")
+
+    def _on_provider_picked(self, result: Any) -> None:
+        if not result:
+            return
+        name, model = result
+        self._apply_provider(name, model)
+
+    def _apply_provider(self, name: str, model: str) -> None:
+        """
+        Swap the backend that handles the NEXT request.
+
+        The conversation and memory are untouched — only the provider object
+        (and the model the loop passes to it) changes. The status line and
+        header update immediately, and an explicit old → new confirmation row
+        is streamed so the switch is impossible to miss.
+        """
+        old_name = getattr(self.agent.provider, "name", "?")
+        old_model = getattr(self.agent.provider, "default_model", "") or self.agent.model or "?"
+        try:
+            from tracera.config.settings import get_settings
+            from tracera.providers import create_provider
+            new_provider = create_provider(
+                name=name, model=model, settings=get_settings()
+            )
+        except Exception as e:
+            self._panel().add_error(f"Provider {name} unavailable: {e}")
+            return
+
+        self.agent.provider = new_provider
+        self.agent.model = model
+        # Keep the task planner on the same backend.
+        decomposer = getattr(self.agent, "decomposer", None)
+        if decomposer is not None and hasattr(decomposer, "provider"):
+            try:
+                decomposer.provider = new_provider
+            except Exception:
+                pass
+
+        # Read the NEW provider for the header/status line — not whatever was
+        # already displayed.
+        self._update_header_model(model)
+        self._status_line().update_stats(state="idle", model=model)
+        self._panel().add_meta(
+            f"→ [bold cyan]Provider switched:[/] {old_name} ({old_model}) "
+            f"→ [bold cyan]{name}[/] ({model})"
+        )
+
+    def _update_header_model(self, model: str) -> None:
+        from rich.text import Text
+        right = Text()
+        right.append("● Active", style="bold #4ac26b")
+        right.append(f"  {model}", style="bold")
+        right.append("   /help", style="dim #6f6f78")
+        try:
+            self.query_one("#header-right", Static).update(right)
+        except Exception:
+            pass
 
     def action_cancel_task(self) -> None:
         """Stop the in-flight request: cancel the worker, fail open rows, reset."""
