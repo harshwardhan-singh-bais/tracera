@@ -1,11 +1,26 @@
 """
 TRACERA TUI Widgets.
+
+The TUI is a single auto-scrolling stream (Claude Code style) — the only
+widgets are the conversation stream panel and the row types it renders.
 """
 
-from tracera.tui.widgets.agent_panel import AgentPanel
-from tracera.tui.widgets.tool_log import ToolLogPanel
-from tracera.tui.widgets.plan_panel import PlanPanel
-from tracera.tui.widgets.memory_panel import MemoryPanel
-from tracera.tui.widgets.status_bar import StatusBar
+from tracera.tui.widgets.agent_panel import (
+    AgentPanel,
+    CollapsibleRow,
+    InlineStatus,
+    MessageWidget,
+    ToolRow,
+    ThinkingDisclosure,
+    format_args,
+)
 
-__all__ = ["AgentPanel", "ToolLogPanel", "PlanPanel", "MemoryPanel", "StatusBar"]
+__all__ = [
+    "AgentPanel",
+    "CollapsibleRow",
+    "InlineStatus",
+    "MessageWidget",
+    "ToolRow",
+    "ThinkingDisclosure",
+    "format_args",
+]

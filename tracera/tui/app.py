@@ -1,21 +1,25 @@
 """
-TRACERA Main Textual Application — modern terminal-agent TUI
-(Claude Code / Gemini CLI style).
+TRACERA Main Textual Application — single-stream terminal-agent TUI
+(Claude Code style).
 
 Layout:
 ┌──────────────────────────────────────────────────────────────┐
-│  TRACERA · workspace             (slim header)               │
-├───────────────────────────────────────────────┬──────────────┤
-│  ◈ CONVERSATION (single column)               │  ▾ THINKING  │
-│  YOU: add auth                               │   ⠋ thinking │
-│  ▸ reasoning (3)  ← collapsible              │   ⠹ read_file│
-│  TRACERA: streamed answer…                   │  ▾ TOOLS     │
-│  ⏱ 2 iter · 3 tools · 1,234 tok · 456ms     │  [Plan|Memory]│
-│                                               │  STATS       │
-│  ⠹ read_file(path="main.py")  ← activity line│              │
-│  ❯ _                                          │              │
-├───────────────────────────────────────────────┴──────────────┤
-│  ⚙3 ↻2 · 1,234 tok · 456ms · ● DONE · ctrl+p commands      │
+│  ■ TRACERA  your terminal coding agent  /path      ● model  │  header
+├──────────────────────────────────────────────────────────────┤
+│  ┌─ YOU ───────────────────────────────────────────────────┐ │
+│  │  add jwt validation to the middleware                   │ │
+│  └─────────────────────────────────────────────────────────┘ │
+│  ✓ search_code (query='jwt auth')                      8ms │  ← one
+│  ✓ read_file   (path='auth/middleware.py')             2ms │    stream,
+│  ✗ run_command (command='pytest')                      0ms │    auto-
+│    └ pytest: error: unrecognized arguments                 │    scrolls
+│  → Memory: recalled architecture notes                     │
+│  ┌─ TRACERA ─────────────────────────────────────────────┐ │
+│  │  Done. All 23 tests pass.                             │ │
+│  └─────────────────────────────────────────────────────────┘ │
+│  ● DONE  session 8f2c · model gemini · 5 tools · 3 iter  ...│  status
+│  ❯ [ input pill .................... ]                     │
+│  Enter send · /help commands · ctrl+t verbose rows          │
 └──────────────────────────────────────────────────────────────┘
 """
 
@@ -30,44 +34,22 @@ from textual import events, on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, ScrollableContainer
-from textual.widgets import (
-    Footer,
-    Header,
-    Input,
-    Label,
-    Static,
-    TabbedContent,
-    TabPane,
-)
-
+from textual.widgets import Input, Static
 from textual.command import Hit, Provider
 
-from tracera.tui.widgets.agent_panel import AgentPanel
-from tracera.tui.widgets.tool_log import ToolLogPanel
-from tracera.tui.widgets.plan_panel import PlanPanel
-from tracera.tui.widgets.memory_panel import MemoryPanel
-from tracera.tui.widgets.status_bar import StatusBar
-from tracera.tui.widgets.thinking_panel import ThinkingPanel
-from tracera.tui.widgets.repo_panel import RepoPanel
-from tracera.tui.widgets.debug_panel import DebugPanel
+from tracera.tui.widgets.agent_panel import (
+    AgentPanel,
+    CollapsibleRow,
+    InlineStatus,
+    format_args,
+)
 from tracera.agent.react_loop import AgentEvent, AgentEventType, ReActAgent
 from tracera.agent.memory import AgentMemory
 from tracera.agent.planner import TaskDecomposer
 from tracera.conversation.state import ConversationState
 
 
-def _format_args(args: dict) -> str:
-    """Compact, single-line rendering of tool arguments for the activity line."""
-    parts = []
-    for k, v in list(args.items())[:3]:
-        sv = str(v)
-        if len(sv) > 30:
-            sv = sv[:27] + "…"
-        parts.append(f"{k}={sv}")
-    return f"({', '.join(parts)})" if parts else ""
-
-
-_HELP_TEXT = """
+_HELP_TEXT = """\
 [bold cyan]TRACERA — Commands[/]
 
 [bold]/help[/]          Show this help
@@ -93,18 +75,19 @@ _HELP_TEXT = """
 
 [bold]ctrl+q[/]        Quit
 [bold]ctrl+l[/]        Clear conversation
-[bold]ctrl+t[/]        Toggle the live THINKING panel
-[bold]ctrl+b[/]        Toggle the activity sidebar
+[bold]ctrl+t[/]        Toggle verbose tool rows (show/hide args)
 [bold]ctrl+p[/]        Command palette
 [bold]ctrl+m[/]        Show memory
 [bold]f1[/]            Help
 [bold]esc[/]           Cancel running task
-[bold]pgup/pgdn[/]     Scroll the panel under the cursor
+[bold]pgup/pgdn[/]     Scroll the stream
 
-[bold cyan]Thinking[/]
+[bold cyan]Stream[/]
 
-Click [bold]▾ THINKING[/] in the right sidebar for the real-time agent trace.
-Click [bold]▸ Thinking… (n)[/] under any answer to expand that turn's steps.
+Everything the agent does streams inline: tool calls, file reads, command
+runs — ✓ success, ✗ failure (with the error line beneath), an animated
+spinner while in flight. Click any [bold]→ row[/] (memory, search results,
+plans, repo info) to expand its content inline.
 """
 
 
@@ -112,8 +95,7 @@ class TraceraCommands(Provider):
     """Command-palette entries (ctrl+p)."""
 
     _COMMANDS = [
-        ("Toggle thinking panel", "action_toggle_thinking", "Show/hide the live agent trace"),
-        ("Toggle sidebar", "action_toggle_sidebar", "Show/hide the activity sidebar"),
+        ("Toggle verbose rows", "action_toggle_verbose", "Show/hide tool call arguments"),
         ("Clear conversation", "action_clear_conversation", "Reset the chat"),
         ("Show memory", "action_show_memory", "List persistent memory entries"),
         ("Show help", "action_show_help", "List commands and key bindings"),
@@ -130,11 +112,7 @@ class TraceraCommands(Provider):
 
 
 class TraceraTUI(App):
-    """
-    TRACERA — Agentic Code Intelligence Terminal UI.
-    
-    A futuristic cyberpunk-themed TUI for interacting with the coding agent.
-    """
+    """TRACERA — single-stream terminal UI (Claude Code style)."""
 
     TITLE = "TRACERA — CodePilotX"
     CSS_PATH = "styles/tracera.tcss"
@@ -144,15 +122,11 @@ class TraceraTUI(App):
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit", priority=True),
         Binding("ctrl+l", "clear_conversation", "Clear", show=True),
-        Binding("ctrl+t", "toggle_thinking", "Thinking", show=True),
-        Binding("ctrl+b", "toggle_sidebar", "Sidebar", show=True),
+        Binding("ctrl+t", "toggle_verbose", "Rows", show=True),
         Binding("ctrl+p", "command_palette", "Commands", show=True),
         Binding("ctrl+m", "show_memory", "Memory", show=True),
         Binding("f1", "show_help", "Help", show=True),
         Binding("escape", "cancel_task", "Cancel", show=False),
-        # Keyboard scrolling — works like any other CLI tool (less, htop):
-        # PgUp/PgDn scroll the panel under the mouse cursor, falling back to
-        # the conversation log.
         Binding("pageup", "scroll_active(-1)", "Scroll Up", show=True),
         Binding("pagedown", "scroll_active(1)", "Scroll Down", show=True),
     ]
@@ -174,42 +148,18 @@ class TraceraTUI(App):
         self._running_task: asyncio.Task | None = None
         self._hovered_scrollable: ScrollableContainer | None = None
         self._splash_done = False
-        self._history: list[str] = []
+        self._plan_row: CollapsibleRow | None = None
 
     # ── Layout ────────────────────────────────────────────────────────────────
 
     def compose(self) -> ComposeResult:
-        # Typewriter ASCII banner at the top — the UI assembles below it,
-        # on the same page (no full-screen overlay / page switch).
+        # Typewriter ASCII banner at the top — the UI assembles below it.
         with Vertical(id="splash-banner"):
             yield Static("", id="splash-logo")
             yield Static("", id="splash-status")
         yield self._build_header()
-        with Horizontal(id="main-layout"):
-            # Single-column conversation (the terminal) — full focus
-            yield AgentPanel(id="agent-panel-widget")
-
-            # Right column: live activity — thinking trace, tools, plan, stats
-            with Vertical(id="right-sidebar"):
-                yield ThinkingPanel(id="thinking-panel-widget")
-                yield ToolLogPanel(id="tool-log-widget")
-                with TabbedContent():
-                    with TabPane("Plan", id="tab-plan"):
-                        yield PlanPanel(id="plan-panel-widget")
-                    with TabPane("Memory", id="tab-memory"):
-                        yield MemoryPanel(id="memory-panel-widget")
-                    with TabPane("Tools", id="tab-tools"):
-                        yield self._build_tools_panel()
-                    with TabPane("Repo", id="tab-repo"):
-                        yield RepoPanel(id="repo-panel-widget")
-                    with TabPane("Debug", id="tab-debug"):
-                        yield DebugPanel(id="debug-panel-widget")
-                yield self._build_stats_panel()
-                yield self._build_context_panel()
-                yield self._build_history_panel()
-
-        yield StatusBar(id="status-bar")
-        yield Footer()
+        # The single main panel — conversation stream, status line, input.
+        yield AgentPanel(id="agent-panel-widget")
 
     def _build_header(self) -> Horizontal:
         from rich.text import Text
@@ -229,72 +179,9 @@ class TraceraTUI(App):
             id="app-header",
         )
 
-    def _build_context_panel(self) -> Vertical:
-        """CONTEXT card — working dir, active file, mode (mockup layout)."""
-        rows = [
-            ("Working Dir", str(self.workspace_path)[:30] or "."),
-            ("Active File", "—"),
-            ("Mode", "Code"),
-        ]
-        children: list[Any] = [Static(" CONTEXT ", classes="panel-title")]
-        for key, val in rows:
-            children.append(
-                Horizontal(
-                    Static(key, classes="context-key"),
-                    Static(val, classes="context-val"),
-                    classes="context-row",
-                )
-            )
-        return Vertical(*children, id="context-panel")
-
-    def _build_tools_panel(self) -> Vertical:
-        """TOOLS tab — the available tools the agent can call (mockup card)."""
-        names = []
-        try:
-            if self.agent.registry is not None:
-                names = [t.name for t in self.agent.registry.tools]
-        except Exception:
-            pass
-        if not names:
-            names = ["read_file", "write_file", "edit_file", "list_dir", "grep", "run_command"]
-        lines = "\n".join(f"[dim]▪[/] {n}" for n in names)
-        return Vertical(
-            Static(lines or "[dim]No tools[/]", id="tools-list", markup=True),
-            id="tools-panel",
-        )
-
-    def _build_history_panel(self) -> Vertical:
-        """HISTORY card — recent tasks from this session (mockup layout)."""
-        return Vertical(
-            Static(" HISTORY ", classes="panel-title"),
-            Static(
-                "[dim]No previous messages[/]",
-                id="history-display",
-                markup=True,
-            ),
-            id="history-panel",
-        )
-
-    def _build_stats_panel(self) -> Vertical:
-        return Vertical(
-            Static(" STATUS ", classes="panel-title"),
-            Static(
-                "[#4ac26b]●[/] Active\n"
-                "[dim]Session:[/] [bold]———\n"
-                f"[dim]Model:[/] [bold]{self.agent.provider.default_model or '—'}\n"
-                "[dim]Iterations:[/] [bold]0\n"
-                "[dim]Tokens:[/] [bold]0\n"
-                "[dim]Time:[/] [bold]—",
-                id="stats-display",
-                markup=True,
-            ),
-            id="stats-panel",
-        )
-
     # ── Scroll handling ───────────────────────────────────────────────────────
 
     def _find_scrollable(self, widget) -> ScrollableContainer | None:
-        """Walk up the DOM from *widget* to find the enclosing scrollable, if any."""
         node = widget
         while node is not None:
             if isinstance(node, ScrollableContainer):
@@ -303,7 +190,7 @@ class TraceraTUI(App):
         return None
 
     def on_mouse_move(self, event: events.MouseMove) -> None:
-        """Track which scrollable panel the mouse is currently over."""
+        """Track which scrollable the mouse is over (for pgup/pgdn)."""
         try:
             widget, _ = self.screen.get_widget_at(event.x, event.y)
         except Exception:
@@ -313,13 +200,11 @@ class TraceraTUI(App):
             self._hovered_scrollable = scrollable
 
     def _active_scrollable(self) -> ScrollableContainer:
-        """The scrollable to act on: hovered panel, else the conversation log."""
         if self._hovered_scrollable is not None and self._hovered_scrollable.is_attached:
             return self._hovered_scrollable
-        return self.query_one("#agent-log", ScrollableContainer)
+        return self._panel()._stream()
 
     def action_scroll_active(self, direction: int) -> None:
-        """Scroll the active panel by one page (direction: -1 up, +1 down)."""
         target = self._active_scrollable()
         if direction < 0:
             target.scroll_page_up(animate=False)
@@ -328,40 +213,26 @@ class TraceraTUI(App):
 
     # ── Event handlers ────────────────────────────────────────────────────────
 
+    def _panel(self) -> AgentPanel:
+        return self.query_one("#agent-panel-widget", AgentPanel)
+
+    def _status_line(self) -> InlineStatus:
+        return self._panel().query_one("#status-line", InlineStatus)
+
     @on(AgentPanel.SubmitTask)
     def on_submit_task(self, event: AgentPanel.SubmitTask) -> None:
-        """Handle user input from the agent panel."""
         text = event.text.strip()
         if not text:
             return
-
-        # Handle slash commands
         if text.startswith("/"):
             self._handle_command(text)
             return
-
-        # Start agent task
-        agent_panel = self.query_one("#agent-panel-widget", AgentPanel)
-        agent_panel.add_user_message(text)
-        self._append_history(text)
+        panel = self._panel()
+        panel.add_user_message(text)
         self._run_agent_task(text)
 
-    def _append_history(self, task: str) -> None:
-        """Keep the HISTORY card showing the most recent tasks."""
-        short = task[:36]
-        if short in self._history:
-            self._history.remove(short)
-        self._history.insert(0, short)
-        self._history = self._history[:5]
-        try:
-            display = self.query_one("#history-display", Static)
-            lines = "\n".join(f"[dim]▪[/] {t}" for t in self._history)
-            display.update(lines)
-        except Exception:
-            pass
-
     def _handle_command(self, text: str) -> None:
-        panel = self.query_one("#agent-panel-widget", AgentPanel)
+        panel = self._panel()
         cmd = text.split()[0].lower()
 
         if cmd == "/help":
@@ -393,14 +264,13 @@ class TraceraTUI(App):
             task = text[len(cmd):].strip()
             if task:
                 panel.add_user_message(task)
-                self._append_history(task)
                 self._run_agent_task(task)
             else:
                 panel.add_error(f"Usage: {cmd} <task description>")
         elif cmd == "/search":
             query = text[len(cmd):].strip()
             if query:
-                self._run_search(query, panel)
+                self._run_search(query)
             else:
                 panel.add_error("Usage: /search <query>")
         elif cmd == "/debug":
@@ -410,11 +280,11 @@ class TraceraTUI(App):
             else:
                 panel.add_error("Usage: /debug <query>")
         elif cmd == "/index":
-            self._run_indexing(panel)
+            self._run_indexing()
         elif cmd == "/test":
-            self._run_tests(panel)
+            self._run_tests()
         elif cmd == "/review":
-            self._run_review(panel)
+            self._run_review()
         elif cmd == "/tools":
             self._show_tools(panel)
         elif cmd == "/mcp":
@@ -432,7 +302,7 @@ class TraceraTUI(App):
         else:
             panel.add_error(f"Unknown command: {cmd}. Type /help for available commands.")
 
-    # ── Phase 56: REPL command implementations ───────────────────────────────
+    # ── REPL command implementations ─────────────────────────────────────────
 
     def _show_tools(self, panel: AgentPanel) -> None:
         names = [t.name for t in self.agent.registry.tools]
@@ -452,7 +322,10 @@ class TraceraTUI(App):
                 "  [dim]No mcp_servers.json yet — see MCP_CONNECTIONS.md for "
                 "server configs and required credentials.[/]"
             )
-        lines.append("  [dim]Use `tracera mcp serve` (server) or `tracera mcp connect <file>` (client).[/]")
+        lines.append(
+            "  [dim]Use `tracera mcp serve` (server) or "
+            "`tracera mcp connect <file>` (client).[/]"
+        )
         panel.add_assistant_message("\n".join(lines))
 
     def _show_cost(self, panel: AgentPanel) -> None:
@@ -471,9 +344,11 @@ class TraceraTUI(App):
         )
 
     @work(exclusive=False)
-    async def _run_search(self, query: str, panel: AgentPanel) -> None:
-        """Hybrid search over the code index, rendered in the conversation."""
-        panel.set_activity("running", "searching", query[:40])
+    async def _run_search(self, query: str) -> None:
+        """Hybrid search — results as a collapsible inline row."""
+        panel = self._panel()
+        status = self._status_line()
+        status.update_stats(state="running")
         try:
             if self.retrieval_pipeline is None:
                 panel.add_error("Code index not loaded — run /index first.")
@@ -481,9 +356,9 @@ class TraceraTUI(App):
             symbol_retriever = self.retrieval_pipeline[1]
             hits = symbol_retriever.search(query, k=8)
             if not hits:
-                panel.add_assistant_message(f"[bold]Search:[/] {query}\n\n[dim]No results.[/]")
+                panel.add_info_row(f"Search: {query}", "[dim]No results.[/]")
                 return
-            lines = [f"[bold]Search:[/] {query}\n"]
+            lines = []
             for i, hit in enumerate(hits[:8], 1):
                 path = hit.get("file_path") or hit.get("id") or "?"
                 symbol = hit.get("symbol") or ""
@@ -494,21 +369,23 @@ class TraceraTUI(App):
                 if score:
                     line += f" [dim]· {float(score):.3f}[/]"
                 lines.append(line)
-            panel.add_assistant_message("\n".join(lines))
+                content = (hit.get("content") or "").strip().splitlines()
+                if content:
+                    lines.append("     [dim]" + content[0][:80] + "[/]")
+            panel.add_info_row(f"Search: {query} ({len(hits)} hits)", "\n".join(lines))
         except Exception as e:
             panel.add_error(f"Search failed: {e}")
         finally:
-            panel.clear_activity()
+            status.update_stats(state="idle")
 
     @work(exclusive=False)
     async def _run_debug(self, query: str) -> None:
-        """Phase 59: retrieval debugging — compare every strategy."""
-        panel = self.query_one("#agent-panel-widget", AgentPanel)
-        debug_panel = self.query_one("#debug-panel-widget", DebugPanel)
-        panel.set_activity("running", "debugging retrieval", query[:40])
+        """Phase 59: retrieval debugging — per-strategy comparison row."""
+        panel = self._panel()
+        status = self._status_line()
+        status.update_stats(state="running")
         try:
             if self.retrieval_pipeline is None:
-                debug_panel.show_error("Code index not loaded — run /index first.")
                 panel.add_error("Code index not loaded — run /index first.")
                 return
             from tracera.evaluation.strategies import (
@@ -530,26 +407,36 @@ class TraceraTUI(App):
                 reranker=reranker,
                 resolve_doc=build_doc_resolver(vector_store),
             )
-            results: dict[str, list[dict]] = {}
+            lines = [f"[bold cyan]Query:[/] {query}\n"]
             for name, strategy in strategies.items():
                 hits = strategy.retrieve(query, k=5)
-                results[name] = [h.to_dict() for h in hits]
-            debug_panel.show_query(query, results)
-            panel.add_assistant_message(
-                f"[bold]Debug:[/] {query} — compared "
-                f"{', '.join(results.keys())}. See the Debug tab."
+                lines.append(f"[bold]{name.upper()}[/]")
+                if not hits:
+                    lines.append("  [dim]— no results —[/]")
+                for i, hit in enumerate(hits[:5], 1):
+                    path = hit.file_path or hit.doc_id or "?"
+                    lines.append(f"  {i}. [bold]{path}[/]")
+                    if hit.content:
+                        first = hit.content.strip().splitlines()
+                        if first:
+                            lines.append("     [dim]" + first[0][:70] + "[/]")
+                lines.append("")
+            panel.add_info_row(
+                f"Debug: {query} ({len(strategies)} strategies)",
+                "\n".join(lines),
             )
         except Exception as e:
-            debug_panel.show_error(str(e))
             panel.add_error(f"Debug failed: {e}")
         finally:
-            panel.clear_activity()
+            status.update_stats(state="idle")
 
     @work(exclusive=False)
-    async def _run_indexing(self, panel: AgentPanel) -> None:
-        """Phase 56 /index — run the Phase 16-24 indexing pipeline."""
+    async def _run_indexing(self) -> None:
+        """/index — run the Phase 16-24 indexing pipeline."""
+        panel = self._panel()
+        status = self._status_line()
         panel.add_assistant_message("[dim]Indexing workspace… this may take a while.[/]")
-        panel.set_activity("running", "indexing", str(self.workspace_path)[:40])
+        status.update_stats(state="running")
         try:
             from tracera.config.settings import get_settings
             from tracera.main import _build_retrieval_pipeline
@@ -567,12 +454,14 @@ class TraceraTUI(App):
         except Exception as e:
             panel.add_error(f"Indexing failed: {e}")
         finally:
-            panel.clear_activity()
+            status.update_stats(state="idle")
 
     @work(exclusive=False)
-    async def _run_tests(self, panel: AgentPanel) -> None:
-        """Phase 56 /test — run the project test suite with a rich report."""
-        panel.set_activity("running", "running tests", "pytest")
+    async def _run_tests(self) -> None:
+        """/test — run the project test suite."""
+        panel = self._panel()
+        status = self._status_line()
+        status.update_stats(state="running")
         try:
             from tracera.tools.test_runner import TestRunner
             import sys
@@ -588,13 +477,13 @@ class TraceraTUI(App):
         except Exception as e:
             panel.add_error(f"Test run failed: {e}")
         finally:
-            panel.clear_activity()
+            status.update_stats(state="idle")
 
     @work(exclusive=False)
-    async def _run_review(self, panel: AgentPanel) -> None:
-        """Phase 56 /review — ask the agent to review current changes."""
+    async def _run_review(self) -> None:
+        """/review — ask the agent to review current changes."""
+        panel = self._panel()
         panel.add_user_message("Review the current uncommitted changes and report issues.")
-        self._append_history("Review the current changes")
         self._run_agent_task(
             "Review the current uncommitted changes in the workspace: "
             "check git diff for bugs, security issues, and style problems. "
@@ -603,27 +492,74 @@ class TraceraTUI(App):
 
     @work(exclusive=False)
     async def _run_inspect(self) -> None:
-        """Phase 58 /inspect — repository inspection panel."""
+        """/inspect — repository overview as a collapsible row."""
+        panel = self._panel()
         from tracera.config.settings import get_settings
-        repo_panel = self.query_one("#repo-panel-widget", RepoPanel)
-        panel = self.query_one("#agent-panel-widget", AgentPanel)
+        from tracera.workspace.sandbox import WorkspaceSandbox
+        root = Path(self.workspace_path)
+        lines = [f"[bold cyan]Repository:[/] {root}\n"]
         try:
-            await repo_panel.show_repository(self.workspace_path, get_settings())
+            sandbox = WorkspaceSandbox(root)
+            entries = await sandbox.list_directory(".", max_depth=1)
+            dirs: list[str] = []
+            files: list[str] = []
+            for e in entries:
+                if len(e.relative.parts) == 1:
+                    (dirs if e.is_dir else files).append(str(e.relative))
+            lines.append("[bold]Structure[/]")
+            if dirs:
+                lines.append("  [dim]dirs:[/] " + ", ".join(sorted(dirs)[:15]))
+            if files:
+                lines.append("  [dim]files:[/] " + ", ".join(sorted(files)[:15]))
+            lines.append("")
         except Exception as e:
-            await repo_panel.show_repository(self.workspace_path)
-            panel.add_error(f"Inspect failed: {e}")
+            lines.append(f"[dim]Structure unavailable: {e}[/]")
+        try:
+            from tracera.git.operations import GitRepo
+            repo = GitRepo(root)
+            status = repo.status()
+            lines.append(
+                f"[bold]Git:[/] branch `{status.branch}` — "
+                f"{'dirty' if status.is_dirty else 'clean'}"
+            )
+            for c in repo.log(max_count=2):
+                lines.append(f"  [dim]• {c.hexsha[:7]} {c.summary[:60]}[/]")
+        except Exception:
+            lines.append("[dim]Git: not a repository[/]")
+        settings = get_settings()
+        manifest = settings.index_dir / "index_manifest.json"
+        lines.append(
+            "[bold]Code index:[/] "
+            + ("[green]indexed[/]" if manifest.exists() else "[yellow]not indexed[/]")
+        )
+        panel.add_info_row(f"Repository: {root.name or root}", "\n".join(lines))
 
     def _run_deps(self, symbol: str) -> None:
-        """Phase 58 /deps — symbol dependency chain in the repo panel."""
+        """/deps — symbol dependency chain as a collapsible row."""
+        panel = self._panel()
         from tracera.config.settings import get_settings
-        repo_panel = self.query_one("#repo-panel-widget", RepoPanel)
-        repo_panel.show_dependencies(symbol, get_settings())
+        graph_path = get_settings().index_dir / "symbol_graph.json"
+        if not graph_path.exists():
+            panel.add_info_row(f"Dependencies: {symbol}", "[dim]No symbol graph — run /index.[/]")
+            return
+        try:
+            from tracera.graph.symbol_graph import SymbolGraph
+            graph = SymbolGraph.load(graph_path)
+            neighbors = graph.neighbors_of(symbol)
+            if not neighbors:
+                panel.add_info_row(f"Dependencies: {symbol}", "[dim]No dependencies found.[/]")
+                return
+            lines = "\n".join(f"  [dim]•[/] {n}" for n in neighbors[:25])
+            panel.add_info_row(
+                f"Dependencies: {symbol} ({len(neighbors)})", lines
+            )
+        except Exception as e:
+            panel.add_info_row(f"Dependencies: {symbol}", f"[dim]Failed: {e}[/]")
 
-    # ── Phase 57: rich execution display ─────────────────────────────────────
+    # ── Rich execution display (Phase 57) ─────────────────────────────────────
 
     @staticmethod
     def _phase_for_tool(name: str) -> str | None:
-        """Map a tool call to a human execution-phase label."""
         if name in ("search_code", "find_symbol", "find_definition", "grep"):
             return "Searching"
         if name in ("get_context", "get_dependencies", "find_references"):
@@ -640,7 +576,6 @@ class TraceraTUI(App):
 
     @staticmethod
     def _count_tests_passed(output: str | None) -> str | None:
-        """Extract a '✓ N passed' summary from pytest output (Phase 57)."""
         if not output:
             return None
         match = re.search(r"(\d+) passed", output)
@@ -654,7 +589,7 @@ class TraceraTUI(App):
     def _show_status(self, panel: AgentPanel) -> None:
         provider = self.agent.provider
         stats = self._conversation.stats
-        status = (
+        panel.add_assistant_message(
             f"[bold cyan]System Status[/]\n\n"
             f"Provider:    [bold]{provider.name}[/]\n"
             f"Model:       [bold]{provider.default_model}[/]\n"
@@ -664,31 +599,21 @@ class TraceraTUI(App):
             f"Tokens:      [bold cyan]{stats.total_tokens:,}[/]\n"
             f"Memory:      [bold orchid]{self.memory.count}[/] entries\n"
         )
-        panel.add_assistant_message(status)
 
     # ── Agent execution ───────────────────────────────────────────────────────
 
     @work(exclusive=False)
     async def _run_agent_task(self, task: str) -> None:
-        """Run the agent loop in a background worker."""
-        agent_panel = self.query_one("#agent-panel-widget", AgentPanel)
-        tool_log = self.query_one("#tool-log-widget", ToolLogPanel)
-        thinking = self.query_one("#thinking-panel-widget", ThinkingPanel)
-        status_bar = self.query_one("#status-bar", StatusBar)
-        plan_panel = self.query_one("#plan-panel-widget", PlanPanel)
-
+        """Run the agent loop, streaming every action inline."""
+        panel = self._panel()
+        status = self._status_line()
         provider = self.agent.provider
-        status_bar.update_stats(
-            provider=provider.name,
-            model=provider.default_model or "—",
-            status="thinking",
-            workspace=str(self.workspace_path),
-            activity="Thinking…",
-        )
 
-        agent_panel.set_activity("thinking", "Thinking…")
-        thinking.expand()
-        thinking.add_thinking("task received")
+        status.update_stats(
+            state="thinking",
+            session=self._conversation.id[:8],
+            model=provider.default_model or "—",
+        )
 
         total_iterations = 0
         total_tool_calls = 0
@@ -698,168 +623,131 @@ class TraceraTUI(App):
             async for event in await self.agent.run(task, conversation=self._conversation):
                 match event.type:
                     case AgentEventType.THINKING:
-                        text = f"thinking (iteration {event.iteration + 1})"
-                        status_bar.update_stats(
-                            provider=self.agent.provider.name,
-                            status="thinking",
-                            iteration=event.iteration + 1,
-                            activity=text,
+                        status.update_stats(
+                            state="thinking",
+                            iterations=event.iteration + 1,
                         )
-                        agent_panel.set_activity("thinking", text)
-                        thinking.add_thinking(text)
-                        turn_trace.append(("think", text))
+                        turn_trace.append(("think", f"iteration {event.iteration + 1}"))
 
                     case AgentEventType.TOOL_START:
                         name = event.tool_name or "tool"
-                        args_preview = _format_args(event.tool_args or {})
-                        # Phase 57: rich execution display — annotate each
-                        # tool with its human execution phase.
+                        args_str = format_args(event.tool_args or {})
+                        status.update_stats(state="running")
+                        # Phase 57: remember the phase for the turn trace.
                         phase = self._phase_for_tool(name)
                         if phase:
-                            thinking.add_thinking(phase)
                             turn_trace.append(("think", phase))
-                        status_bar.update_stats(
-                            status="running",
-                            activity=f"{name}{args_preview}",
-                        )
-                        agent_panel.set_activity("running", name, args_preview)
-                        agent_panel.add_tool_message(name)
-                        thinking.tool_start(name, args_preview)
-                        turn_trace.append(("tool", f"{name}{args_preview}"))
+                        panel.tool_start(name, args_str)
+                        turn_trace.append(("tool", f"{name} {args_str}"))
 
                     case AgentEventType.TOOL_END:
                         total_tool_calls += 1
                         name = event.tool_name or "tool"
                         duration_ms = event.metadata.get("duration_ms", 0.0)
-                        tool_log.add_entry(
+                        panel.tool_end(
                             name,
-                            event.tool_args or {},
-                            success=event.tool_success,
-                            output=event.tool_output or "",
+                            event.tool_success,
                             duration_ms=duration_ms,
+                            output=event.tool_output or "",
                         )
-                        status_bar.update_stats(
-                            tool_calls=total_tool_calls,
-                            activity="",
-                        )
-                        thinking.tool_end(name, event.tool_success, duration_ms)
+                        status.update_stats(tool_calls=total_tool_calls)
                         if event.tool_success:
-                            agent_panel.set_activity(
-                                "done", name, f"{duration_ms:.0f}ms"
-                            )
                             turn_trace.append(("done", f"{name}  {duration_ms:.0f}ms"))
                             # Phase 57: "Running N tests… → ✓ N passed"
                             if name == "run_command" and event.tool_output:
                                 passed = self._count_tests_passed(event.tool_output)
                                 if passed is not None:
-                                    thinking.add_thinking(f"✓ {passed} passed")
-                                    turn_trace.append(("done", f"✓ {passed} passed"))
+                                    turn_trace.append(("done", f"✓ {passed}"))
                         else:
-                            agent_panel.set_activity(
-                                "error", name, (event.tool_output or "")[:60]
-                            )
                             turn_trace.append(("error", f"{name} failed"))
 
                     case AgentEventType.RESPONSE_DELTA:
-                        # Live token-by-token rendering, Claude Code style
                         if event.text:
-                            agent_panel.stream_delta(event.text)
+                            panel.stream_delta(event.text)
 
                     case AgentEventType.PLAN_UPDATE:
-                        # Phase 9: live plan → PlanPanel + thinking trace
                         plan_data = event.metadata.get("plan")
                         if plan_data:
                             from tracera.agent.planner import Plan
                             try:
-                                plan_panel.set_plan(Plan.from_dict(plan_data))
+                                plan = Plan.from_dict(plan_data)
+                                done, total = plan.progress
+                                body = plan.to_markdown()
+                                if self._plan_row is None:
+                                    self._plan_row = panel.add_info_row(
+                                        f"Plan: {done}/{total} steps",
+                                        body,
+                                        prefix="▸",
+                                    )
+                                else:
+                                    self._plan_row.set_title(f"Plan: {done}/{total} steps")
+                                    self._plan_row.set_body(body)
                             except Exception:
                                 pass
-                        thinking.add_thinking("plan updated")
                         turn_trace.append(("think", "plan updated"))
 
                     case AgentEventType.MEMORY_UPDATE:
-                        # Phase 10: memory was written — refresh the memory tab
-                        thinking.add_thinking(event.text or "memory saved")
-                        self.action_show_memory()
+                        panel.add_info_row(
+                            f"Memory: {event.text or 'saved'}",
+                            prefix="→",
+                        )
+                        turn_trace.append(("think", event.text or "memory saved"))
 
                     case AgentEventType.RESPONSE_COMPLETE:
                         total_iterations = event.metadata.get("iterations", 0)
                         total_tokens = event.metadata.get("total_tokens", 0)
                         total_latency = event.metadata.get("total_latency_ms", 0.0)
 
-                        agent_panel.clear_activity()
-                        agent_panel.stream_end(event.text or "")
-                        thinking.add_thinking("response complete")
-                        # Collapsible per-turn Thinking… block — mockup-style
-                        # step checklist + gum-glyph trace lines
+                        panel.stream_end(event.text or "")
                         steps = self._build_turn_steps(turn_trace)
-                        agent_panel.add_thinking_disclosure(steps + turn_trace)
-                        # Compact turn statistics line
-                        agent_panel.add_meta(
+                        panel.add_thinking_disclosure(steps + turn_trace)
+                        panel.add_meta(
                             f"⏱ {total_iterations} iter · ⚙ {total_tool_calls} tools · "
                             f"{total_tokens:,} tok · {total_latency:.0f}ms"
                         )
-                        status_bar.update_stats(
+                        status.update_stats(
+                            state="done",
+                            iterations=total_iterations,
+                            tool_calls=total_tool_calls,
                             tokens=total_tokens,
-                            iteration=total_iterations,
-                            status="done",
-                            latency_ms=total_latency,
-                            activity="",
-                        )
-                        self._update_stats_panel(
-                            total_iterations, total_tool_calls,
-                            self._conversation.stats.total_tokens_in,
-                            self._conversation.stats.total_tokens_out,
-                            total_latency,
+                            elapsed_ms=total_latency,
                         )
 
                     case AgentEventType.ERROR:
-                        agent_panel.set_activity("error", "Error", event.text or "")
-                        agent_panel.add_error(event.text or "Unknown error")
-                        thinking.add_error(event.text or "Unknown error")
+                        panel.add_error(event.text or "Unknown error")
                         turn_trace.append(("error", event.text or "error"))
-                        status_bar.update_stats(status="error", activity="")
+                        status.update_stats(state="error")
 
                     case AgentEventType.DONE:
-                        if status_bar.status != "done" and status_bar.status != "error":
-                            status_bar.update_stats(status="idle", activity="")
+                        if status._state not in ("done", "error"):
+                            status.update_stats(state="idle")
 
         except Exception as e:
-            agent_panel.set_activity("error", "Agent error", str(e))
-            agent_panel.add_error(f"Agent error: {e}")
-            thinking.add_error(str(e))
-            status_bar.update_stats(status="error", activity="")
+            panel.add_error(f"Agent error: {e}")
+            status.update_stats(state="error")
 
     @work(exclusive=False)
     async def _run_planning(self, task: str) -> None:
-        """Run task decomposition and display the plan."""
-        agent_panel = self.query_one("#agent-panel-widget", AgentPanel)
-        plan_panel = self.query_one("#plan-panel-widget", PlanPanel)
-
-        agent_panel.set_activity("thinking", "Decomposing task into steps…")
+        """/plan — decompose a task and show the plan as a collapsible row."""
+        panel = self._panel()
+        status = self._status_line()
+        status.update_stats(state="thinking")
         try:
-            thinking = self.query_one("#thinking-panel-widget", ThinkingPanel)
-            thinking.add_thinking("planning — decomposing task")
             decomposer = TaskDecomposer(self.agent.provider)
             plan = await decomposer.decompose(task)
-            agent_panel.clear_activity()
-            thinking.add_thinking(f"plan ready — {len(plan.items)} steps")
-            plan_panel.set_plan(plan)
-            agent_panel.add_assistant_message(
-                f"[bold]Plan ready[/]: {len(plan.items)} steps\n\n"
-                + plan.to_markdown()
+            body = plan.to_markdown()
+            panel.add_info_row(f"Plan: {len(plan.items)} steps", body, prefix="▸")
+            panel.add_assistant_message(
+                f"[bold]Plan ready[/]: {len(plan.items)} steps — click the "
+                f"[bold]▸ Plan[/] row above to expand it."
             )
         except Exception as e:
-            agent_panel.set_activity("error", "Planning failed", str(e))
-            agent_panel.add_error(f"Planning failed: {e}")
+            panel.add_error(f"Planning failed: {e}")
+        finally:
+            status.update_stats(state="idle")
 
     @staticmethod
     def _build_turn_steps(trace: list[tuple[str, str]]) -> list[tuple[str, str]]:
-        """
-        The mockup's Thinking… checklist, derived from what actually happened:
-        Understanding request → Analyzing tools → Planning → Preparing response.
-        Rows are (kind, text); kinds are step-done / step-active / step-pending.
-        """
         kinds = {k for k, _ in trace}
         ran_tools = bool(kinds & {"tool", "done", "error"})
         return [
@@ -872,36 +760,12 @@ class TraceraTUI(App):
             ("step-done", "Preparing response"),
         ]
 
-    def _update_stats_panel(
-        self,
-        iterations: int,
-        tool_calls: int,
-        tokens_in: int,
-        tokens_out: int,
-        latency_ms: float,
-    ) -> None:
-        display = self.query_one("#stats-display", Static)
-        model = self.agent.provider.default_model or "—"
-        time_str = f"{latency_ms / 1000:.1f}s" if latency_ms else "—"
-        display.update(
-            "[#4ac26b]●[/] Active\n"
-            f"[dim]Session:[/] [bold]{self._conversation.id[:8]}\n"
-            f"[dim]Model:[/] [bold]{model}\n"
-            f"[dim]Iterations:[/] [bold]{iterations}\n"
-            f"[dim]Tokens:[/] [bold]{tokens_in + tokens_out:,}\n"
-            f"[dim]Time:[/] [bold]{time_str}"
-        )
-
     # ── Actions ───────────────────────────────────────────────────────────────
 
     def action_clear_conversation(self) -> None:
-        self.query_one("#agent-panel-widget", AgentPanel).clear()
-        self.query_one("#tool-log-widget", ToolLogPanel).clear()
-        try:
-            self.query_one("#thinking-panel-widget", ThinkingPanel).clear()
-        except Exception:
-            pass
+        self._panel().clear()
         self._conversation = ConversationState()
+        self._plan_row = None
 
     def action_focus_input(self) -> None:
         try:
@@ -910,37 +774,42 @@ class TraceraTUI(App):
             pass
 
     def action_show_memory(self) -> None:
-        memory_panel = self.query_one("#memory-panel-widget", MemoryPanel)
-        memory_panel.refresh_memory(self.memory)
+        panel = self._panel()
+        entries = self.memory.entries()
+        if not entries:
+            panel.add_info_row("Memory: no entries", "[dim]Nothing stored yet.[/]")
+            return
+        lines = []
+        for e in entries[:20]:
+            kind = getattr(e, "category", "general")
+            content = getattr(e, "content", str(e))[:140]
+            lines.append(f"  [dim]{kind}[/] {content}")
+        panel.add_info_row(f"Memory: {len(entries)} entries", "\n".join(lines))
 
     def action_show_help(self) -> None:
-        panel = self.query_one("#agent-panel-widget", AgentPanel)
-        panel.add_assistant_message(_HELP_TEXT)
+        self._panel().add_assistant_message(_HELP_TEXT)
 
-    def action_toggle_thinking(self) -> None:
-        """Expand/collapse the live thinking panel (ctrl+t or palette)."""
-        try:
-            self.query_one("#thinking-panel-widget", ThinkingPanel).toggle()
-        except Exception:
-            pass
-
-    def action_toggle_sidebar(self) -> None:
-        """Show/hide the activity sidebar — true single-terminal mode (ctrl+b)."""
-        try:
-            sidebar = self.query_one("#right-sidebar", Vertical)
-            sidebar.display = not sidebar.display
-        except Exception:
-            pass
+    def action_toggle_verbose(self) -> None:
+        """ctrl+t — toggle showing tool-call arguments in the stream rows."""
+        panel = self._panel()
+        panel.verbose = not panel.verbose
+        for row in panel.query("ToolRow"):
+            row.verbose = panel.verbose
+            row.refresh()
+        self._status_line()._refresh()
+        self._panel().add_assistant_message(
+            "[dim]Verbose tool rows "
+            + ("[green]on[/]" if panel.verbose else "[red]off[/]")
+            + " — new rows show/hide their arguments.[/]"
+        )
 
     def action_cancel_task(self) -> None:
         if self._running_task and not self._running_task.done():
             self._running_task.cancel()
-            status_bar = self.query_one("#status-bar", StatusBar)
-            status_bar.update_stats(status="idle")
+        self._status_line().update_stats(state="idle")
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
-    # ASCII-art TRACERA (block letters) typed out at the top of the page.
     _SPLASH_ART = [
         " ████████╗██████╗  █████╗  ██████╗███████╗██████╗  █████╗ ",
         " ╚══██╔══╝██╔══██╗██╔══██╗██╔════╝██╔════╝██╔══██╗██╔══██╗",
@@ -951,45 +820,31 @@ class TraceraTUI(App):
     ]
 
     def on_mount(self) -> None:
-        """Hide the UI sections, then play the typewriter banner animation.
-
-        The UI assembles BELOW the banner on the same page — no page switch.
-        """
-        status_bar = self.query_one("#status-bar", StatusBar)
-        status_bar.update_stats(
-            provider=self.agent.provider.name,
+        status = self._status_line()
+        status.update_stats(
+            state="idle",
+            session=self._conversation.id[:8],
             model=self.agent.provider.default_model,
-            status="idle",
-            workspace=str(self.workspace_path),
         )
         # Hide the interface initially — it builds in below the banner.
-        for selector in ("#app-header", "#main-layout", "#status-bar", "Footer"):
+        for selector in ("#app-header", "#agent-panel-widget"):
             try:
                 self.query_one(selector).display = False
             except Exception:
                 pass
         self.run_worker(self._animate_splash(), exclusive=True)
 
-    # ── Typewriter splash (gum-style, assembles the UI below it) ────────────
-
     def _show(self, selector: str) -> None:
-        """Reveal a section of the interface in place."""
         try:
             self.query_one(selector).display = True
         except Exception:
             pass
 
     async def _animate_splash(self) -> None:
-        """
-        Startup animation: the TRACERA ASCII art types out at the top of the
-        page, then the interface assembles below it — header, then the main
-        layout, then the status bar — while boot steps cycle underneath.
-        """
         try:
             logo = self.query_one("#splash-logo", Static)
             status = self.query_one("#splash-status", Static)
 
-            # 1) Type the ASCII-art banner line by line (typewriter).
             completed: list[str] = []
             for line in self._SPLASH_ART:
                 buf = ""
@@ -1005,7 +860,6 @@ class TraceraTUI(App):
                 if self._splash_done:
                     return
 
-            # 2) Type the tagline beneath the art.
             sub = "your terminal coding agent"
             sbuf = ""
             for ch in sub:
@@ -1019,12 +873,9 @@ class TraceraTUI(App):
             if self._splash_done:
                 return
 
-            # 3) Boot steps — each one assembles another section of the UI
-            #    below the banner (no page switch).
             boot_steps = [
                 ("checking providers", "#app-header"),
-                ("loading memory", "#main-layout"),
-                ("loading code index", "#status-bar"),
+                ("loading code index", "#agent-panel-widget"),
                 ("ready", None),
             ]
             for step, selector in boot_steps:
@@ -1042,13 +893,11 @@ class TraceraTUI(App):
         await self._finish_splash()
 
     async def _finish_splash(self) -> None:
-        """Remove the banner (the UI is already in place below it)."""
         try:
             self.query_one("#splash-banner").remove()
         except Exception:
             pass
-        # Safety: make sure every section is visible even if a step was skipped.
-        for selector in ("#app-header", "#main-layout", "#status-bar", "Footer"):
+        for selector in ("#app-header", "#agent-panel-widget"):
             self._show(selector)
         try:
             self.query_one("#agent-input", Input).focus()
@@ -1057,19 +906,16 @@ class TraceraTUI(App):
         await self._type_welcome()
 
     async def _type_welcome(self) -> None:
-        """Type the greeting character-by-character, gum-style."""
         try:
-            panel = self.query_one("#agent-panel-widget", AgentPanel)
-            await panel.type_message(
+            await self._panel().type_message(
                 "I'm ready to help with your coding tasks.\n"
-                "Read a file, edit code, search the codebase, run tests, "
-                "or plan a change — just ask.\n"
+                "Everything I do streams inline — tool calls, file reads, "
+                "command runs. Type /help for commands.\n"
             )
         except Exception:
             pass
 
     def on_key(self, event) -> None:
-        """Any key during the splash skips straight into the terminal."""
         if not self._splash_done:
             try:
                 if self.query_one("#splash-banner"):

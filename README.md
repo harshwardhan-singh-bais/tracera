@@ -175,18 +175,41 @@ Code: `tracera/evaluation/` — `dataset.py` (45), `metrics.py` (46),
 | 54 | MCP trust model, tool permissions, output validation | `tracera/security/mcp_security.py` |
 | 55 | Resource-limit monitoring (iterations, tool calls, tokens) | `tracera/security/resources.py` |
 
-## Terminal UI (Phases 56–59)
+## Terminal UI (Phases 56–59, single-stream redesign)
 
-`tracera tui` (or just `tracera`) now includes:
+`tracera tui` (or just `tracera`) is a Claude Code / Charm-style Textual app —
+one continuous, auto-scrolling stream of everything the agent does, inside a
+single rounded panel. No sidebar, no tabs to click:
 
-- **56 · REPL commands:** `/code` `/search` `/debug` `/index` `/test` `/review`
+- **Single main panel** (rounded border, full width) holding the whole
+  conversation: agent replies in a cyan-bordered `TRACERA` bubble, user
+  echoes in a muted purple `YOU` bubble, errors in a red box.
+- **Inline tool rows** in execution order, one compact line per action —
+  `✓ search_code 8ms`, `✗ run_command 3ms` with the error auto-expanded on
+  the line beneath, and an animated braille spinner while in flight.
+- **Auto-scroll:** the stream always snaps to the latest event while a task
+  runs; scroll up to pause it, and it only re-snaps once you return to the
+  bottom (never fights manual scrolling).
+- **Collapsible rows** for memory, search results, plans, repo info and
+  retrieval debug output (`→ Memory: …`, `▸ Plan: 3/5`) — click to expand
+  the content inline, no separate panel.
+- **Thin status bar** above the input (not a box): `● DONE session … ·
+  model … · 5 tools · 3 iter · tokens … · elapsed 0:42`, updating live.
+- **Input pill** — rounded box docked at the bottom with a cyan focus ring
+  and a hint line (`Enter send · /help commands · ctrl+t verbose rows`).
+- **Boxes size to their content** — when idle, only the ready message and
+  the status bar take up space; no fixed-height empty containers.
+- **Commands:** `/code` `/search` `/debug` `/index` `/test` `/review`
   `/tools` `/mcp` `/cost` `/inspect` `/deps` `/plan` `/memory` `/model` …
+  (`ctrl+t` toggles tool-call arguments on the rows).
 - **57 · Rich execution display:** live phases (`Searching…`, `Running tests…`,
-  `✓ N passed`) in the thinking trace and status bar.
-- **58 · Repository inspection:** Repo tab — files, symbols, dependency chains
-  (`/inspect`, `/deps <symbol>`).
-- **59 · Retrieval debugging:** Debug tab — per-strategy results for any query
-  (`/debug <query>` shows BM25 / Dense / Hybrid / Reranker side by side).
+  `✓ N passed`) stream inline.
+- **58 · Repository inspection:** `/inspect` and `/deps <symbol>` show files,
+  symbols, and dependency chains as expandable rows.
+- **59 · Retrieval debugging:** `/debug <query>` shows BM25 / Dense / Hybrid /
+  Reranker results side by side in one expandable row.
+
+See `tui_stream.svg` for a rendered preview of the redesigned UI.
 
 ## Configuration
 

@@ -285,6 +285,19 @@ class AgentMemory:
     def get_by_category(self, category: MemoryCategory) -> list[MemoryEntry]:
         return [e for e in self._entries.values() if e.category == category]
 
+    def entries(self, *, limit: int | None = None) -> list[MemoryEntry]:
+        """
+        All memory entries, most recently updated first.
+
+        *limit* caps the number returned (no cap when None).
+        """
+        ordered = sorted(
+            self._entries.values(),
+            key=lambda e: e.updated_at,
+            reverse=True,
+        )
+        return ordered[:limit] if limit is not None else ordered
+
     # ── Context building ──────────────────────────────────────────────────────
 
     def build_context(
