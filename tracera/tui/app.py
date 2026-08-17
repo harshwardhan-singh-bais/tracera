@@ -76,6 +76,8 @@ _HELP_TEXT = """\
 [bold]/cost[/]           Show session token/cost estimate
 [bold]/inspect[/]        Repository inspection (files, symbols, git)
 [bold]/deps[/] <symbol>   Show a symbol's dependency chain
+[bold]/phases[/]         Show the phase map + verified checklist
+[bold]/phases done <n>[/]  Mark a phase as verified (persisted)
 [bold]/reset[/]          Reset conversation state
 
 [bold cyan]Keys[/]
@@ -422,6 +424,8 @@ class TraceraTUI(App):
                 self._run_deps(symbol)
             else:
                 panel.add_error("Usage: /deps <symbol>")
+        elif cmd == "/phases":
+            self._show_phases(text)
         else:
             panel.add_error(f"Unknown command: {cmd}. Type /help for available commands.")
 
@@ -678,6 +682,158 @@ class TraceraTUI(App):
             )
         except Exception as e:
             panel.add_info_row(f"Dependencies: {symbol}", f"[dim]Failed: {e}[/]")
+
+    # ── Phase map (roadmap coverage + verified checklist) ─────────────────────
+
+    def _phases_progress_path(self) -> Path:
+        """Where verified-phase progress is persisted (per data dir)."""
+        from tracera.config.settings import get_settings
+        return get_settings().tracera_data_dir / "phases_progress.json"
+
+    def _load_verified_phases(self) -> set[int]:
+        path = self._phases_progress_path()
+        try:
+            if path.exists():
+                import json
+                data = json.loads(path.read_text(encoding="utf-8"))
+                return {int(n) for n in data.get("verified", [])}
+        except Exception:
+            pass
+        return set()
+
+    def _save_verified_phases(self, verified: set[int]) -> None:
+        import json
+        path = self._phases_progress_path()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps({"verified": sorted(verified)}, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            self._panel().add_error(f"Could not save phase progress: {e}")
+
+    def _show_phases(self, text: str) -> None:
+        """
+        /phases — render the roadmap phase map with verification status.
+
+        Usage:
+          /phases            show the map + verified checklist
+          /phases done <n>   mark an implemented phase as verified (persisted)
+          /phases undo <n>   unmark a phase
+          /phases reset      clear all verification progress
+        """
+        from tracera.phase_map import (
+            PHASES,
+            STATUS_EXCLUDED,
+            STATUS_IMPLEMENTED,
+            STATUS_ROADMAP,
+            counts,
+            get_phase,
+        )
+
+        panel = self._panel()
+        parts = text.split()
+        sub = parts[1] if len(parts) > 1 else ""
+        verified = self._load_verified_phases()
+
+        if sub == "reset":
+            self._save_verified_phases(set())
+            panel.add_assistant_message(
+                "[bold green]✓[/] Phase verification progress cleared. "
+                "Follow [cyan]tests/PROBLEM_STATEMENT.md[/] to re-verify."
+            )
+            return
+
+        if sub in ("done", "undo") and len(parts) >= 3:
+            try:
+                number = int(parts[2])
+            except ValueError:
+                panel.add_error(f"Usage: /phases {sub} <phase-number>")
+                return
+            phase = get_phase(number)
+            if phase is None or phase.status != STATUS_IMPLEMENTED:
+                status = phase.status if phase else "unknown"
+                panel.add_error(
+                    f"Phase {number} is not testable (status: {status}). "
+                    "Only implemented phases (1–40, 42–59) can be verified."
+                )
+                return
+            if sub == "done":
+                verified.add(number)
+            else:
+                verified.discard(number)
+            self._save_verified_phases(verified)
+            action = "verified" if sub == "done" else "unmarked"
+            panel.add_assistant_message(
+                f"[bold green]✓[/] Phase {number} {action} — {phase.title}"
+            )
+            return
+
+        if sub not in ("", "list", "show"):
+            panel.add_error(
+                "Usage: /phases | /phases done <n> | /phases undo <n> | /phases reset"
+            )
+            return
+
+        c = counts()
+        lines = [
+            "[bold cyan]Phase Map[/] — "
+            f"[green]{c[STATUS_IMPLEMENTED]} implemented[/] · "
+            f"[dim red]{c[STATUS_EXCLUDED]} excluded[/] · "
+            f"[dim]{c[STATUS_ROADMAP]} roadmap[/] — "
+            f"[bold]{len(verified)} verified[/]\n"
+        ]
+
+        def _row(p) -> str:
+            if p.status == STATUS_IMPLEMENTED:
+                if p.number in verified:
+                    return f"  [bold green]✓[/] [bold]{p.number:>2}[/] {p.title} [green]verified[/]"
+                return f"  [cyan]·[/] [bold]{p.number:>2}[/] {p.title}"
+            if p.status == STATUS_EXCLUDED:
+                return f"  [dim red]✖[/] [bold]{p.number:>2}[/] {p.title}"
+            return f"  [dim]➤[/] [bold]{p.number:>2}[/] {p.title}"
+
+        #: (label, inclusive range) — mirrors the README roadmap structure.
+        groups = [
+            ("Core (1–10)", (1, 10)),
+            ("Indexing (11–15)", (11, 15)),
+            ("Retrieval (16–24)", (16, 24)),
+            ("Graph & code-search tools (25–28)", (25, 28)),
+            ("Context & repo-aware agent (29–31)", (29, 31)),
+            ("Testing & autonomy (32–38)", (32, 38)),
+            ("MCP server & client (39–40)", (39, 40)),
+            ("Multi-agent delegation (42–44)", (42, 44)),
+            ("Evaluation (45–50)", (45, 50)),
+            ("Security (51–55)", (51, 55)),
+            ("Terminal UI (56–59)", (56, 59)),
+        ]
+
+        for label, (lo, hi) in groups:
+            rows = [p for p in PHASES if lo <= p.number <= hi]
+            if not rows:
+                continue
+            lines.append(f"[bold]{label}[/]")
+            lines.extend(_row(p) for p in rows)
+            lines.append("")
+
+        excluded_phases = [p for p in PHASES if p.status == STATUS_EXCLUDED]
+        if excluded_phases:
+            lines.append("[bold]Excluded — not implemented (41, 60–66)[/]")
+            lines.extend(_row(p) for p in excluded_phases)
+            lines.append("")
+
+        roadmap_phases = [p for p in PHASES if p.status == STATUS_ROADMAP]
+        if roadmap_phases:
+            lines.append("[bold]Roadmap — not implemented (67–72)[/]")
+            lines.extend(_row(p) for p in roadmap_phases)
+            lines.append("")
+
+        lines.append(
+            "[dim]Tick phases off as you verify them: /phases done <n> · "
+            "the scenario lives in tests/PROBLEM_STATEMENT.md[/]"
+        )
+        panel.add_assistant_message("\n".join(lines))
 
     # ── Rich execution display (Phase 57) ─────────────────────────────────────
 

@@ -253,6 +253,22 @@ See `tui_v3_loader.svg` (mid-run loader pill), `tui_v3_stream.svg`
 `tui_provider_switcher.svg` (the `ctrl+p` provider dropdown) for rendered
 previews.
 
+## Proven Static Analysis (Phases 67–72)
+
+These phases move analysis from embedding-similarity inference to **proven
+structure** — a real call graph with edges you can defend, instead of
+heuristics. The rule across all of them: one language done properly first,
+then generalize.
+
+| Phase | Capability |
+|-------|-----------|
+| 67 | **Real call-graph resolution engine** — resolve actual function/method calls per language by walking the AST (not string matching): resolve imports and class hierarchies for method calls. Handle the hard cases per language: polymorphism/virtual dispatch, decorators, dependency injection patterns, dynamic imports. Output a graph where every edge is proven, not inferred by embedding similarity. Start with 1 language done properly before generalizing. |
+| 68 | **Data-flow tracking** — track how a value/variable flows through function calls (not just "A calls B" but "the user_id param in A becomes the id arg in B"). Needed for real blast-radius and real security analysis later. |
+| 69 | **Precise blast-radius from the real graph** — given a change, walk the proven call graph (67) outward, not the heuristic dependency graph from phases 25/26. Distinguish "definitely affected" (resolved call edge) from "possibly affected" (dynamic dispatch, reflection — can't prove statically, flag as unknown, don't fake certainty). Replaces risk-score fluff with something defensible: "here's the resolved call chain, here's the proof". |
+| 70 | **Behavior-preservation checker for refactors** — before/after AST diff that checks a transformation didn't change semantics for the resolved call graph (renames, extractions, simple refactors first — don't overreach). The actual hard, respected engineering problem — most agent tools just run tests and hope. |
+| 71 | **Benchmark against the fakers** — 20–30 real "if I change X, what breaks" questions on a real repo. Compare the resolved-graph answer vs. what Aider/Cline/a plain embedding-based agent would infer. Measure precision — proof, not a vibe. |
+| 72 | **Language #2** — only once 67–70 are solid for language #1, extend the resolver to a second language. Resist doing this earlier — half-working analysis across 5 languages is worse than one language done right. |
+
 ## Configuration
 
 ```bash
