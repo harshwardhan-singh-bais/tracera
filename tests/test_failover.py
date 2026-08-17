@@ -13,7 +13,11 @@ import asyncio
 
 import pytest
 
-from tracera.errors import ProviderError, ProviderRateLimitError
+from tracera.errors import (
+    ProviderError,
+    ProviderRateLimitError,
+    ProviderUnavailableError,
+)
 from tracera.providers.base import (
     LLMMessage,
     LLMResponse,
@@ -29,32 +33,42 @@ class _FakeProvider:
 
     def __init__(self, name: str, fail_complete: bool = False,
                  fail_stream: bool = False, fail_always: bool = False,
+                 fail_permanent: bool = False,
                  response_text: str = "ok"):
         self.name = name
         self.default_model = f"{name}-model"
         self.fail_complete = fail_complete
         self.fail_stream = fail_stream
         self.fail_always = fail_always
+        self.fail_permanent = fail_permanent
         self.response_text = response_text
         self.complete_calls = 0
         self.stream_calls = 0
         self.last_message_count = 0
+        self.last_model: str | None = "unset"
 
-    async def complete(self, messages, **kwargs):
+    def _raise(self, action: str) -> None:
+        if self.fail_permanent:
+            raise ProviderUnavailableError(f"{self.name} permanently unavailable (model 404)")
+        raise ProviderRateLimitError(f"{self.name} {action} rate limited")
+
+    async def complete(self, messages, model=None, **kwargs):
         self.complete_calls += 1
         self.last_message_count = len(messages)
-        if self.fail_always or self.fail_complete:
-            raise ProviderRateLimitError(f"{self.name} rate limited")
+        self.last_model = model
+        if self.fail_always or self.fail_complete or self.fail_permanent:
+            self._raise("complete")
         return LLMResponse(
             content=f"{self.name}: {self.response_text}", tool_calls=None,
             usage=TokenUsage(), model=self.default_model, finish_reason="stop",
         )
 
-    async def stream(self, messages, **kwargs):
+    async def stream(self, messages, model=None, **kwargs):
         self.stream_calls += 1
         self.last_message_count = len(messages)
-        if self.fail_always or self.fail_stream:
-            raise ProviderRateLimitError(f"{self.name} rate limited")
+        self.last_model = model
+        if self.fail_always or self.fail_stream or self.fail_permanent:
+            self._raise("stream")
         yield StreamEvent(type="text_delta", text=f"{self.name}: ")
         yield StreamEvent(type="text_delta", text=self.response_text)
         yield StreamEvent(type="done")
@@ -88,6 +102,62 @@ def test_failover_all_fail_raises():
         asyncio.run(provider.complete([LLMMessage.user("hi")]))
 
 
+def test_failover_skips_permanently_failed_providers():
+    """
+    A provider that fails permanently (dead key/model, payment required) is
+    marked dead and never re-tried on subsequent calls — otherwise every LLM
+    call would re-burn through the whole chain ("this error keeps coming").
+    """
+    from tracera.providers.failover import FailoverProvider
+
+    groq = _FakeProvider("groq", fail_permanent=True)
+    cerebras = _FakeProvider("cerebras")
+    provider = FailoverProvider([groq, cerebras])
+
+    asyncio.run(provider.complete([LLMMessage.user("1")]))
+    assert provider.name == "cerebras"
+    assert provider.dead_providers == ["groq"]
+
+    # Second call starts at cerebras and never re-tries the dead groq.
+    asyncio.run(provider.complete([LLMMessage.user("2")]))
+    assert groq.complete_calls == 1  # not called again
+    assert cerebras.complete_calls == 2
+
+
+def test_failover_reports_each_provider_error():
+    """When every provider fails, the raised error lists per-provider
+    reasons (payment required, model 404, ...) instead of only the last one."""
+    from tracera.providers.failover import FailoverProvider
+
+    groq = _FakeProvider("groq", fail_permanent=True)
+    samba = _FakeProvider("sambanova", fail_permanent=True)
+    provider = FailoverProvider([groq, samba])
+
+    with pytest.raises(ProviderError) as exc_info:
+        asyncio.run(provider.complete([LLMMessage.user("hi")]))
+
+    msg = str(exc_info.value)
+    assert "All 2 provider(s) failed" in msg
+    assert "groq" in msg and "sambanova" in msg
+    assert "permanently unavailable" in msg
+
+
+def test_failover_stream_skips_permanently_failed_provider():
+    from tracera.providers.failover import FailoverProvider
+
+    groq = _FakeProvider("groq", fail_permanent=True)
+    gemini = _FakeProvider("gemini")
+    provider = FailoverProvider([groq, gemini])
+
+    events = asyncio.run(_collect_stream(provider))
+    texts = [e.text for e in events if e.type == "text_delta"]
+    assert "".join(t for t in texts if t) == "gemini: ok"
+    assert provider.dead_providers == ["groq"]
+
+    asyncio.run(_collect_stream(provider))
+    assert groq.stream_calls == 1  # skipped on the second call
+
+
 def test_failover_stream_falls_back():
     from tracera.providers.failover import FailoverProvider
 
@@ -101,9 +171,9 @@ def test_failover_stream_falls_back():
     assert provider.name == "gemini"
 
 
-async def _collect_stream(provider):
+async def _collect_stream(provider, model=None):
     events = []
-    async for ev in provider.stream([LLMMessage.user("hi")]):
+    async for ev in provider.stream([LLMMessage.user("hi")], model=model):
         events.append(ev)
     return events
 
@@ -122,6 +192,62 @@ def test_failover_reuses_active_provider():
     asyncio.run(provider.complete([LLMMessage.user("2")]))
     assert openai.complete_calls == 2  # openai tried first (no groq call)
     assert groq.complete_calls == 1
+
+
+def test_failover_never_forwards_global_model_to_providers():
+    """
+    A single global model string (e.g. a Groq model like llama-3.3-70b-versatile)
+    must NOT be forced onto every provider in the chain — it would 404 on
+    every endpoint that doesn't serve it and the whole chain would fail.
+    Each provider uses the model it was configured with.
+    """
+    from tracera.providers.failover import FailoverProvider
+
+    groq = _FakeProvider("groq")
+    cerebras = _FakeProvider("cerebras")
+    provider = FailoverProvider([groq, cerebras])
+
+    response = asyncio.run(provider.complete(
+        [LLMMessage.user("hi")], model="llama-3.3-70b-versatile"
+    ))
+
+    assert response.content == "groq: ok"
+    assert groq.last_model is None  # provider used its own default_model
+    assert cerebras.complete_calls == 0  # first provider succeeded
+
+
+def test_failover_fallback_provider_uses_own_model():
+    """After a failure, the fallback provider must not inherit the caller's
+    global model either — it falls back to its configured default."""
+    from tracera.providers.failover import FailoverProvider
+
+    groq = _FakeProvider("groq", fail_complete=True)
+    cerebras = _FakeProvider("cerebras")
+    provider = FailoverProvider([groq, cerebras])
+
+    response = asyncio.run(provider.complete(
+        [LLMMessage.user("hi")], model="llama-3.3-70b-versatile"
+    ))
+
+    assert response.content == "cerebras: ok"
+    assert groq.last_model is None
+    assert cerebras.last_model is None
+    assert cerebras.complete_calls == 1
+
+
+def test_failover_stream_never_forwards_global_model():
+    """The streaming path must drop the global model the same way."""
+    from tracera.providers.failover import FailoverProvider
+
+    groq = _FakeProvider("groq", fail_stream=True)
+    gemini = _FakeProvider("gemini")
+    provider = FailoverProvider([groq, gemini])
+
+    events = asyncio.run(_collect_stream(provider, model="llama-3.3-70b-versatile"))
+    texts = [e.text for e in events if e.type == "text_delta"]
+    assert "".join(t for t in texts if t) == "gemini: ok"
+    assert groq.last_model is None
+    assert gemini.last_model is None
 
 
 # ── Conversation compaction (413 prevention) ──────────────────────────────────
@@ -245,3 +371,72 @@ def test_build_provider_returns_failover(monkeypatch):
     assert isinstance(provider, FailoverProvider)
     assert [p.name for p in provider.providers] == ["groq", "openai", "ollama"]
     assert created == ["groq", "openai", "ollama"]  # unavailable ones skipped
+
+
+def test_build_provider_does_not_apply_wrong_default_model(monkeypatch):
+    """
+    auto mode with a Groq default model must not push that model onto the
+    first available non-Groq provider — each provider gets its own model
+    (regression: "All 7 provider(s) failed ... model_not_found
+    llama-3.3-70b-versatile" on every endpoint).
+    """
+    from tracera.main import _build_provider
+
+    settings = type("S", (), {
+        "tracera_default_provider": "auto",
+        "tracera_default_model": "openai/gpt-oss-120b",  # a Groq model
+    })()
+
+    created = {}
+
+    def fake_create_provider(name=None, model=None, settings=None):
+        created[name] = model
+        return _FakeProvider(name)
+
+    def fake_list(settings=None):
+        return [
+            {"name": "cerebras", "available": True},  # first available, NOT groq
+            {"name": "groq", "available": True},
+        ]
+
+    monkeypatch.setattr("tracera.providers.list_available_providers", fake_list)
+    monkeypatch.setattr("tracera.providers.create_provider", fake_create_provider)
+
+    _build_provider(settings)
+
+    # Cerebras must get its own recommended model, not the Groq default.
+    assert created["cerebras"] == "gpt-oss-120b"
+    # Groq (the model's owner) keeps the recommended Groq model.
+    assert created["groq"] == "openai/gpt-oss-120b"
+
+
+def test_build_provider_explicit_provider_honours_default_model(monkeypatch):
+    """When the user explicitly configures a default provider (non-auto),
+    that provider still receives TRACERA_DEFAULT_MODEL."""
+    from tracera.main import _build_provider
+
+    settings = type("S", (), {
+        "tracera_default_provider": "groq",
+        "tracera_default_model": "llama-3.3-70b-versatile",
+    })()
+
+    created = {}
+
+    def fake_create_provider(name=None, model=None, settings=None):
+        created[name] = model
+        return _FakeProvider(name)
+
+    def fake_list(settings=None):
+        return [
+            {"name": "groq", "available": True},
+            {"name": "openai", "available": True},
+        ]
+
+    monkeypatch.setattr("tracera.providers.list_available_providers", fake_list)
+    monkeypatch.setattr("tracera.providers.create_provider", fake_create_provider)
+
+    _build_provider(settings)
+
+    # Explicit default provider → model="" → create_provider uses the default.
+    assert created["groq"] == ""
+    assert created["openai"] == "gpt-4o"  # fallback keeps its own model

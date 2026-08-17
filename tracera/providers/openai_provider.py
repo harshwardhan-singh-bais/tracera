@@ -14,8 +14,38 @@ from tracera.errors import (
     ProviderAuthError,
     ProviderContextLengthError,
     ProviderRateLimitError,
+    ProviderUnavailableError,
     ProviderError,
 )
+
+
+def _classify_error(e: Exception) -> ProviderError:
+    """
+    Map an openai-SDK exception to the right TRACERA error subclass.
+
+    Permanent failures (bad key 401, payment required 402, forbidden 403,
+    model/endpoint not found 404) raise ProviderUnavailableError so failover
+    knows retrying is pointless. Rate limits (429) stay transient.
+    """
+    import openai
+
+    if isinstance(e, openai.AuthenticationError):
+        return ProviderAuthError(f"OpenAI authentication failed: {e}")
+    if isinstance(e, openai.RateLimitError):
+        return ProviderRateLimitError(f"OpenAI rate limit: {e}")
+    if isinstance(e, openai.APIStatusError):
+        status = getattr(e, "status_code", 0)
+        detail = str(e)
+        if status == 401:
+            return ProviderAuthError(f"OpenAI authentication failed: {e}")
+        if status in (402, 403, 404):
+            return ProviderUnavailableError(f"Provider unavailable (HTTP {status}): {e}")
+        if status == 400 and "context" in detail.lower():
+            return ProviderContextLengthError(f"Context too long: {e}")
+        return ProviderError(f"OpenAI request failed (HTTP {status}): {e}")
+    if isinstance(e, openai.APIConnectionError):
+        return ProviderError(f"OpenAI connection error: {e}")
+    return ProviderError(f"OpenAI request failed: {e}")
 from tracera.logging import get_logger
 from tracera.providers.base import (
     LLMMessage,
@@ -161,16 +191,8 @@ class OpenAIProvider(LLMProvider):
         t0 = time.perf_counter()
         try:
             response = await self._client.chat.completions.create(**kwargs)
-        except openai.AuthenticationError as e:
-            raise ProviderAuthError(f"OpenAI authentication failed: {e}")
-        except openai.RateLimitError as e:
-            raise ProviderRateLimitError(f"OpenAI rate limit: {e}")
-        except openai.BadRequestError as e:
-            if "context" in str(e).lower():
-                raise ProviderContextLengthError(f"Context too long: {e}")
-            raise ProviderError(f"OpenAI bad request: {e}")
         except Exception as e:
-            raise ProviderError(f"OpenAI request failed: {e}")
+            raise _classify_error(e)
 
         latency_ms = (time.perf_counter() - t0) * 1000
         choice = response.choices[0]
@@ -293,12 +315,8 @@ class OpenAIProvider(LLMProvider):
                             )
                         pending_tool_calls.clear()
 
-        except openai.AuthenticationError as e:
-            raise ProviderAuthError(str(e))
-        except openai.RateLimitError as e:
-            raise ProviderRateLimitError(str(e))
         except Exception as e:
-            raise ProviderError(f"OpenAI stream failed: {e}")
+            raise _classify_error(e)
 
         yield StreamEvent(type="done")
 

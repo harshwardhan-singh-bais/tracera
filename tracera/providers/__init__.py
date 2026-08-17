@@ -38,13 +38,16 @@ log = get_logger("providers")
 # Used when tracera_default_provider = "auto"
 # Each entry: (provider_name, settings_attr, base_url, default_model)
 _FALLBACK_ORDER = [
-    ("groq",       "groq_api_key",       "https://api.groq.com/openai/v1",                          "llama-3.3-70b-versatile"),
+    # NOTE: default models below were verified against live accounts in 2026;
+    # some classic IDs (llama-3.3-70b-versatile, meta-llama/llama-3.1-405b-
+    # instruct, nvidia/llama-3.1-nemotron-70b-instruct) are no longer served.
+    ("groq",       "groq_api_key",       "https://api.groq.com/openai/v1",                          "openai/gpt-oss-120b"),
     ("openai",     "openai_api_key",     "https://api.openai.com/v1",                              "gpt-4o"),
-    ("cerebras",   "cerebras_api_key",   "https://api.cerebras.ai/v1",                              "llama-3.3-70b"),
-    ("nvidia",     "nvidia_api_key",     "https://integrate.api.nvidia.com/v1",                     "nvidia/llama-3.1-nemotron-70b-instruct"),
+    ("cerebras",   "cerebras_api_key",   "https://api.cerebras.ai/v1",                              "gpt-oss-120b"),
+    ("nvidia",     "nvidia_api_key",     "https://integrate.api.nvidia.com/v1",                     "meta/llama-3.1-8b-instruct"),
     ("sambanova",  "sambanova_api_key",  "https://api.sambanova.ai/v1",                             "Meta-Llama-3.1-70B-Instruct"),
     ("mistral",    "mistral_api_key",    "https://api.mistral.ai/v1",                               "mistral-large-latest"),
-    ("openrouter", "openrouter_api_key", "https://openrouter.ai/api/v1",                            "meta-llama/llama-3.1-405b-instruct"),
+    ("openrouter", "openrouter_api_key", "https://openrouter.ai/api/v1",                            "meta-llama/llama-3.3-70b-instruct"),
     ("anthropic",  "anthropic_api_key",  "https://api.anthropic.com/v1",                             "claude-3-5-sonnet-latest"),
     ("gemini",     "google_api_key",     "https://generativelanguage.googleapis.com/v1beta/openai/", "gemini-2.5-pro"),
     ("ollama",     None,                 None,                                                       "llama3.2"),
@@ -55,13 +58,13 @@ _PROVIDER_MODELS: dict[str, str] = {
     "openai":     "gpt-4o",
     "anthropic":  "claude-3-5-sonnet-latest",
     "gemini":     "gemini-2.5-pro",
-    "groq":       "llama-3.3-70b-versatile",
-    "cerebras":   "llama-3.3-70b",
-    "nvidia":     "nvidia/llama-3.1-nemotron-70b-instruct",
+    "groq":       "openai/gpt-oss-120b",
+    "cerebras":   "gpt-oss-120b",
+    "nvidia":     "meta/llama-3.1-8b-instruct",
     "nemotron":   "nvidia/nemotron-3-ultra-550b-a55b",
     "sambanova":  "Meta-Llama-3.1-70B-Instruct",
     "mistral":    "mistral-large-latest",
-    "openrouter": "meta-llama/llama-3.1-405b-instruct",
+    "openrouter": "meta-llama/llama-3.3-70b-instruct",
     "together":   "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
     "ollama":     "llama3.2",
 }

@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     # ── Default Model ─────────────────────────────────────────────────────────
 
     tracera_default_provider: str = Field("groq", alias="TRACERA_DEFAULT_PROVIDER")
-    tracera_default_model: str = Field("llama-3.3-70b-versatile", alias="TRACERA_DEFAULT_MODEL")
+    tracera_default_model: str = Field("openai/gpt-oss-120b", alias="TRACERA_DEFAULT_MODEL")
     tracera_default_temperature: float = Field(0.2, alias="TRACERA_DEFAULT_TEMPERATURE")
     tracera_default_max_tokens: int = Field(8192, alias="TRACERA_DEFAULT_MAX_TOKENS")
 

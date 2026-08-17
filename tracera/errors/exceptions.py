@@ -113,6 +113,15 @@ class ProviderContextLengthError(ProviderError):
     """Raised when the input exceeds the provider's context limit."""
 
 
+class ProviderUnavailableError(ProviderError):
+    """
+    Raised when a provider permanently cannot serve requests: invalid/expired
+    key (401), payment required (402), forbidden (403), or a model/endpoint
+    that does not exist or is not accessible (404). Retrying is pointless,
+    so failover should skip this provider for the rest of the session.
+    """
+
+
 # ── Tools ─────────────────────────────────────────────────────────────────────
 
 class ToolError(TracerError):

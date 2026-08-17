@@ -182,18 +182,30 @@ def _build_provider(settings=None):
     from tracera.providers.failover import FailoverProvider
 
     ranked = list_available_providers(settings)
+    configured = (getattr(settings, "tracera_default_provider", "") or "").lower()
+    default_model = getattr(settings, "tracera_default_model", "") or ""
     providers = []
     for i, info in enumerate(ranked):
         if not info["available"]:
             continue
-        # First provider honours the user's default model; fallbacks use
-        # each provider's recommended model (a Groq model on OpenAI would
-        # be invalid).
-        model = "" if i == 0 else _PROVIDER_MODELS.get(info["name"], "")
+        name = info["name"]
+        recommended = _PROVIDER_MODELS.get(name, "")
+        if i == 0:
+            # TRACERA_DEFAULT_MODEL only makes sense on a provider it belongs
+            # to: the explicitly configured default provider, or the first
+            # provider when the model is that provider's own recommended
+            # model. Otherwise a Groq model would be sent to e.g. Cerebras
+            # and 404 on every call, wasting a failover hop.
+            explicit_match = configured not in ("", "auto") and configured == name
+            model = "" if (explicit_match or default_model == recommended) else recommended
+        else:
+            # Fallbacks always use their own recommended model (a Groq model
+            # on OpenAI would be invalid).
+            model = recommended
         try:
-            providers.append(create_provider(name=info["name"], model=model, settings=settings))
+            providers.append(create_provider(name=name, model=model, settings=settings))
         except Exception as e:
-            console.print(f"[dim yellow]⚠ Provider {info['name']} unavailable ({e})[/]")
+            console.print(f"[dim yellow]⚠ Provider {name} unavailable ({e})[/]")
 
     if not providers:
         # No keys at all — let create_provider raise the proper error
