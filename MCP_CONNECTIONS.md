@@ -47,6 +47,8 @@ in the unified registry.
 
 ---
 
+
+
 ## Credential cheat-sheet (priority order)
 
 | # | Server | Credentials needed? | What to provide |
