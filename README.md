@@ -2,7 +2,7 @@
 
 > **Agentic Code Intelligence & Autonomous Coding Engine**
 >
-> A terminal-native AI coding agent with hybrid retrieval, symbol-aware code understanding, and  futuristic TUI.
+> A terminal-native AI coding agent with hybrid retrieval, symbol-aware code understanding, and futuristic TUI.
 
 ```
  ████████╗██████╗  █████╗  ██████╗███████╗██████╗  █████╗
