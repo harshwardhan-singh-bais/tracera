@@ -48,7 +48,7 @@
 # Recommended: use uv
 uv tool install .
 
-# Or with pip
+#  with pip
 pip install -e ".[dev]"
 ```
 
