@@ -188,3 +188,80 @@ def extend_registry_with_retrieval(
     )
     return registry
 
+
+def extend_registry_with_ast_tools(
+    registry: ToolRegistry,
+    retrieval_pipeline=None,
+    workspace=None,
+    session_manager=None,
+) -> ToolRegistry:
+    """
+    Register jCodeMunch-inspired structural analysis and intelligence tools.
+
+    Adds 20+ tools covering:
+    - AST structural queries (find_importers, get_blast_radius, etc.)
+    - Refactoring and safety preflight (plan_refactoring, check_edit_safe, etc.)
+    - Session economics and context assembly
+    - Symbol provenance and agent config auditing
+    - Module coupling and dependency cycle detection
+    """
+    from tracera.tools.ast_tools import (
+        FindImportersTool, GetBlastRadiusTool, GetCallHierarchyTool,
+        FindDeadCodeTool, GetChangedSymbolsTool, GetHotspotsTool,
+        SearchAstTool, GetClassHierarchyTool,
+    )
+    from tracera.tools.refactor_tools import (
+        PlanRefactoringTool, CheckEditSafeTool,
+        CheckDeleteSafeTool, GetPrRiskProfileTool,
+    )
+    from tracera.tools.session_tools import (
+        AssembleTaskContextTool, PlanTurnTool,
+        GetRankedContextTool, GetSessionStatsTool, GetRepoMapTool,
+    )
+    from tracera.tools.provenance_tools import (
+        GetSymbolProvenanceTool, AuditAgentConfigTool,
+        GetEndpointImpactTool, GetDependencyCyclesTool,
+        GetCouplingMetricsTool,
+    )
+
+    tools: list[Tool] = [
+        # Structural analysis
+        FindImportersTool(retrieval_pipeline),
+        GetBlastRadiusTool(retrieval_pipeline),
+        GetCallHierarchyTool(retrieval_pipeline),
+        FindDeadCodeTool(retrieval_pipeline),
+        GetChangedSymbolsTool(workspace, retrieval_pipeline),
+        GetHotspotsTool(workspace, retrieval_pipeline),
+        SearchAstTool(workspace),
+        GetClassHierarchyTool(retrieval_pipeline),
+        # Refactoring & safety
+        PlanRefactoringTool(retrieval_pipeline, workspace),
+        CheckEditSafeTool(retrieval_pipeline),
+        CheckDeleteSafeTool(retrieval_pipeline),
+        GetPrRiskProfileTool(workspace, retrieval_pipeline),
+        # Session & context
+        AssembleTaskContextTool(retrieval_pipeline),
+        PlanTurnTool(retrieval_pipeline),
+        GetRankedContextTool(retrieval_pipeline),
+        GetSessionStatsTool(session_manager),
+        GetRepoMapTool(retrieval_pipeline, workspace),
+        # Provenance & config
+        GetSymbolProvenanceTool(retrieval_pipeline, workspace),
+        AuditAgentConfigTool(workspace, retrieval_pipeline),
+        GetEndpointImpactTool(retrieval_pipeline),
+        GetDependencyCyclesTool(retrieval_pipeline),
+        GetCouplingMetricsTool(retrieval_pipeline),
+    ]
+
+    # Wire up the pipeline reference for tools that need it
+    for tool in tools:
+        if hasattr(tool, '_pipeline') and tool._pipeline is None:
+            tool._pipeline = retrieval_pipeline
+
+    registry.register_many(tools)
+    log.info(
+        "Registry extended with AST/intelligence tools: %s",
+        ", ".join(t.name for t in tools),
+    )
+    return registry
+

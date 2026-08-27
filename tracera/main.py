@@ -95,11 +95,35 @@ def _build_agent(settings=None, workspace_path: Path | None = None, retrieval_pi
     # Phase 31: repository-aware system prompt
     system_prompt = (
         "You are TRACERA, an autonomous code intelligence agent running in a developer's terminal.\n"
-        "You have access to a fully indexed codebase. When answering questions about the code or\n"
-        "making changes, ALWAYS use `search_code` or `find_symbol` first to locate the relevant\n"
-        "symbols before falling back to `grep` or `list_dir`. This ensures you understand the\n"
-        "architecture before editing. Think step-by-step, use tools systematically, and always\n"
-        "verify your changes are correct before responding."
+        "You have access to a fully indexed codebase with advanced code intelligence tools.\n\n"
+        "## Code Exploration (use these BEFORE reading full files)\n"
+        "- `assemble_task_context`: One-call task orchestration — classify intent and get all context\n"
+        "- `plan_turn`: Analyze query and get confidence-guided routing before first read\n"
+        "- `get_repo_map`: Get an overview of the repository structure\n"
+        "- `search_code` / `find_symbol` / `find_definition`: Locate symbols\n"
+        "- `get_ranked_context`: Token-budgeted context pack for a query\n\n"
+        "## Structural Analysis (questions grep can't answer)\n"
+        "- `find_importers`: What imports a file\n"
+        "- `get_blast_radius`: What breaks if you change a symbol\n"
+        "- `get_call_hierarchy`: Trace callers/callees N levels deep\n"
+        "- `find_dead_code`: Symbols unreachable from entry points\n"
+        "- `get_changed_symbols`: Map git diff to affected symbols\n"
+        "- `get_hotspots`: Risky code by complexity × churn\n"
+        "- `search_ast`: Cross-language AST pattern matching (anti-patterns)\n"
+        "- `get_class_hierarchy`: Traverse inheritance chains\n"
+        "- `get_dependency_cycles`: Detect circular imports\n"
+        "- `get_coupling_metrics`: Module coupling and instability\n"
+        "- `get_endpoint_impact`: What breaks if you change an endpoint\n\n"
+        "## Safety & Refactoring\n"
+        "- `check_edit_safe`: Preflight before modifying a symbol\n"
+        "- `check_delete_safe`: Preflight before deleting a symbol\n"
+        "- `plan_refactoring`: Edit-ready rename/move/extract instructions\n"
+        "- `get_pr_risk_profile`: Composite risk score for changes\n\n"
+        "## Session & Provenance\n"
+        "- `get_session_stats`: Token usage and savings\n"
+        "- `get_symbol_provenance`: Git archaeology for a symbol\n"
+        "- `audit_agent_config`: Scan config files for token waste\n\n"
+        "Think step-by-step, use tools systematically, and always verify your changes."
         if retrieval_pipeline is not None
         else (
             "You are TRACERA, an autonomous code intelligence agent running in a developer's terminal.\n"
@@ -175,6 +199,15 @@ def _build_agent(settings=None, workspace_path: Path | None = None, retrieval_pi
         ForgetMemoryTool(enhanced_memory),
         ListSessionsTool(session_manager),
     ])
+
+    # Register jCodeMunch-inspired structural analysis tools (Phase 51+)
+    from tracera.tools.registry import extend_registry_with_ast_tools
+    extend_registry_with_ast_tools(
+        registry,
+        retrieval_pipeline=retrieval_pipeline,
+        workspace=workspace,
+        session_manager=session_manager,
+    )
 
     return agent, workspace, provider
 
