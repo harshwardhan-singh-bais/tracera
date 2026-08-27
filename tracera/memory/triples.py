@@ -1,0 +1,299 @@
+"""
+Semantic Triple Store — builds a knowledge graph from extracted relationships.
+
+Triples are subject→predicate→object statements:
+  - "AuthMiddleware" → "calls" → "UserService"
+  - "test_auth.py" → "tests" → "AuthMiddleware"
+  - "user" → "prefers" → "pytest"
+
+The triple store builds on NetworkX (already used by the symbol graph) and
+provides:
+  - Triple insertion and deduplication
+  - Forward/backward traversal
+  - Concept-to-code-symbol bridging
+  - Persistence to JSON
+
+This is a *conceptual* knowledge graph about the project — different from
+the symbol graph which tracks code-level relationships (imports, calls).
+The triple store captures higher-level understanding: conventions, preferences,
+architectural decisions, and cross-cutting concerns.
+"""
+
+from __future__ import annotations
+
+import json
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from tracera.logging import get_logger
+
+log = get_logger("memory.triples")
+
+
+@dataclass
+class Triple:
+    """A single subject→predicate→object statement."""
+
+    subject: str
+    predicate: str
+    object: str
+    # Metadata
+    confidence: float = 0.8
+    source: str = ""  # where this triple came from
+    session_id: str = ""
+    created_at: float = field(default_factory=time.time)
+    frequency: int = 1  # how many times observed
+
+    @property
+    def key(self) -> str:
+        """Dedup key: normalized triple."""
+        return f"{self.subject.lower()}|{self.predicate.lower()}|{self.object.lower()}"
+
+    def to_dict(self) -> dict:
+        return {
+            "subject": self.subject,
+            "predicate": self.predicate,
+            "object": self.object,
+            "confidence": self.confidence,
+            "source": self.source,
+            "session_id": self.session_id,
+            "created_at": self.created_at,
+            "frequency": self.frequency,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Triple":
+        return cls(
+            subject=d["subject"],
+            predicate=d["predicate"],
+            object=d["object"],
+            confidence=d.get("confidence", 0.8),
+            source=d.get("source", ""),
+            session_id=d.get("session_id", ""),
+            created_at=d.get("created_at", 0.0),
+            frequency=d.get("frequency", 1),
+        )
+
+
+# Common predicates (for normalization)
+_PREDICATE_ALIASES: dict[str, str] = {
+    "calls": "calls",
+    "uses": "uses",
+    "depends_on": "depends_on",
+    "depends": "depends_on",
+    "imports": "imports",
+    "inherits": "inherits",
+    "extends": "inherits",
+    "implements": "implements",
+    "contains": "contains",
+    "has": "contains",
+    "tests": "tests",
+    "tests_for": "tests",
+    "covers": "tests",
+    "configures": "configures",
+    "configured_by": "configured_by",
+    "prefers": "prefers",
+    "likes": "prefers",
+    "requires": "requires",
+    "produces": "produces",
+    "consumes": "consumes",
+    "relates_to": "relates_to",
+    "related_to": "relates_to",
+}
+
+
+def _normalize_predicate(pred: str) -> str:
+    """Normalize a predicate string."""
+    return _PREDICATE_ALIASES.get(pred.lower().strip(), pred.lower().strip())
+
+
+class TripleStore:
+    """
+    A knowledge graph of semantic triples.
+
+    Uses NetworkX for graph operations (same as the symbol graph).
+    Nodes are concepts (strings), edges are typed predicates.
+
+    Usage:
+        store = TripleStore()
+        store.add_triple(Triple("AuthMiddleware", "calls", "UserService"))
+        callers = store.get_subjects("UserService", predicate="calls")
+        all_related = store.get_neighbors("AuthMiddleware")
+    """
+
+    TRIPLES_FILE = "memory_triples.json"
+
+    def __init__(self) -> None:
+        try:
+            import networkx as nx
+            self._g: Any = nx.MultiDiGraph()
+        except ImportError:
+            raise RuntimeError("networkx not installed. Run: uv add networkx")
+        self._triples: dict[str, Triple] = {}  # key → Triple
+
+    # ── Adding triples ────────────────────────────────────────────────────────
+
+    def add_triple(self, triple: Triple, *, dedup: bool = True) -> None:
+        """
+        Add a triple to the store.
+
+        If dedup is True and an identical triple exists, increments its
+        frequency and updates confidence.
+        """
+        triple.predicate = _normalize_predicate(triple.predicate)
+        key = triple.key
+
+        if dedup and key in self._triples:
+            existing = self._triples[key]
+            existing.frequency += 1
+            existing.confidence = min(1.0, existing.confidence + 0.05)
+            existing.source = triple.source or existing.source
+            return
+
+        self._triples[key] = triple
+        self._g.add_edge(
+            triple.subject,
+            triple.object,
+            predicate=triple.predicate,
+            confidence=triple.confidence,
+            key=key,
+        )
+
+    def add_triples(self, triples: list[Triple]) -> int:
+        """Bulk-add triples. Returns the number actually added (after dedup)."""
+        before = len(self._triples)
+        for triple in triples:
+            self.add_triple(triple)
+        return len(self._triples) - before
+
+    # ── Querying ──────────────────────────────────────────────────────────────
+
+    def get_subjects(
+        self,
+        object_name: str,
+        predicate: str | None = None,
+    ) -> list[Triple]:
+        """Find all triples where object_name is the object (who uses/calls/contains it)."""
+        results = []
+        for triple in self._triples.values():
+            if triple.object.lower() == object_name.lower():
+                if predicate is None or triple.predicate == predicate:
+                    results.append(triple)
+        return sorted(results, key=lambda t: t.confidence, reverse=True)
+
+    def get_objects(
+        self,
+        subject_name: str,
+        predicate: str | None = None,
+    ) -> list[Triple]:
+        """Find all triples where subject_name is the subject (what it uses/calls/contains)."""
+        results = []
+        for triple in self._triples.values():
+            if triple.subject.lower() == subject_name.lower():
+                if predicate is None or triple.predicate == predicate:
+                    results.append(triple)
+        return sorted(results, key=lambda t: t.confidence, reverse=True)
+
+    def get_neighbors(self, concept: str, max_depth: int = 2) -> list[Triple]:
+        """
+        Get all triples within max_depth hops of a concept.
+        Returns triples where the concept appears as subject or object.
+        """
+        visited = set()
+        results = []
+        frontier = [concept]
+
+        for _ in range(max_depth):
+            next_frontier = []
+            for name in frontier:
+                if name.lower() in visited:
+                    continue
+                visited.add(name.lower())
+                # Forward: subject → object
+                for triple in self.get_objects(name):
+                    results.append(triple)
+                    if triple.object.lower() not in visited:
+                        next_frontier.append(triple.object)
+                # Backward: object → subject
+                for triple in self.get_subjects(name):
+                    results.append(triple)
+                    if triple.subject.lower() not in visited:
+                        next_frontier.append(triple.subject)
+            frontier = next_frontier
+
+        return results
+
+    def find_by_predicate(self, predicate: str) -> list[Triple]:
+        """Find all triples with a specific predicate."""
+        pred = _normalize_predicate(predicate)
+        return [t for t in self._triples.values() if t.predicate == pred]
+
+    def search(self, query: str) -> list[Triple]:
+        """Simple keyword search across all triples."""
+        query_lower = query.lower()
+        results = []
+        for triple in self._triples.values():
+            if (
+                query_lower in triple.subject.lower()
+                or query_lower in triple.predicate.lower()
+                or query_lower in triple.object.lower()
+            ):
+                results.append(triple)
+        return sorted(results, key=lambda t: t.confidence, reverse=True)
+
+    @property
+    def all_triples(self) -> list[Triple]:
+        return list(self._triples.values())
+
+    @property
+    def triple_count(self) -> int:
+        return len(self._triples)
+
+    @property
+    def node_count(self) -> int:
+        return self._g.number_of_nodes()
+
+    @property
+    def edge_count(self) -> int:
+        return self._g.number_of_edges()
+
+    # ── Conversion ────────────────────────────────────────────────────────────
+
+    def to_memory_triples(self) -> list[Triple]:
+        """Return all triples (for persistence)."""
+        return list(self._triples.values())
+
+    def to_text(self) -> str:
+        """Render triples as readable text for LLM context."""
+        lines = []
+        for triple in sorted(self._triples.values(), key=lambda t: t.confidence, reverse=True):
+            lines.append(f"- {triple.subject} → {triple.predicate} → {triple.object}")
+        return "\n".join(lines)
+
+    # ── Persistence ───────────────────────────────────────────────────────────
+
+    def save(self, path: Path) -> None:
+        """Save triples to JSON."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = [t.to_dict() for t in self._triples.values()]
+        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        log.debug("Saved %d triples to %s", len(self._triples), path)
+
+    @classmethod
+    def load(cls, path: Path) -> "TripleStore":
+        """Load triples from JSON."""
+        store = cls()
+        if path.exists():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                for d in data:
+                    store.add_triple(Triple.from_dict(d))
+                log.debug("Loaded %d triples from %s", len(store._triples), path)
+            except Exception as e:
+                log.warning("Failed to load triples: %s", e)
+        return store
+
+    def __repr__(self) -> str:
+        return f"<TripleStore triples={self.triple_count} nodes={self.node_count}>"

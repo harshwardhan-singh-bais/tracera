@@ -111,6 +111,30 @@ def _build_agent(settings=None, workspace_path: Path | None = None, retrieval_pi
     from tracera.agent.memory import AgentMemory
     memory = AgentMemory(settings.memory_dir)
 
+    # Enhanced memory: session management, structured extraction, context recall
+    from tracera.memory.session import SessionManager
+    from tracera.memory.recall import ContextRecall, EnhancedMemoryStore
+    from tracera.memory.triples import TripleStore
+    from tracera.memory.extractor import ConversationExtractor
+
+    session_manager = SessionManager(settings.memory_dir)
+    enhanced_memory = EnhancedMemoryStore(settings.memory_dir)
+    triple_store = TripleStore()
+    triples_path = settings.memory_dir / "memory_triples.json"
+    if triples_path.exists():
+        try:
+            triple_store = TripleStore.load(triples_path)
+        except Exception:
+            pass
+
+    context_recall = ContextRecall(
+        memory_store=enhanced_memory,
+        session_manager=session_manager,
+        triple_store=triple_store,
+        legacy_memory=memory,
+    )
+    memory_extractor = ConversationExtractor(provider)
+
     # Phase 9: let the agent plan every task up front (todo tracking + replan)
     from tracera.agent.planner import TaskDecomposer
     decomposer = TaskDecomposer(provider)
@@ -130,7 +154,28 @@ def _build_agent(settings=None, workspace_path: Path | None = None, retrieval_pi
         # Phase 9: decompose tasks into tracked todo lists
         decomposer=decomposer,
         context_budget_tokens=settings.tracera_context_budget_tokens,
+        # Enhanced memory: multi-source context recall + session tracking
+        context_recall=context_recall,
+        session_manager=session_manager,
     )
+    # Attach enhanced memory components to the agent for post-conversation extraction
+    agent._enhanced_memory = enhanced_memory
+    agent._triple_store = triple_store
+    agent._memory_extractor = memory_extractor
+    agent._session_manager = session_manager
+    agent._memory_dir = str(settings.memory_dir)
+
+    # Register memory tools in the agent's registry
+    from tracera.tools.memory_tools import (
+        RecallMemoryTool, RememberMemoryTool, ForgetMemoryTool, ListSessionsTool,
+    )
+    registry.register_many([
+        RecallMemoryTool(context_recall),
+        RememberMemoryTool(enhanced_memory),
+        ForgetMemoryTool(enhanced_memory),
+        ListSessionsTool(session_manager),
+    ])
+
     return agent, workspace, provider
 
 

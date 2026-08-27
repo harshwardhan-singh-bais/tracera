@@ -129,6 +129,9 @@ class ReActAgent:
         decomposer: Any | None = None,
         streaming: bool = True,
         context_budget_tokens: int = 12_000,
+        # Enhanced memory (Phase 10+): multi-source context recall
+        context_recall: Any | None = None,
+        session_manager: Any | None = None,
     ) -> None:
         self.provider = provider
         self.registry = registry
@@ -156,6 +159,9 @@ class ReActAgent:
         # so low-TPM providers (Groq free tier etc.) don't get 413s.
         self.context_budget_tokens = context_budget_tokens
         self._tool_call_count = 0
+        # Enhanced memory: multi-source recall (facts, rules, sessions, triples)
+        self.context_recall = context_recall
+        self.session_manager = session_manager
 
     async def run(
         self,
@@ -185,8 +191,21 @@ class ReActAgent:
             if not any(m.type == MessageType.SYSTEM for m in conversation.messages):
                 conversation.add_system(self.system_prompt)
 
-        # Phase 10: inject persistent memory into the conversation once per session
-        if self.memory_provider is not None:
+        # Enhanced memory: inject recalled context from all sources
+        # (facts, rules, relationships, sessions, triples + legacy Phase 10)
+        if self.context_recall is not None:
+            has_memory = any(
+                m.type == MessageType.SYSTEM and m.metadata.get("memory")
+                for m in conversation.messages
+            )
+            if not has_memory:
+                memory_ctx = self.context_recall.recall(task, max_chars=6000)
+                if memory_ctx:
+                    msg = ConversationMessage.system(memory_ctx)
+                    msg.metadata["memory"] = True
+                    conversation.add(msg)
+        elif self.memory_provider is not None:
+            # Fallback to legacy Phase 10 memory
             has_memory = any(
                 m.type == MessageType.SYSTEM and m.metadata.get("memory")
                 for m in conversation.messages
@@ -197,6 +216,10 @@ class ReActAgent:
                     msg = ConversationMessage.system(memory_ctx)
                     msg.metadata["memory"] = True
                     conversation.add(msg)
+
+        # Session tracking: record the user's task
+        if self.session_manager is not None:
+            self.session_manager.record_user_message(task)
 
         conversation.add_user(task)
         self._tool_call_count = 0
@@ -359,6 +382,16 @@ class ReActAgent:
                         duration_ms=result.duration_ms,
                     )
 
+                    # Session tracking: record tool calls
+                    if self.session_manager is not None:
+                        self.session_manager.record_tool_call(
+                            tool_name=tool_call.name,
+                            args=tool_call.arguments,
+                            output=result.output[:1000],
+                            success=result.success,
+                            file_path=tool_call.arguments.get("path"),
+                        )
+
                     yield AgentEvent(
                         type=AgentEventType.TOOL_END,
                         iteration=iteration,
@@ -374,6 +407,10 @@ class ReActAgent:
             # ── Final response ────────────────────────────────────────────────
             final_text = response.content or ""
             conversation.add_assistant(final_text, iteration=iteration)
+
+            # Session tracking: record the agent's final response
+            if self.session_manager is not None:
+                self.session_manager.record_agent_response(final_text)
 
             # Phase 9: mark the remaining plan items done and report progress
             if self._active_plan is not None:
@@ -393,6 +430,39 @@ class ReActAgent:
             # Phase 10: persist the completed decision to memory
             if self.memory_writer is not None and final_text:
                 self.memory_writer("decision", final_text)
+                yield AgentEvent(
+                    type=AgentEventType.MEMORY_UPDATE,
+                    iteration=iteration,
+                    text="decision saved",
+                )
+
+            # Enhanced memory: extract structured memories from this conversation
+            if (
+                self.session_manager is not None
+                and hasattr(self, "_memory_extractor")
+                and self._memory_extractor is not None
+            ):
+                try:
+                    session = self.session_manager.active_session
+                    if session:
+                        session.close(outcome="success", summary=final_text[:200])
+                        # Extract memories in background (non-blocking)
+                        import asyncio
+                        memories = await self._memory_extractor.extract_from_session(session)
+                        if memories and hasattr(self, "_enhanced_memory"):
+                            self._enhanced_memory.add_many(memories)
+                        # Persist triples
+                        if hasattr(self, "_triple_store") and self._triple_store is not None:
+                            from pathlib import Path
+                            triples_path = Path(getattr(self, "_memory_dir", ".tracera/memory")) / "memory_triples.json"
+                            self._triple_store.save(triples_path)
+                        yield AgentEvent(
+                            type=AgentEventType.MEMORY_UPDATE,
+                            iteration=iteration,
+                            text=f"{len(memories)} memories extracted",
+                        )
+                except Exception as e:
+                    log.debug("Memory extraction failed: %s", e)
                 yield AgentEvent(
                     type=AgentEventType.MEMORY_UPDATE,
                     iteration=iteration,
