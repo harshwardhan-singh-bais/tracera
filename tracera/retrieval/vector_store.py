@@ -60,7 +60,7 @@ class VectorStore:
         """
         try:
             self._connect()
-            if _TABLE_NAME not in self._db.table_names():
+            if _TABLE_NAME not in self._db.list_tables().tables:
                 return None
             table = self._db.open_table(_TABLE_NAME)
             field = table.schema.field("vector")
@@ -75,7 +75,7 @@ class VectorStore:
         if self._table is not None:
             return self._table
         self._connect()
-        if _TABLE_NAME in self._db.table_names():
+        if _TABLE_NAME in self._db.list_tables().tables:
             self._table = self._db.open_table(_TABLE_NAME)
             # Adopt the real dimension from the existing table
             if self._dimension is None:
@@ -103,6 +103,9 @@ class VectorStore:
             self._table = self._db.create_table(_TABLE_NAME, schema=schema)
             log.info("Created LanceDB table: %s (dim=%d)", _TABLE_NAME, self._dimension)
         return self._table
+
+    # NOTE: LanceDB deprecated table_names() in favor of list_tables().
+    # All call sites now use list_tables().
 
     # ── Insert ────────────────────────────────────────────────────────────────
 

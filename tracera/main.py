@@ -1056,6 +1056,9 @@ def delegate(
             elif etype == "agent_start":
                 step = event["step"]
                 console.print(f"[bold cyan]>> {step.role.value.title()}[/] {step.task[:70]}")
+            elif etype == "agent_skipped":
+                step = event["step"]
+                console.print(f"  [dim]⊘ Skipped:[/] {step.task[:70]}")
             elif etype == "agent_end":
                 step, result = event["step"], event["result"]
                 icon = "[green]OK[/]" if result.status.value == "success" else "[red]FAIL[/]"

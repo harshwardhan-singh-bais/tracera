@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from tracera.tools.test_runner import FailureAnalyzer, TestFailure, TestReport, TestRunner
+from tracera.tools.test_runner import TestFailure, TestReport, TestRunner
 from tracera.logging import get_logger
 
 log = get_logger("agent.autonomous")
