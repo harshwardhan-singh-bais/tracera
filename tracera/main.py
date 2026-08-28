@@ -1389,17 +1389,16 @@ def mcp_serve(
     ] = False,
 ) -> None:
     """
-    Run the TRACERA MCP server (Phase 39).
+    Run the TRACERA MCP server — full code intelligence + memory.
 
-    Exposes the existing capabilities — search_code, find_symbol,
-    find_references, get_context, get_dependencies, run_tests,
-    inspect_repository — over the Model Context Protocol.
+    Exposes 35+ tools across Code Intelligence, Context, Memory,
+    Safety, and Repository categories over the Model Context Protocol.
     """
     _setup()
     settings = _get_settings()
     ws_path = (workspace or settings.tracera_workspace).resolve()
 
-    from tracera.mcp.server import EXPOSED_TOOLS, TraceraMCPServer
+    from tracera.mcp.server import ALL_MCP_TOOLS, TraceraMCPServer
     server = TraceraMCPServer(settings, ws_path)
 
     if check:
@@ -1420,7 +1419,7 @@ def mcp_serve(
         return
 
     console.print(f"[dim]TRACERA MCP server — transport={transport} workspace={ws_path}[/]")
-    console.print(f"[dim]Tools: {', '.join(EXPOSED_TOOLS)}[/]")
+    console.print(f"[dim]Tools: {len(ALL_MCP_TOOLS)} tools across Code Intelligence, Context, Memory, Safety, Repository[/]")
     server.mcp.run(transport=transport)
 
 

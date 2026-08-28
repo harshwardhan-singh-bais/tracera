@@ -1,27 +1,39 @@
 """
-TRACERA MCP Layer — Phases 39-41.
+TRACERA MCP Layer — Code Intelligence + Memory over Model Context Protocol.
 
-Exposes TRACERA's existing code-intelligence capabilities over the Model
-Context Protocol (MCP):
-
-    mcp/server.py   — Phase 39: an MCP *server* that adapts the 7 existing
-                      capabilities (search_code, find_symbol, find_references,
-                      get_context, get_dependencies, run_tests,
-                      inspect_repository) for any MCP client.
-    mcp/client.py   — Phase 40: an MCP *client* that connects to external MCP
-                      servers, lists their tools, and adapts them into native
-                      TRACERA Tool objects.
-    mcp/manager.py  — Phase 41: manages multiple MCP server connections and
-                      merges their tools into the unified ToolRegistry.
+    mcp/server.py   — Comprehensive MCP server exposing 40+ tools across
+                      Code Intelligence, Context, Memory, Safety, and
+                      Repository categories. Thin adapter over the same
+                      engine used by TRACERA's CLI agent.
+    mcp/client.py   — MCP client that connects to external servers, lists
+                      their tools, and adapts them into native TRACERA Tool
+                      objects (GitHub, Postgres, filesystem, Slack, etc.).
+    mcp/manager.py  — Manages multiple MCP server connections and merges
+                      their tools into the unified ToolRegistry.
 """
 
-from tracera.mcp.server import TraceraMCPServer, build_mcp_server
+from tracera.mcp.server import (
+    TraceraMCPServer,
+    build_mcp_server,
+    ALL_MCP_TOOLS,
+    CODE_INTELLIGENCE_TOOLS,
+    CONTEXT_TOOLS,
+    MEMORY_TOOLS,
+    SAFETY_TOOLS,
+    REPOSITORY_TOOLS,
+)
 from tracera.mcp.client import MCPClient, MCPTool
 from tracera.mcp.manager import MCPServerConfig, MCPManager
 
 __all__ = [
     "TraceraMCPServer",
     "build_mcp_server",
+    "ALL_MCP_TOOLS",
+    "CODE_INTELLIGENCE_TOOLS",
+    "CONTEXT_TOOLS",
+    "MEMORY_TOOLS",
+    "SAFETY_TOOLS",
+    "REPOSITORY_TOOLS",
     "MCPClient",
     "MCPTool",
     "MCPServerConfig",

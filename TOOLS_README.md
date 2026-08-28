@@ -141,3 +141,14 @@ jCodeMunch has additional capabilities that are not replicated here:
 - **90+ tools** — we implemented the 22 most impactful ones
 
 The full jCodeMunch tool set covers ~90 tools. The 22 implemented here cover the core structural analysis, safety, context assembly, and provenance features that provide the most value for an autonomous coding agent.
+
+---
+
+## MCP Integration (Phases 39-41)
+
+TRACERA also exposes its capabilities over the **Model Context Protocol (MCP)**, so external agents (Claude Desktop, Cursor, etc.) can consume TRACERA's tools:
+
+- **`tracera mcp serve`** — Starts the MCP server exposing the 7 core capabilities
+- **`tracera mcp connect <config.json>`** — Connects to external MCP servers and merges their tools into the unified registry
+
+See `MCP_CONNECTIONS.md` for credential references and server configurations (GitHub, Postgres, Slack, filesystem, etc.).
