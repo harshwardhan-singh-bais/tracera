@@ -241,16 +241,18 @@ def sanitize_pii(text: str) -> str:
 PROMPT_INJECTION_PATTERNS = [
     # Direct instruction override
     r"(?i)(ignore|forget|disregard)\s+(previous|all|above)\s+(instructions?|prompt|rules?)",
+    r"(?i)(ignore|forget|disregard)\s+all\s+previous\s+(instructions?|prompt|rules?)",
     # Role manipulation
     r"(?i)(you are now|act as|pretend to be|roleplay as)\s+",
     # System prompt extraction
     r"(?i)(show|print|output|reveal)\s+(system|initial|original)\s+(prompt|instructions?)",
+    r"(?i)(show|print|output|reveal)\s+(me\s+)?(your|my)\s+(system|initial|original)\s+(prompt|instructions?)",
     # Jailbreak attempts
     r"(?i)(DAN|Do Anything Now|unrestricted|unfiltered|no rules)",
     # Data exfiltration
-    r"(?i)(output|print|show|dump)\s+(all|your|the)\s+(memories?|data|secrets?|keys?)",
+    r"(?i)(output|print|show|dump)\s+(all\s+)?(your|the|my)\s+(memories?|data|secrets?|keys?)",
     # Chain of thought extraction
-    r"(?i)(show|print|output)\s+(your|the)\s+(reasoning|thinking|chain of thought)",
+    r"(?i)(show|print|output)\s+(your|the|my)\s+(reasoning|thinking|chain of thought)",
     # Encoding bypasses
     r"(?i)(base64|rot13|encode|decode)\s+",
     # Special tokens

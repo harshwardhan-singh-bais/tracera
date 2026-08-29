@@ -51,7 +51,7 @@ from tracera.memory.layer.events import (
     handle_tool_completed,
 )
 from tracera.memory.layer.queue import BackgroundWorker
-from tracera.memory.layer.recall import RecallInjector, format_memories
+from tracera.memory.layer.recall import RecallInjector, format_memories, format_memories_grouped
 from tracera.memory.layer.store import (
     ALL_KINDS,
     Job,
@@ -59,6 +59,8 @@ from tracera.memory.layer.store import (
     MemoryRecord,
     MemoryStore,
     cosine_similarity,
+    MemoryScope,
+    MemoryPolicy,
 )
 from tracera.memory.layer.wrapper import MemoryProvider
 
@@ -78,6 +80,8 @@ __all__ = [
     "MemoryLayerError",
     "MemoryProvider",
     "MemoryRecord",
+    "MemoryScope",
+    "MemoryPolicy",
     "MemoryStore",
     "RecallInjector",
     "build_default_pipeline",
@@ -85,6 +89,7 @@ __all__ = [
     "current_attribution",
     "current_session_id",
     "format_memories",
+    "format_memories_grouped",
     "handle_agent_decision",
     "handle_file_changed",
     "handle_llm_response",

@@ -896,6 +896,11 @@ class MemoryStore:
                 "SELECT kind, COUNT(*) AS c FROM memories GROUP BY kind"
             ).fetchall():
                 by_kind[str(row["kind"])] = int(row["c"])
+            by_status: dict[str, int] = {}
+            for row in conn.execute(
+                "SELECT status, COUNT(*) AS c FROM memories GROUP BY status"
+            ).fetchall():
+                by_status[str(row["status"])] = int(row["c"])
             entities = conn.execute("SELECT COUNT(*) AS c FROM entities").fetchone()["c"]
             sessions = conn.execute("SELECT COUNT(*) AS c FROM sessions").fetchone()["c"]
             jobs = {
@@ -904,12 +909,28 @@ class MemoryStore:
                 "done": self.count_jobs(status="done"),
                 "failed": self.count_jobs(status="failed"),
             }
+            # Additional observability metrics
+            avg_mentions = conn.execute(
+                "SELECT AVG(mention_count) FROM memories WHERE status = 'active'"
+            ).fetchone()[0] or 0
+            avg_confidence = conn.execute(
+                "SELECT AVG(confidence) FROM memories WHERE status = 'active'"
+            ).fetchone()[0] or 0
+            total_versions = conn.execute("SELECT COUNT(*) AS c FROM memory_versions").fetchone()["c"]
+            superseded_count = conn.execute(
+                "SELECT COUNT(*) AS c FROM memories WHERE status = 'superseded'"
+            ).fetchone()["c"]
             return {
                 "memories_total": int(total),
                 "memories_by_kind": by_kind,
+                "memories_by_status": by_status,
                 "entities": int(entities),
                 "sessions": int(sessions),
                 "jobs": jobs,
+                "avg_mentions": round(float(avg_mentions), 2),
+                "avg_confidence": round(float(avg_confidence), 3),
+                "total_versions": int(total_versions),
+                "superseded_count": int(superseded_count),
             }
 
     # ── Durable job queue ────────────────────────────────────────────────────
@@ -1017,6 +1038,13 @@ class MemoryStore:
             finally:
                 self._local.conn = None
 
+    def close_all(self) -> None:
+        """Close all thread connections (best-effort)."""
+        # Close current thread's connection
+        self.close()
+        # Note: Other threads' connections will be closed when those threads end
+        # This is best-effort as we can't directly access other threads' local storage
+
     # ── Memory versioning & conflict resolution ────────────────────────────────
 
     def record_memory_version(
@@ -1070,6 +1098,159 @@ class MemoryStore:
                 (memory_id,),
             ).fetchall()
             return [dict(r) for r in rows]
+
+    def explain_memory(self, memory_id: int) -> dict[str, Any]:
+        """
+        Explain why a memory exists and its lifecycle.
+
+        Returns a human-readable explanation of:
+        - What the memory is
+        - When and why it was created
+        - How many times it's been mentioned/reinforced
+        - Version history (if superseded)
+        - Source attribution
+        """
+        with self._lock:
+            conn = self._conn()
+            row = conn.execute(
+                "SELECT * FROM memories WHERE id = ?", (memory_id,)
+            ).fetchone()
+            if not row:
+                return {"error": f"Memory {memory_id} not found"}
+
+            record = self._record_from_row(conn, row)
+            versions = self.get_memory_versions(memory_id)
+
+            return {
+                "memory": {
+                    "id": record.id,
+                    "kind": record.kind,
+                    "text": record.text,
+                    "triple": f"{record.subject} → {record.predicate} → {record.object}",
+                    "mention_count": record.mention_count,
+                    "confidence": record.confidence,
+                    "importance": record.importance,
+                    "status": record.status,
+                    "created_at": record.first_seen_at,
+                    "updated_at": record.last_seen_at,
+                    "source_event": record.source_event,
+                    "source_message_id": record.source_message_id,
+                    "session_id": record.session_id,
+                },
+                "entity_id": record.entity_id,
+                "process_id": record.process_id,
+                "version_history": [
+                    {
+                        "changed_at": v["changed_at"],
+                        "reason": v["reason"],
+                        "old_status": v["old_status"],
+                        "new_status": v["new_status"],
+                        "old_text": v["old_text"],
+                        "new_text": v["new_text"],
+                    }
+                    for v in versions
+                ],
+                "summary": self._generate_memory_summary(record, versions),
+            }
+
+    def _generate_memory_summary(self, record: MemoryRecord, versions: list) -> str:
+        """Generate a human-readable summary of the memory's lifecycle."""
+        parts = []
+        parts.append(f"This {record.kind} memory states: \"{record.text}\"")
+        parts.append(f"It has been mentioned {record.mention_count} time(s) since first observed.")
+        parts.append(f"Confidence: {record.confidence:.0%}, Importance: {record.importance:.0%}")
+
+        if record.source_event:
+            parts.append(f"Source: {record.source_event}")
+        if record.session_id:
+            parts.append(f"Session: {record.session_id[:8]}")
+
+        if versions:
+            superseded_count = sum(1 for v in versions if v.get("new_status") == "superseded")
+            if superseded_count:
+                parts.append(f"Has been superseded {superseded_count} time(s) with updates.")
+            else:
+                parts.append(f"Has {len(versions)} version update(s).")
+
+        return " ".join(parts)
+
+    def explain_recall(
+        self,
+        entity_id: str,
+        query: str,
+        query_embedding: list[float],
+        *,
+        k: int = 5,
+        min_score: float = 0.0,
+    ) -> dict[str, Any]:
+        """
+        Explain why specific memories were recalled for a query.
+
+        Shows the scoring breakdown for each returned memory.
+        """
+        results = self.recall_hybrid(
+            entity_id, query, query_embedding, k=k, min_score=min_score
+        )
+
+        explanations = []
+        for record, score in results:
+            explanations.append({
+                "memory_id": record.id,
+                "text": record.text,
+                "triple": f"{record.subject} → {record.predicate} → {record.object}",
+                "final_score": round(score, 4),
+                "factors": {
+                    "vector_similarity": "Computed via cosine similarity",
+                    "mention_count": record.mention_count,
+                    "confidence": record.confidence,
+                    "importance": record.importance,
+                    "recency": f"Last seen {self._format_recency(record.last_seen_at)}",
+                },
+                "why_recalled": self._explain_why_recalled(record, query, score),
+            })
+
+        return {
+            "query": query,
+            "entity_id": entity_id,
+            "total_candidates": "N/A (hybrid scoring)",
+            "returned": len(explanations),
+            "explanations": explanations,
+        }
+
+    def _format_recency(self, timestamp: float) -> str:
+        """Format a timestamp as relative time."""
+        import time
+        age = time.time() - timestamp
+        if age < 60:
+            return f"{int(age)}s ago"
+        elif age < 3600:
+            return f"{int(age/60)}m ago"
+        elif age < 86400:
+            return f"{int(age/3600)}h ago"
+        else:
+            return f"{int(age/86400)}d ago"
+
+    def _explain_why_recalled(self, record: MemoryRecord, query: str, score: float) -> str:
+        """Generate human-readable explanation of why this memory was recalled."""
+        reasons = []
+        if score > 0.8:
+            reasons.append("very high semantic similarity to query")
+        elif score > 0.5:
+            reasons.append("good semantic match to query")
+        elif score > 0.3:
+            reasons.append("moderate semantic relevance")
+
+        if record.mention_count > 5:
+            reasons.append(f"frequently reinforced ({record.mention_count} mentions)")
+        elif record.mention_count > 1:
+            reasons.append(f"mentioned {record.mention_count} times")
+
+        if record.confidence > 0.9:
+            reasons.append("high confidence")
+        if record.importance > 0.7:
+            reasons.append("marked as important")
+
+        return "; ".join(reasons) if reasons else "matched query with low confidence"
 
     def supersede_memory(
         self,

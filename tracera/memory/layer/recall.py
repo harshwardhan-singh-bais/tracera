@@ -92,6 +92,7 @@ class RecallInjector:
         use_hybrid: bool = True,
         token_budget: int = 2000,
         grouped: bool = True,
+        debug: bool = False,
     ) -> None:
         self._store = store
         self._embed = embed_fn
@@ -100,6 +101,7 @@ class RecallInjector:
         self._use_hybrid = use_hybrid
         self._token_budget = token_budget
         self._grouped = grouped
+        self._debug = debug
 
     def inject(
         self,
@@ -154,6 +156,95 @@ class RecallInjector:
             estimate_tokens(block),
         )
         return self._attach(messages, system, block)
+
+    def debug_recall(
+        self,
+        query: str,
+        scope: Attribution,
+        *,
+        k: int | None = None,
+    ) -> dict[str, Any]:
+        """
+        Debug version of recall that returns detailed scoring breakdown.
+
+        Returns a dict with:
+        - query: the input query
+        - results: list of dicts with memory details and score breakdown
+        - total_candidates: number of memories considered
+        - timing_ms: how long the recall took
+        """
+        import time as _time
+        k = k or self._top_k
+
+        start = _time.perf_counter()
+        query_embedding = self._embed(query)
+
+        if self._use_hybrid and hasattr(self._store, "recall_hybrid"):
+            results = self._store.recall_hybrid(
+                scope.entity_id,
+                query,
+                query_embedding,
+                k=k * 3,  # Get more for debug
+                min_score=0.0,  # No threshold for debug
+            )
+        else:
+            # For debug, we need to call the underlying store directly
+            entity_pk = self._store.register_entity(scope.entity_id)
+            with self._store._lock:
+                conn = self._store._conn()
+                rows = conn.execute(
+                    "SELECT * FROM memories WHERE entity_id = ? AND status = 'active'",
+                    (entity_pk,),
+                ).fetchall()
+
+            results = []
+            for row in rows:
+                try:
+                    other = json.loads(row["embedding"])
+                except (TypeError, ValueError):
+                    continue
+                score = self._store.cosine_similarity(query_embedding, other)
+                if score >= 0.0:
+                    record = self._store._record_from_row(conn, row)
+                    results.append((record, score))
+
+            results.sort(key=lambda x: x[1], reverse=True)
+
+        elapsed_ms = (_time.perf_counter() - start) * 1000
+
+        # Build detailed breakdown
+        detailed = []
+        for record, score in results[:k]:
+            # Get hybrid score components if available
+            detail = {
+                "memory_id": record.id,
+                "kind": record.kind,
+                "text": record.text,
+                "triple": f"{record.subject} → {record.predicate} → {record.object}",
+                "final_score": round(score, 4),
+                "mention_count": record.mention_count,
+                "confidence": record.confidence,
+                "importance": record.importance,
+                "first_seen": record.first_seen_at,
+                "last_seen": record.last_seen_at,
+                "source_event": record.source_event,
+            }
+            if hasattr(self._store, "recall_hybrid") and self._use_hybrid:
+                # Try to compute hybrid components
+                detail["note"] = "Hybrid scoring active (vector + keyword + recency + importance + mentions)"
+            detailed.append(detail)
+
+        return {
+            "query": query,
+            "entity_id": scope.entity_id,
+            "process_id": scope.process_id,
+            "total_candidates": len(results),
+            "returned": len(detailed),
+            "timing_ms": round(elapsed_ms, 2),
+            "results": detailed,
+            "min_score_threshold": self._min_score,
+            "top_k": k,
+        }
 
     def _apply_token_budget(self, results: list[tuple[MemoryRecord, float]]) -> list[tuple[MemoryRecord, float]]:
         """Trim results to fit within token budget."""
