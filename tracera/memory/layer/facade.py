@@ -68,6 +68,11 @@ class MemoryLayer:
         min_extraction_confidence: float = 0.5,
         min_extraction_importance: float = 0.3,
         enable_worthiness_filter: bool = True,
+        enable_safety: bool = True,
+        # Recall config
+        recall_use_hybrid: bool = True,
+        recall_token_budget: int = 2000,
+        recall_grouped: bool = True,
     ) -> None:
         self._store = store
         self._embed_fn = embed_fn
@@ -79,13 +84,20 @@ class MemoryLayer:
         self._min_extraction_confidence = min_extraction_confidence
         self._min_extraction_importance = min_extraction_importance
         self._enable_worthiness_filter = enable_worthiness_filter
+        self._enable_safety = enable_safety
         self._enabled_processes = (
             set(p.strip() for p in enabled_processes if p and p.strip())
             if enabled_processes
             else None
         )
         self._recaller = RecallInjector(
-            store, embed_fn, top_k=top_k, min_score=min_recall_score
+            store,
+            embed_fn,
+            top_k=top_k,
+            min_score=min_recall_score,
+            use_hybrid=recall_use_hybrid,
+            token_budget=recall_token_budget,
+            grouped=recall_grouped,
         )
         self._extractor: MemoryExtractor | None = None
         self._extraction_provider: LLMProvider | None = None
@@ -110,6 +122,7 @@ class MemoryLayer:
             min_confidence=self._min_extraction_confidence,
             min_importance=self._min_extraction_importance,
             enable_worthiness_filter=self._enable_worthiness_filter,
+            enable_safety=self._enable_safety,
         )
         self._wrapped = MemoryProvider(provider, self)
         log.info("Memory layer registered on provider %s", provider.name)
@@ -200,6 +213,7 @@ class MemoryLayer:
         assistant_message: str,
         scope: Attribution,
         session_id: str | None = None,
+        priority: int = 100,
     ) -> int:
         """
         Persist one turn for background extraction. Returns the job id.
@@ -214,7 +228,7 @@ class MemoryLayer:
             "process_id": scope.process_id,
             "session_id": sid,
         }
-        job_id = self._store.enqueue_job("extract_turn", payload)
+        job_id = self._store.enqueue_job("extract_turn", payload, priority=priority)
         log.debug(
             "Enqueued extraction job %d for %s (%d chars)",
             job_id,
@@ -251,6 +265,13 @@ class MemoryLayer:
 
     async def _execute_job(self, job: Job) -> None:
         payload = job.payload
+
+        if job.kind == "consolidation":
+            # Run consolidation job
+            entity_id = payload.get("entity_id")
+            self._store.process_consolidation_job(job)
+            return
+
         if self._extractor is None:
             raise RuntimeError("memory layer has no registered provider")
         items = await self._extractor.extract_turn(

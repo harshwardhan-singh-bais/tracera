@@ -63,6 +63,115 @@ class MemoryKind(str, Enum):
 ALL_KINDS: frozenset[str] = frozenset(k.value for k in MemoryKind)
 
 
+# ── Memory Scopes (Phase 11) ───────────────────────────────────────────────────
+
+class MemoryScope(str, Enum):
+    """Scope levels for memory access and policies."""
+
+    GLOBAL = "global"           # Cross-entity (system-wide)
+    ORGANIZATION = "organization"  # Organization/team level
+    PROJECT = "project"         # Project/repository level
+    ENTITY = "entity"           # User/customer level
+    PROCESS = "process"         # Agent/process level
+    SESSION = "session"         # Single session level
+
+
+SCOPE_HIERARCHY = [
+    MemoryScope.GLOBAL,
+    MemoryScope.ORGANIZATION,
+    MemoryScope.PROJECT,
+    MemoryScope.ENTITY,
+    MemoryScope.PROCESS,
+    MemoryScope.SESSION,
+]
+
+SCOPE_PRIORITY = {scope: i for i, scope in enumerate(SCOPE_HIERARCHY)}
+
+
+# ── Memory Policies (Phase 11) ─────────────────────────────────────────────────
+
+@dataclass
+class MemoryPolicy:
+    """Configuration for memory behavior per scope."""
+
+    # Retention
+    max_memories: int = 10000
+    max_memories_per_entity: int = 5000
+    retention_days: int = 365
+
+    # Quality thresholds
+    min_confidence: float = 0.5
+    min_importance: float = 0.3
+    dedup_threshold: float = 0.9
+
+    # Recall
+    recall_top_k: int = 10
+    recall_min_score: float = 0.3
+    recall_token_budget: int = 2000
+
+    # Extraction
+    extraction_enabled: bool = True
+    extraction_min_confidence: float = 0.5
+    extraction_min_importance: float = 0.3
+    worthiness_filter: bool = True
+
+    # Consolidation
+    consolidation_enabled: bool = True
+    consolidation_threshold: float = 0.92
+    consolidation_interval_hours: int = 24
+
+    # Safety
+    pii_detection: bool = True
+    prompt_injection_protection: bool = True
+    cross_entity_isolation: bool = True  # Hard requirement
+
+    def for_scope(self, scope: MemoryScope) -> "MemoryPolicy":
+        """Return a policy adjusted for a specific scope."""
+        # Base policy - can be overridden per scope
+        if scope == MemoryScope.GLOBAL:
+            return MemoryPolicy(
+                max_memories=50000,
+                max_memories_per_entity=10000,
+                retention_days=730,
+                min_confidence=0.7,
+            )
+        elif scope == MemoryScope.ORGANIZATION:
+            return MemoryPolicy(
+                max_memories=20000,
+                max_memories_per_entity=5000,
+                retention_days=365,
+                min_confidence=0.6,
+            )
+        elif scope == MemoryScope.PROJECT:
+            return MemoryPolicy(
+                max_memories=10000,
+                max_memories_per_entity=3000,
+                retention_days=180,
+                min_confidence=0.5,
+            )
+        elif scope == MemoryScope.ENTITY:
+            return MemoryPolicy(
+                max_memories=5000,
+                max_memories_per_entity=2000,
+                retention_days=90,
+                min_confidence=0.5,
+            )
+        elif scope == MemoryScope.PROCESS:
+            return MemoryPolicy(
+                max_memories=2000,
+                max_memories_per_entity=1000,
+                retention_days=30,
+                min_confidence=0.4,
+            )
+        else:  # SESSION
+            return MemoryPolicy(
+                max_memories=500,
+                max_memories_per_entity=500,
+                retention_days=7,
+                min_confidence=0.3,
+            )
+
+
 # ── Records ───────────────────────────────────────────────────────────────────
 
 @dataclass
@@ -215,10 +324,12 @@ CREATE TABLE IF NOT EXISTS jobs (
     attempts   INTEGER NOT NULL DEFAULT 0,
     created_at REAL NOT NULL,
     not_before REAL NOT NULL DEFAULT 0,
-    last_error TEXT
+    last_error TEXT,
+    priority   INTEGER NOT NULL DEFAULT 100  -- lower = higher priority
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, not_before);
+CREATE INDEX IF NOT EXISTS idx_jobs_priority ON jobs(status, priority, not_before);
 """
 
 
@@ -803,33 +914,33 @@ class MemoryStore:
 
     # ── Durable job queue ────────────────────────────────────────────────────
 
-    def enqueue_job(self, kind: str, payload: dict[str, Any]) -> int:
+    def enqueue_job(self, kind: str, payload: dict[str, Any], priority: int = 100) -> int:
         """Persist a background job; survives process restarts."""
         with self._lock:
             conn = self._conn()
             cur = conn.execute(
-                "INSERT INTO jobs (kind, payload, status, attempts, created_at) "
-                "VALUES (?, ?, 'pending', 0, ?)",
-                (kind, json.dumps(payload, ensure_ascii=False), time.time()),
+                "INSERT INTO jobs (kind, payload, status, attempts, created_at, priority) "
+                "VALUES (?, ?, 'pending', 0, ?, ?)",
+                (kind, json.dumps(payload, ensure_ascii=False), time.time(), priority),
             )
             conn.commit()
             return int(cur.lastrowid)
 
     def claim_jobs(self, limit: int = 1, kind: str | None = None) -> list[Job]:
-        """Claim due jobs atomically (pending → running)."""
+        """Claim due jobs atomically (pending → running), ordered by priority."""
         now = time.time()
         with self._lock:
             conn = self._conn()
             if kind is None:
                 rows = conn.execute(
                     "SELECT * FROM jobs WHERE status = 'pending' AND not_before <= ? "
-                    "ORDER BY id LIMIT ?",
+                    "ORDER BY priority ASC, id LIMIT ?",
                     (now, limit),
                 ).fetchall()
             else:
                 rows = conn.execute(
                     "SELECT * FROM jobs WHERE status = 'pending' AND kind = ? "
-                    "AND not_before <= ? ORDER BY id LIMIT ?",
+                    "AND not_before <= ? ORDER BY priority ASC, id LIMIT ?",
                     (kind, now, limit),
                 ).fetchall()
             claimed: list[Job] = []
@@ -1188,3 +1299,140 @@ class MemoryStore:
                 importance=importance,
                 source_event=source_event,
             )
+
+    # ── Periodic Consolidation Job ─────────────────────────────────────────────
+
+    def run_consolidation(
+        self,
+        entity_id: str | None = None,
+        *,
+        similarity_threshold: float = 0.92,
+        min_mention_count: int = 2,
+        max_merges: int = 50,
+    ) -> dict[str, Any]:
+        """
+        Run a consolidation pass to merge near-duplicate memories.
+
+        This can be scheduled as a periodic background job.
+        Returns statistics about the consolidation run.
+        """
+        stats = {"scanned": 0, "merged": 0, "superseded": 0, "errors": 0}
+
+        with self._lock:
+            conn = self._conn()
+
+            # Get entities to process
+            if entity_id:
+                entity_pk = self.register_entity(entity_id)
+                entity_rows = [{"id": entity_pk, "external_id": entity_id}]
+            else:
+                entity_rows = conn.execute(
+                    "SELECT id, external_id FROM entities"
+                ).fetchall()
+
+            for entity_row in entity_rows:
+                entity_pk = entity_row["id"]
+                entity_ext = entity_row["external_id"]
+
+                # Get all active memories for this entity
+                rows = conn.execute(
+                    """
+                    SELECT * FROM memories
+                    WHERE entity_id = ? AND status = 'active'
+                    ORDER BY mention_count DESC, confidence DESC
+                    """,
+                    (entity_pk,),
+                ).fetchall()
+
+                if len(rows) < 2:
+                    continue
+
+                stats["scanned"] += len(rows)
+
+                # Compare each pair for near-duplicates
+                for i, row_i in enumerate(rows):
+                    if stats["merged"] >= max_merges:
+                        break
+                    try:
+                        emb_i = json.loads(row_i["embedding"])
+                    except (TypeError, ValueError):
+                        continue
+
+                    for row_j in rows[i + 1 :]:
+                        if stats["merged"] >= max_merges:
+                            break
+                        try:
+                            emb_j = json.loads(row_j["embedding"])
+                        except (TypeError, ValueError):
+                            continue
+
+                        score = cosine_similarity(emb_i, emb_j)
+                        if score >= similarity_threshold:
+                            # Found near-duplicate - merge the lower confidence into higher
+                            if row_i["confidence"] >= row_j["confidence"]:
+                                keeper_id, merge_id = row_i["id"], row_j["id"]
+                            else:
+                                keeper_id, merge_id = row_j["id"], row_i["id"]
+
+                            # Update keeper with combined info
+                            new_mention = int(row_i["mention_count"]) + int(row_j["mention_count"])
+                            new_conf = max(float(row_i["confidence"]), float(row_j["confidence"]))
+                            new_imp = max(float(row_i["importance"]), float(row_j["importance"]))
+                            now = time.time()
+
+                            conn.execute(
+                                """
+                                UPDATE memories
+                                SET mention_count = ?, confidence = ?, importance = ?,
+                                    last_seen_at = ?, text = ?
+                                WHERE id = ?
+                                """,
+                                (new_mention, new_conf, new_imp, now,
+                                 row_i["text"] if keeper_id == row_i["id"] else row_j["text"],
+                                 keeper_id),
+                            )
+
+                            # Supersede the merged memory
+                            conn.execute(
+                                "UPDATE memories SET status = 'superseded' WHERE id = ?",
+                                (merge_id,),
+                            )
+
+                            # Record version
+                            conn.execute(
+                                """
+                                INSERT INTO memory_versions
+                                    (memory_id, old_text, new_text, old_status, new_status,
+                                     changed_at, reason, source_session, source_process, source_job_id)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                """,
+                                (
+                                    merge_id,
+                                    row_j["text"] if merge_id == row_j["id"] else row_i["text"],
+                                    row_i["text"] if keeper_id == row_i["id"] else row_j["text"],
+                                    "active",
+                                    "superseded",
+                                    now,
+                                    f"Auto-consolidated with memory {keeper_id} (similarity: {score:.3f})",
+                                    None,
+                                    "consolidation_job",
+                                    None,
+                                ),
+                            )
+
+                            stats["merged"] += 1
+                            stats["superseded"] += 1
+
+            conn.commit()
+
+        return stats
+
+    def enqueue_consolidation_job(self, entity_id: str | None = None) -> int:
+        """Enqueue a consolidation job for background processing."""
+        payload = {"entity_id": entity_id} if entity_id else {}
+        return self.enqueue_job("consolidation", payload)
+
+    def process_consolidation_job(self, job: Job) -> dict[str, Any]:
+        """Process a consolidation job (called by background worker)."""
+        entity_id = job.payload.get("entity_id")
+        return self.run_consolidation(entity_id=entity_id)

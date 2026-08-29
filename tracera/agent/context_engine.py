@@ -8,6 +8,7 @@ LLM context string, with:
   - Symbol grouping (methods under their class)
   - Dependency ordering (imports before functions)
   - Token budget enforcement
+  - Memory context integration (Phase 15)
 """
 
 from __future__ import annotations
@@ -36,18 +37,26 @@ class ContextAssemblyEngine:
     def _estimate_tokens(self, text: str) -> int:
         return len(text) // _CHARS_PER_TOKEN
 
-    def assemble(self, chunks: list[dict], query: str = "") -> str:
+    def assemble(
+        self,
+        chunks: list[dict],
+        query: str = "",
+        memory_context: str = "",
+        memory_budget_tokens: int = 2000,
+    ) -> str:
         """
         Assemble a list of chunk dicts into a single context string.
 
         Args:
             chunks: Retrieved chunk dicts (with 'content', 'file_path', 'symbol', etc.)
             query: The original query (used for context header).
+            memory_context: Pre-formatted memory context from ContextRecall.
+            memory_budget_tokens: Token budget reserved for memory context.
 
         Returns:
             A formatted string ready to be inserted into an LLM prompt.
         """
-        if not chunks:
+        if not chunks and not memory_context:
             return ""
 
         # 1. Deduplicate by content hash
@@ -76,6 +85,13 @@ class ContextAssemblyEngine:
         header = f"# Retrieved Code Context\n*Query: {query}*\n\n" if query else "# Code Context\n\n"
         parts = [header]
         total_chars = len(header)
+
+        # Add memory context first if provided (highest priority)
+        if memory_context:
+            memory_chars = min(len(memory_context), memory_budget_tokens * _CHARS_PER_TOKEN)
+            memory_block = f"## Agent Memory Context\n{memory_context[:memory_chars]}\n\n"
+            parts.append(memory_block)
+            total_chars += len(memory_block)
 
         for chunk in unique_chunks:
             content = chunk.get("content") or ""
@@ -113,7 +129,7 @@ class ContextAssemblyEngine:
 
         result = "".join(parts)
         log.debug(
-            "Context assembled: %d chunks → %d chars (~%d tokens)",
-            len(parts) - 1, len(result), self._estimate_tokens(result),
+            "Context assembled: %d chunks + memory → %d chars (~%d tokens)",
+            len(parts) - 1 - (1 if memory_context else 0), len(result), self._estimate_tokens(result),
         )
         return result

@@ -179,6 +179,7 @@ def make_layer(db_path: Path, **kwargs: Any) -> MemoryLayer:
         dedup_threshold=kwargs.pop("dedup_threshold", 0.9),
         enabled_processes=kwargs.pop("enabled_processes", None),
         worker_enabled=False,
+        recall_grouped=False,
         **kwargs,
     )
     provider = FakeProvider()

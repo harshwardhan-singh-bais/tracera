@@ -1189,17 +1189,63 @@ class TraceraTUI(App):
             pass
 
     def action_show_memory(self) -> None:
+        """Show enhanced memory layer contents with structured memories, triples, and stats."""
         panel = self._panel()
-        entries = self.memory.entries()
-        if not entries:
-            panel.add_info_row("Memory: no entries", "[dim]Nothing stored yet.[/]")
+
+        # Try to access enhanced memory layer via agent
+        enhanced_memory = getattr(self.agent, "_enhanced_memory", None)
+        triple_store = getattr(self.agent, "_triple_store", None)
+        session_manager = getattr(self.agent, "_session_manager", None)
+
+        if enhanced_memory is None:
+            # Fallback to legacy memory
+            entries = self.memory.entries()
+            if not entries:
+                panel.add_info_row("Memory: no entries", "[dim]Nothing stored yet.[/]")
+                return
+            lines = []
+            for e in entries[:20]:
+                kind = getattr(e, "category", "general")
+                content = getattr(e, "content", str(e))[:140]
+                lines.append(f"  [dim]{kind}[/] {content}")
+            panel.add_info_row(f"Memory: {len(entries)} entries", "\n".join(lines))
             return
+
+        # Enhanced memory display
         lines = []
-        for e in entries[:20]:
-            kind = getattr(e, "category", "general")
-            content = getattr(e, "content", str(e))[:140]
-            lines.append(f"  [dim]{kind}[/] {content}")
-        panel.add_info_row(f"Memory: {len(entries)} entries", "\n".join(lines))
+
+        # Stats
+        stats = enhanced_memory.stats()
+        lines.append(f"[bold cyan]Enhanced Memory[/] — {stats['total']} total")
+        for mtype, count in stats.get("by_type", {}).items():
+            lines.append(f"  [dim]{mtype}[/]: {count}")
+
+        # Recent memories by type
+        from tracera.memory.taxonomy import MemoryType
+        for mtype in [MemoryType.FACT, MemoryType.PREFERENCE, MemoryType.RULE,
+                      MemoryType.DECISION, MemoryType.SKILL, MemoryType.RELATIONSHIP]:
+            memories = enhanced_memory.get_by_type(mtype)
+            if memories:
+                lines.append(f"\n  [bold]{mtype.value.upper()}[/] ({len(memories)}):")
+                for mem in memories[:5]:
+                    conf = f" (conf: {mem.confidence:.0%})" if mem.confidence < 0.9 else ""
+                    lines.append(f"  • {mem.content[:120]}{conf}")
+
+        # Triple store info
+        if triple_store:
+            lines.append(f"\n  [bold]KNOWLEDGE GRAPH[/] — {triple_store.triple_count} triples, {triple_store.node_count} nodes")
+            central = triple_store.get_central_concepts(5)
+            if central:
+                lines.append("  Central concepts: " + ", ".join(f"{c} ({d})" for c, d in central))
+
+        # Session info
+        if session_manager:
+            active = session_manager.active_session
+            if active:
+                lines.append(f"\n  [bold]ACTIVE SESSION[/]: {active.id[:8]} ({active.task[:60]})")
+
+        content = "\n".join(lines) if lines else "[dim]No enhanced memories yet[/]"
+        panel.add_info_row("Enhanced Memory", content)
 
     def action_show_help(self) -> None:
         self._panel().add_assistant_message(_HELP_TEXT)

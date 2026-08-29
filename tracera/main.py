@@ -201,12 +201,17 @@ def _build_agent(settings=None, workspace_path: Path | None = None, retrieval_pi
     # Register memory tools in the agent's registry
     from tracera.tools.memory_tools import (
         RecallMemoryTool, RememberMemoryTool, ForgetMemoryTool, ListSessionsTool,
+        MemoryStatsTool, MemoryConsolidateTool, MemoryGraphTool, MemoryWorkerStatusTool,
     )
     registry.register_many([
         RecallMemoryTool(context_recall),
         RememberMemoryTool(enhanced_memory),
         ForgetMemoryTool(enhanced_memory),
         ListSessionsTool(session_manager),
+        MemoryStatsTool(enhanced_memory, triple_store),
+        MemoryConsolidateTool(memory_layer._store if memory_layer else None),
+        MemoryGraphTool(triple_store),
+        MemoryWorkerStatusTool(memory_layer),
     ])
 
     # Register jCodeMunch-inspired structural analysis tools (Phase 51+)
@@ -733,6 +738,241 @@ def memory_status() -> None:
     ]:
         table.add_row(key, str(value))
     console.print(table)
+
+
+@memory_app.command("graph")
+def memory_graph(
+    entity: Annotated[
+        str, typer.Argument(help="Entity to show graph for.")
+    ],
+    concept: Annotated[
+        Optional[str],
+        typer.Option("--concept", "-c", help="Focus on a specific concept."),
+    ] = None,
+    depth: Annotated[
+        int,
+        typer.Option("--depth", "-d", help="Graph traversal depth."),
+    ] = 2,
+) -> None:
+    """Show knowledge graph for an entity."""
+    _setup()
+    settings = _get_settings()
+    from tracera.memory.triples import TripleStore
+    from pathlib import Path
+
+    triples_path = settings.memory_dir / "memory_triples.json"
+    if not triples_path.exists():
+        console.print("[dim]No knowledge graph found. Run some conversations first.[/]")
+        return
+
+    store = TripleStore.load(triples_path)
+
+    if concept:
+        # Show subgraph around concept
+        subgraph = store.get_entity_subgraph(concept, max_depth=depth)
+        console.print(f"[bold cyan]Knowledge Graph for: {concept}[/]")
+
+        if subgraph["outgoing"]:
+            table = Table(title=f"Outgoing from {concept}", border_style="cyan")
+            table.add_column("Predicate", style="bold magenta")
+            table.add_column("Object", style="white")
+            table.add_column("Confidence", justify="right")
+            for t in subgraph["outgoing"][:20]:
+                table.add_row(t.predicate, t.object, f"{t.confidence:.2f}")
+            console.print(table)
+
+        if subgraph["incoming"]:
+            table = Table(title=f"Incoming to {concept}", border_style="cyan")
+            table.add_column("Subject", style="bold magenta")
+            table.add_column("Predicate", style="white")
+            table.add_column("Confidence", justify="right")
+            for t in subgraph["incoming"][:20]:
+                table.add_row(t.subject, t.predicate, f"{t.confidence:.2f}")
+            console.print(table)
+
+        if subgraph["neighbors"]:
+            console.print(f"\n[dim]Neighbors ({len(subgraph['neighbors'])} triples within {depth} hops):[/]")
+    else:
+        # Show overall stats
+        console.print(f"[bold cyan]Knowledge Graph Stats[/]")
+        console.print(f"  Total triples: {store.triple_count}")
+        console.print(f"  Nodes: {store.node_count}")
+        console.print(f"  Edges: {store.edge_count}")
+
+        central = store.get_central_concepts(10)
+        if central:
+            table = Table(title="Most Connected Concepts", border_style="cyan")
+            table.add_column("Concept", style="bold magenta")
+            table.add_column("Connections", justify="right")
+            for concept, degree in central:
+                table.add_row(concept, str(degree))
+            console.print(table)
+
+        clusters = store.get_concept_clusters(3)
+        if clusters:
+            console.print(f"\n[dim]Concept clusters ({len(clusters)}):[/]")
+            for i, cluster in enumerate(clusters[:5]):
+                console.print(f"  Cluster {i+1}: {', '.join(cluster[:10])}")
+
+
+@memory_app.command("consolidate")
+def memory_consolidate(
+    entity: Annotated[
+        Optional[str],
+        typer.Option("--entity", "-e", help="Entity to consolidate (default: all)."),
+    ] = None,
+    threshold: Annotated[
+        float,
+        typer.Option("--threshold", "-t", help="Similarity threshold for merging."),
+    ] = 0.92,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Show what would be merged without doing it."),
+    ] = False,
+) -> None:
+    """Run memory consolidation to merge near-duplicates."""
+    _setup()
+    settings = _get_settings()
+    from tracera.memory.layer.store import MemoryStore
+
+    store = MemoryStore(settings.memory_layer_db)
+
+    if dry_run:
+        console.print("[yellow]Dry run - showing potential merges[/]")
+        # TODO: implement dry run preview
+        console.print("[dim]Not yet implemented[/]")
+        return
+
+    console.print(f"[bold cyan]Running consolidation for {entity or 'all entities'}[/]")
+    with console.status("[bold green]Consolidating...[/]"):
+        stats = store.run_consolidation(entity_id=entity, similarity_threshold=threshold)
+
+    console.print("[green]✓[/] Consolidation complete")
+    table = Table(border_style="green", show_header=True)
+    table.add_column("Metric", style="bold")
+    table.add_column("Value", justify="right")
+    for key, value in stats.items():
+        table.add_row(key.replace("_", " ").title(), str(value))
+    console.print(table)
+
+
+@memory_app.command("worker")
+def memory_worker() -> None:
+    """Show background worker statistics."""
+    _setup()
+    settings = _get_settings()
+    from tracera.memory.layer.factory import create_memory_layer
+
+    layer = create_memory_layer(settings)
+    if layer is None:
+        console.print("[red]Memory layer not enabled[/]")
+        return
+
+    if hasattr(layer, '_worker') and layer._worker:
+        stats = layer._worker.get_stats()
+        console.print("[bold cyan]Memory Worker Stats[/]")
+        table = Table(border_style="cyan", show_header=True)
+        table.add_column("Metric", style="bold magenta")
+        table.add_column("Value", style="white")
+        for key, value in stats.items():
+            table.add_row(key.replace("_", " ").title(), str(value))
+        console.print(table)
+    else:
+        console.print("[dim]Worker not running[/]")
+
+
+@memory_app.command("export")
+def memory_export(
+    entity: Annotated[
+        str, typer.Argument(help="Entity to export memories for.")
+    ],
+    output: Annotated[
+        Path,
+        typer.Option("--output", "-o", help="Output file path."),
+    ],
+    kind: Annotated[
+        Optional[str],
+        typer.Option("--kind", "-k", help="Filter by memory kind."),
+    ] = None,
+) -> None:
+    """Export memories to JSON file."""
+    _setup()
+    settings = _get_settings()
+    from tracera.memory.layer.store import MemoryStore, MemoryKind
+    import json
+
+    store = MemoryStore(settings.memory_layer_db)
+    records = store.find_memories(entity, kind=kind, limit=10_000)
+
+    if not records:
+        console.print(f"[dim]No memories found for entity '{entity}'[/]")
+        return
+
+    data = {
+        "entity": entity,
+        "exported_at": __import__("time").time(),
+        "memories": [r.as_dict() for r in records],
+    }
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    console.print(f"[green]✓[/] Exported {len(records)} memories to [cyan]{output}[/]")
+
+
+@memory_app.command("import")
+def memory_import(
+    entity: Annotated[
+        str, typer.Argument(help="Entity to import memories for.")
+    ],
+    input_file: Annotated[
+        Path,
+        typer.Argument(help="Input JSON file."),
+    ],
+    process: Annotated[
+        Optional[str],
+        typer.Option("--process", "-p", help="Process ID for imported memories."),
+    ] = "cli-import",
+) -> None:
+    """Import memories from JSON file."""
+    _setup()
+    settings = _get_settings()
+    from tracera.memory.layer.store import MemoryStore
+    import json
+
+    if not input_file.exists():
+        console.print(f"[red]File not found: {input_file}[/]")
+        raise typer.Exit(1)
+
+    data = json.loads(input_file.read_text(encoding="utf-8"))
+    memories = data.get("memories", [])
+
+    if not memories:
+        console.print("[dim]No memories in file[/]")
+        return
+
+    store = MemoryStore(settings.memory_layer_db)
+    imported = 0
+
+    for mem in memories:
+        try:
+            store.upsert_memory(
+                entity_id=entity,
+                process_id=process or "cli-import",
+                kind=mem["kind"],
+                subject=mem["subject"],
+                predicate=mem["predicate"],
+                object=mem["object"],
+                text=mem["text"],
+                embedding=mem.get("embedding", [0.0] * 384),  # default dim
+                session_id=mem.get("session_id"),
+                confidence=mem.get("confidence", 0.8),
+                importance=mem.get("importance", 0.5),
+            )
+            imported += 1
+        except Exception as e:
+            console.print(f"[yellow]Skipped memory: {e}[/]")
+
+    console.print(f"[green]✓[/] Imported {imported}/{len(memories)} memories for [cyan]{entity}[/]")
 
 
 # ── tui ───────────────────────────────────────────────────────────────────────

@@ -77,6 +77,9 @@ def create_memory_layer(settings: Settings | None = None) -> MemoryLayer | None:
             min_extraction_confidence=0.5,
             min_extraction_importance=0.3,
             enable_worthiness_filter=True,
+            recall_use_hybrid=True,
+            recall_token_budget=2000,
+            recall_grouped=True,
         )
     except Exception as e:  # noqa: BLE001 — never break startup over memory
         log.warning("Memory layer unavailable (disabled): %s", e)

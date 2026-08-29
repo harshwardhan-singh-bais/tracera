@@ -154,6 +154,7 @@ def filter_memory_worthy(
     items: list[ExtractedMemory],
     min_confidence: float = 0.5,
     min_importance: float = 0.3,
+    enable_safety: bool = True,
 ) -> list[ExtractedMemory]:
     """Filter extracted memories by worthiness, confidence, and importance."""
     filtered = []
@@ -170,6 +171,18 @@ def filter_memory_worthy(
             log.debug("Filtered out non-worthy memory: %s (score=%.2f)", item.text[:50], worthiness_score)
             continue
 
+        # Safety checks
+        if enable_safety:
+            # PII detection
+            if detect_pii(item.text):
+                log.debug("Filtered out memory with potential PII: %s", item.text[:50])
+                continue
+
+            # Prompt injection protection
+            if detect_prompt_injection(item.text):
+                log.debug("Filtered out memory with potential prompt injection: %s", item.text[:50])
+                continue
+
         # Boost confidence by worthiness
         boosted_confidence = min(1.0, item.confidence * (0.8 + 0.2 * worthiness_score))
         filtered.append(ExtractedMemory(
@@ -183,6 +196,82 @@ def filter_memory_worthy(
         ))
 
     return filtered
+
+
+# ── Safety Features (Phase 11) ──────────────────────────────────────────────────
+
+# PII patterns (common types)
+PII_PATTERNS = [
+    # Email
+    r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b",
+    # Phone (various formats)
+    r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b",
+    # SSN
+    r"\b\d{3}-\d{2}-\d{4}\b",
+    # Credit card (basic)
+    r"\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b",
+    # API keys (common prefixes)
+    r"\b(sk|pk)_(live|test)_[A-Za-z0-9]{24,}\b",
+    # AWS keys
+    r"\bAKIA[0-9A-Z]{16}\b",
+    # GitHub tokens
+    r"\bgh[pousr]_[A-Za-z0-9]{36,}\b",
+    # Generic secrets
+    r"(?i)(api[_-]?key|secret[_-]?key|access[_-]?token|password)\s*[:=]\s*[A-Za-z0-9_\-]{20,}",
+]
+
+
+def detect_pii(text: str) -> bool:
+    """Detect potential PII in text."""
+    for pattern in PII_PATTERNS:
+        if re.search(pattern, text, re.IGNORECASE):
+            return True
+    return False
+
+
+def sanitize_pii(text: str) -> str:
+    """Redact potential PII from text."""
+    result = text
+    for pattern in PII_PATTERNS:
+        result = re.sub(pattern, "[REDACTED]", result, flags=re.IGNORECASE)
+    return result
+
+
+# Prompt injection patterns
+PROMPT_INJECTION_PATTERNS = [
+    # Direct instruction override
+    r"(?i)(ignore|forget|disregard)\s+(previous|all|above)\s+(instructions?|prompt|rules?)",
+    # Role manipulation
+    r"(?i)(you are now|act as|pretend to be|roleplay as)\s+",
+    # System prompt extraction
+    r"(?i)(show|print|output|reveal)\s+(system|initial|original)\s+(prompt|instructions?)",
+    # Jailbreak attempts
+    r"(?i)(DAN|Do Anything Now|unrestricted|unfiltered|no rules)",
+    # Data exfiltration
+    r"(?i)(output|print|show|dump)\s+(all|your|the)\s+(memories?|data|secrets?|keys?)",
+    # Chain of thought extraction
+    r"(?i)(show|print|output)\s+(your|the)\s+(reasoning|thinking|chain of thought)",
+    # Encoding bypasses
+    r"(?i)(base64|rot13|encode|decode)\s+",
+    # Special tokens
+    r"(?i)(<\||\|>|\[INST\]|\[/INST\]|<<SYS>>|<</SYS>>)",
+]
+
+
+def detect_prompt_injection(text: str) -> bool:
+    """Detect potential prompt injection attempts in text."""
+    for pattern in PROMPT_INJECTION_PATTERNS:
+        if re.search(pattern, text, re.IGNORECASE):
+            return True
+    return False
+
+
+def sanitize_prompt_injection(text: str) -> str:
+    """Sanitize potential prompt injection patterns."""
+    result = text
+    for pattern in PROMPT_INJECTION_PATTERNS:
+        result = re.sub(pattern, "[FILTERED]", result, flags=re.IGNORECASE)
+    return result
 
 
 def _strip_code_fences(raw: str) -> str:
@@ -240,11 +329,13 @@ class MemoryExtractor:
         min_confidence: float = 0.5,
         min_importance: float = 0.3,
         enable_worthiness_filter: bool = True,
+        enable_safety: bool = True,
     ) -> None:
         self._call_llm = call_llm
         self._min_confidence = min_confidence
         self._min_importance = min_importance
         self._enable_worthiness_filter = enable_worthiness_filter
+        self._enable_safety = enable_safety
 
     async def extract_turn(
         self,
@@ -265,6 +356,7 @@ class MemoryExtractor:
                     items,
                     min_confidence=self._min_confidence,
                     min_importance=self._min_importance,
+                    enable_safety=self._enable_safety,
                 )
 
             return items

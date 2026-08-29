@@ -56,6 +56,7 @@ class ContextRecall:
         include_sessions: bool = True,
         include_triples: bool = True,
         include_legacy: bool = True,
+        use_graph_expansion: bool = True,
     ) -> str:
         """
         Recall relevant memories for a query and assemble them into context.
@@ -67,6 +68,7 @@ class ContextRecall:
             include_sessions: Whether to include session history.
             include_triples: Whether to include knowledge graph triples.
             include_legacy: Whether to include Phase 10 memories.
+            use_graph_expansion: Whether to use graph-backed query expansion.
 
         Returns:
             Formatted context string ready for system prompt injection.
@@ -91,9 +93,14 @@ class ContextRecall:
                     parts.append(section)
                     chars_used += len(section)
 
-        # 3. Knowledge graph triples
+        # 3. Knowledge graph triples (with graph expansion)
         if include_triples and self._triple_store is not None:
-            triples = self._triple_store.search(query)
+            if use_graph_expansion and hasattr(self._triple_store, "expand_query_with_graph"):
+                triples = self._triple_store.expand_query_with_graph(
+                    query, max_hops=2, max_results=15, min_confidence=0.5
+                )
+            else:
+                triples = self._triple_store.search(query)
             if triples:
                 section = self._format_triples(triples[:10])
                 if chars_used + len(section) <= max_chars:

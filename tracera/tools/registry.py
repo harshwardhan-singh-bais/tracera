@@ -122,11 +122,12 @@ def create_default_registry(workspace=None) -> ToolRegistry:
 
 def extend_registry_with_retrieval(
     registry: ToolRegistry,
-    retriever,
-    expander,
-    graph_retriever=None,
-    context_engine=None,
-    compressor=None,
+    retriever: Any,
+    expander: Any,
+    graph_retriever: Any | None = None,
+    context_engine: Any | None = None,
+    compressor: Any | None = None,
+    context_recall: Any | None = None,
 ) -> ToolRegistry:
     """
     Phase 27/28 — Extend an existing registry with code-intelligence tools.
@@ -148,6 +149,7 @@ def extend_registry_with_retrieval(
         graph_retriever: A GraphRetriever instance (optional).
         context_engine: A ContextAssemblyEngine instance (optional).
         compressor: A ContextCompressor instance (optional).
+        context_recall: A ContextRecall instance for memory integration (optional).
 
     Returns:
         The same registry, extended with retrieval tools.
@@ -162,23 +164,23 @@ def extend_registry_with_retrieval(
     )
 
     tools: list[Tool] = [
-        SearchCodeTool(retriever, compressor, context_engine),
-        FindSymbolTool(retriever),
-        FindDefinitionTool(retriever, compressor),
+        SearchCodeTool(retriever, compressor, context_engine, context_recall),
+        FindSymbolTool(retriever, context_recall=context_recall),
+        FindDefinitionTool(retriever, compressor, context_recall),
     ]
 
     if graph_retriever is not None:
         graph = graph_retriever.graph
         tools.append(GetContextTool(
             retriever, expander, graph_retriever,
-            compressor=compressor, context_engine=context_engine,
+            compressor=compressor, context_engine=context_engine, context_recall=context_recall,
         ))
         tools.append(FindReferencesTool(graph))
         tools.append(GetDependenciesTool(graph))
     else:
         tools.append(GetContextTool(
             retriever, expander,
-            compressor=compressor, context_engine=context_engine,
+            compressor=compressor, context_engine=context_engine, context_recall=context_recall,
         ))
 
     registry.register_many(tools)

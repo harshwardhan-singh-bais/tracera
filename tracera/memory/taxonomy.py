@@ -37,6 +37,11 @@ class MemoryType(str, Enum):
     SKILL = "skill"
     PREFERENCE = "preference"
     EVENT = "event"
+    DECISION = "decision"
+    GOAL = "goal"
+    CONSTRAINT = "constraint"
+    EXPERIENCE = "experience"
+    ATTRIBUTE = "attribute"
 
 
 @dataclass
@@ -221,6 +226,76 @@ class MemoryEvent(StructuredMemory):
     memory_type: MemoryType = MemoryType.EVENT
     event_type: str = ""  # decision | fix | discovery | failure | success
     related_files: list[str] = field(default_factory=list)
+
+
+@dataclass
+class MemoryDecision(StructuredMemory):
+    """A decision made during a coding session.
+
+    Examples:
+      - "Chose PostgreSQL over SQLite for the database"
+      - "Decided to use dependency injection pattern"
+    """
+
+    memory_type: MemoryType = MemoryType.DECISION
+    rationale: str = ""
+    alternatives_considered: list[str] = field(default_factory=list)
+
+
+@dataclass
+class MemoryGoal(StructuredMemory):
+    """A goal or objective for the agent or project.
+
+    Examples:
+      - "Implement user authentication"
+      - "Achieve 90% test coverage"
+    """
+
+    memory_type: MemoryType = MemoryType.GOAL
+    target_date: str = ""
+    progress: float = 0.0  # 0.0–1.0
+
+
+@dataclass
+class MemoryConstraint(StructuredMemory):
+    """A constraint or limitation that must be respected.
+
+    Examples:
+      - "Cannot modify production database directly"
+      - "Must maintain backward compatibility with API v1"
+    """
+
+    memory_type: MemoryType = MemoryType.CONSTRAINT
+    scope: str = "global"  # global | project | file
+    severity: str = "hard"  # hard | soft
+
+
+@dataclass
+class MemoryExperience(StructuredMemory):
+    """A learned experience from past execution.
+
+    Examples:
+      - "Refactoring auth module caused test failures in payment module"
+      - "Using async/await pattern improved throughput by 40%"
+    """
+
+    memory_type: MemoryType = MemoryType.EXPERIENCE
+    outcome: str = ""  # success | failure | partial
+    lessons_learned: str = ""
+
+
+@dataclass
+class MemoryAttribute(StructuredMemory):
+    """An attribute or characteristic of an entity.
+
+    Examples:
+      - "Project uses FastAPI framework"
+      - "Team prefers functional programming style"
+    """
+
+    memory_type: MemoryType = MemoryType.ATTRIBUTE
+    entity: str = ""  # what this attribute applies to
+    value: str = ""   # the attribute value
 
 
 # ── Factory helpers ────────────────────────────────────────────────────────────

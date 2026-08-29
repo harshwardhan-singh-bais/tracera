@@ -53,10 +53,12 @@ class SearchCodeTool(Tool):
         retriever: Any,
         compressor: Any | None = None,
         context_engine: Any | None = None,
+        context_recall: Any | None = None,
     ) -> None:
         self._retriever = retriever
         self._compressor = compressor
         self._context_engine = context_engine
+        self._context_recall = context_recall
 
     @property
     def parameters_schema(self) -> dict[str, Any]:
@@ -79,9 +81,23 @@ class SearchCodeTool(Tool):
             if self._context_engine is not None or self._compressor is not None:
                 if self._compressor is not None:
                     results = self._compressor.compress(results)
+
+                # Phase 15: Get memory context for the query
+                memory_context = ""
+                if self._context_recall is not None:
+                    try:
+                        memory_context = self._context_recall.recall(
+                            query, k=10, max_chars=4000,
+                            include_sessions=True, include_triples=True,
+                        )
+                    except Exception:
+                        pass  # Memory recall is optional
+
                 if self._context_engine is not None:
                     assembled = self._context_engine.assemble(
-                        results, query=f"Search: {query}"
+                        results, query=f"Search: {query}",
+                        memory_context=memory_context,
+                        memory_budget_tokens=2000,
                     )
                     return ToolResult.ok(
                         tool_name=self.name,
@@ -142,9 +158,12 @@ class FindDefinitionTool(Tool):
         "required": ["name"],
     }
 
-    def __init__(self, retriever: Any, compressor: Any | None = None) -> None:
+    def __init__(
+        self, retriever: Any, compressor: Any | None = None, context_recall: Any | None = None
+    ) -> None:
         self._retriever = retriever
         self._compressor = compressor
+        self._context_recall = context_recall
 
     @property
     def parameters_schema(self) -> dict[str, Any]:
@@ -172,11 +191,25 @@ class FindDefinitionTool(Tool):
                     symbol=name,
                 )
 
+            # Phase 15: Get memory context for the query
+            memory_context = ""
+            if self._context_recall is not None:
+                try:
+                    memory_context = self._context_recall.recall(
+                        query, k=5, max_chars=2000,
+                        include_sessions=True, include_triples=True,
+                    )
+                except Exception:
+                    pass
+
             # Phase 30: compress oversized results before returning to the LLM
             if self._compressor is not None:
                 results = self._compressor.compress(results)
 
             parts = [f"## Definition of `{name}`\n"]
+            if memory_context:
+                parts.append(f"## Agent Memory Context\n{memory_context}\n\n")
+
             for r in results:
                 fp = r.get("file_path") or "unknown"
                 start = r.get("start_line", "?")
@@ -219,8 +252,9 @@ class FindSymbolTool(Tool):
         "required": ["name"],
     }
 
-    def __init__(self, retriever: Any) -> None:
+    def __init__(self, retriever: Any, context_recall: Any | None = None) -> None:
         self._retriever = retriever
+        self._context_recall = context_recall
 
     @property
     def parameters_schema(self) -> dict[str, Any]:
@@ -296,12 +330,14 @@ class GetContextTool(Tool):
         graph_retriever: Any = None,
         compressor: Any | None = None,
         context_engine: Any | None = None,
+        context_recall: Any | None = None,
     ) -> None:
         self._retriever = retriever
         self._expander = expander
         self._graph_retriever = graph_retriever
         self._compressor = compressor
         self._context_engine = context_engine
+        self._context_recall = context_recall
 
     @property
     def parameters_schema(self) -> dict[str, Any]:
@@ -331,9 +367,23 @@ class GetContextTool(Tool):
             if self._compressor is not None or self._context_engine is not None:
                 if self._compressor is not None:
                     expanded = self._compressor.compress(expanded)
+
+                # Phase 15: Get memory context for the query
+                memory_context = ""
+                if self._context_recall is not None:
+                    try:
+                        memory_context = self._context_recall.recall(
+                            f"Context for: {symbol}", k=5, max_chars=2000,
+                            include_sessions=True, include_triples=True,
+                        )
+                    except Exception:
+                        pass
+
                 if self._context_engine is not None:
                     assembled = self._context_engine.assemble(
-                        expanded, query=f"Context for: {symbol}"
+                        expanded, query=f"Context for: {symbol}",
+                        memory_context=memory_context,
+                        memory_budget_tokens=2000,
                     )
                     return ToolResult.ok(
                         tool_name=self.name,

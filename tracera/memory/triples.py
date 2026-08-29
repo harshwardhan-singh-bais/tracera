@@ -297,3 +297,153 @@ class TripleStore:
 
     def __repr__(self) -> str:
         return f"<TripleStore triples={self.triple_count} nodes={self.node_count}>"
+
+    # ── Graph-Backed Recall (Phase 9) ──────────────────────────────────────────
+
+    def expand_query_with_graph(
+        self,
+        query: str,
+        *,
+        max_hops: int = 2,
+        max_results: int = 20,
+        min_confidence: float = 0.5,
+    ) -> list[Triple]:
+        """
+        Expand a query using graph traversal.
+
+        Given a query, find relevant nodes and traverse the graph to find
+        related concepts. This enables "graph-backed recall" where memories
+        connected via the knowledge graph are also retrieved.
+        """
+        # First, find direct matches
+        direct_matches = self.search(query)
+        if not direct_matches:
+            return []
+
+        # Collect seed concepts from matches
+        seed_concepts = set()
+        for triple in direct_matches[:5]:
+            seed_concepts.add(triple.subject.lower())
+            seed_concepts.add(triple.object.lower())
+
+        # Traverse from each seed concept
+        expanded: list[Triple] = []
+        visited = set()
+
+        for concept in seed_concepts:
+            if concept in visited:
+                continue
+            visited.add(concept)
+
+            neighbors = self.get_neighbors(concept, max_depth=max_hops)
+            for triple in neighbors:
+                if triple.confidence >= min_confidence:
+                    expanded.append(triple)
+
+        # Deduplicate and sort by confidence
+        seen = set()
+        unique = []
+        for triple in expanded:
+            if triple.key not in seen:
+                seen.add(triple.key)
+                unique.append(triple)
+
+        unique.sort(key=lambda t: t.confidence, reverse=True)
+        return unique[:max_results]
+
+    def get_entity_subgraph(
+        self,
+        entity: str,
+        *,
+        max_depth: int = 2,
+        min_confidence: float = 0.5,
+    ) -> dict[str, list[Triple]]:
+        """
+        Get the subgraph centered on an entity.
+
+        Returns a dict with 'outgoing', 'incoming', and 'neighbors' keys
+        containing the relevant triples for building context about an entity.
+        """
+        outgoing = [
+            t for t in self.get_objects(entity)
+            if t.confidence >= min_confidence
+        ]
+        incoming = [
+            t for t in self.get_subjects(entity)
+            if t.confidence >= min_confidence
+        ]
+        neighbors = self.get_neighbors(entity, max_depth=max_depth)
+        neighbors = [t for t in neighbors if t.confidence >= min_confidence]
+
+        return {
+            "outgoing": outgoing[:50],
+            "incoming": incoming[:50],
+            "neighbors": neighbors[:100],
+        }
+
+    def find_paths(
+        self,
+        source: str,
+        target: str,
+        *,
+        max_depth: int = 4,
+    ) -> list[list[Triple]]:
+        """
+        Find paths between two concepts in the knowledge graph.
+
+        Returns a list of paths (each path is a list of triples).
+        Useful for explaining how two concepts are related.
+        """
+        try:
+            import networkx as nx
+        except ImportError:
+            return []
+
+        source_l = source.lower()
+        target_l = target.lower()
+
+        if source_l not in self._g or target_l not in self._g:
+            return []
+
+        paths = []
+        try:
+            for path in nx.all_simple_paths(
+                self._g, source=source_l, target=target_l, cutoff=max_depth
+            ):
+                if len(path) < 2:
+                    continue
+                triple_path = []
+                for i in range(len(path) - 1):
+                    u, v = path[i], path[i + 1]
+                    # Find the triple connecting these nodes
+                    for triple in self._triples.values():
+                        if (triple.subject.lower() == u and triple.object.lower() == v) or \
+                           (triple.subject.lower() == v and triple.object.lower() == u):
+                            triple_path.append(triple)
+                            break
+                if triple_path:
+                    paths.append(triple_path)
+        except nx.NetworkXNoPath:
+            pass
+
+        return paths
+
+    def get_central_concepts(self, top_n: int = 20) -> list[tuple[str, int]]:
+        """Get the most connected concepts in the graph (by degree)."""
+        degrees = [(node, self._g.degree(node)) for node in self._g.nodes()]
+        degrees.sort(key=lambda x: x[1], reverse=True)
+        return degrees[:top_n]
+
+    def get_concept_clusters(self, min_cluster_size: int = 3) -> list[list[str]]:
+        """Find clusters of closely related concepts using connected components."""
+        try:
+            import networkx as nx
+        except ImportError:
+            return []
+
+        # Convert to undirected for clustering
+        undirected = self._g.to_undirected()
+        clusters = list(nx.connected_components(undirected))
+        clusters = [list(c) for c in clusters if len(c) >= min_cluster_size]
+        clusters.sort(key=len, reverse=True)
+        return clusters

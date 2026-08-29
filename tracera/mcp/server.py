@@ -311,12 +311,12 @@ class TraceraMCPServer:
         graph = graph_retriever.graph
 
         factory: dict[str, Any] = {
-            "search_code": lambda: SearchCodeTool(symbol_retriever, compressor, context_engine),
-            "find_symbol": lambda: FindSymbolTool(symbol_retriever),
+            "search_code": lambda: SearchCodeTool(symbol_retriever, compressor, context_engine, context_recall),
+            "find_symbol": lambda: FindSymbolTool(symbol_retriever, context_recall=context_recall),
             "find_references": lambda: FindReferencesTool(graph),
             "get_context": lambda: GetContextTool(
                 symbol_retriever, expander, graph_retriever,
-                compressor=compressor, context_engine=context_engine,
+                compressor=compressor, context_engine=context_engine, context_recall=context_recall,
             ),
             "get_dependencies": lambda: GetDependenciesTool(graph),
         }
