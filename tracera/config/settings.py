@@ -105,6 +105,29 @@ class Settings(BaseSettings):
     )
     huggingface_token: str | None = Field(None, alias="HUGGINGFACE_TOKEN")
 
+    # ── Memory Layer (agent-native memory, Memori-style) ──────────────────────
+
+    tracera_memory_enabled: bool = Field(True, alias="TRACERA_MEMORY_ENABLED")
+    # Comma-separated process allow-list. Empty = all processes enabled.
+    tracera_memory_enabled_processes: str = Field(
+        "", alias="TRACERA_MEMORY_ENABLED_PROCESSES"
+    )
+    tracera_memory_top_k: int = Field(5, alias="TRACERA_MEMORY_TOP_K")
+    tracera_memory_dedup_threshold: float = Field(
+        0.9, alias="TRACERA_MEMORY_DEDUP_THRESHOLD"
+    )
+    tracera_memory_min_recall_score: float = Field(
+        0.3, alias="TRACERA_MEMORY_MIN_RECALL_SCORE"
+    )
+    tracera_memory_entity: str = Field("user", alias="TRACERA_MEMORY_ENTITY")
+    tracera_memory_db: str | None = Field(None, alias="TRACERA_MEMORY_DB")
+    tracera_memory_extraction_model: str = Field(
+        "", alias="TRACERA_MEMORY_EXTRACTION_MODEL"
+    )
+    tracera_memory_worker_enabled: bool = Field(
+        True, alias="TRACERA_MEMORY_WORKER_ENABLED"
+    )
+
     # ── Vector DB ─────────────────────────────────────────────────────────────
 
     lancedb_uri: str = Field(".tracera/index/lancedb", alias="LANCEDB_URI")
@@ -158,6 +181,22 @@ class Settings(BaseSettings):
     @property
     def memory_dir(self) -> Path:
         return self.tracera_data_dir / "memory"
+
+    @property
+    def memory_layer_db(self) -> Path:
+        """SQLite file backing the agent-native memory layer."""
+        if self.tracera_memory_db:
+            return Path(self.tracera_memory_db)
+        return self.memory_dir / "memory_layer.db"
+
+    @property
+    def memory_layer_processes(self) -> list[str]:
+        """Process allow-list for the memory layer ([] = all)."""
+        return [
+            p.strip()
+            for p in self.tracera_memory_enabled_processes.split(",")
+            if p.strip()
+        ]
 
     @property
     def logs_dir(self) -> Path:

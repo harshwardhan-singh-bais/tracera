@@ -92,6 +92,15 @@ def _build_agent(settings=None, workspace_path: Path | None = None, retrieval_pi
     # Provider with automatic failover across all configured APIs
     provider = _build_provider(settings)
 
+    # Agent-native memory layer (Memori-style): transparent recall before each
+    # LLM call + durable, fully-async extraction afterwards. Never fatal.
+    memory_layer = None
+    try:
+        from tracera.memory.layer.factory import register_memory_layer
+        provider, memory_layer = register_memory_layer(provider, settings)
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[dim yellow]⚠ Memory layer disabled ({e})[/]")
+
     # Phase 31: repository-aware system prompt
     system_prompt = (
         "You are TRACERA, an autonomous code intelligence agent running in a developer's terminal.\n"
@@ -623,6 +632,107 @@ def memory_clear(
     memory._entries.clear()
     memory._save()
     console.print("[green]✓[/] Memory cleared.")
+
+
+@memory_app.command("inspect")
+def memory_inspect(
+    entity: Annotated[
+        str, typer.Argument(help="External entity id (user / org / customer).")
+    ],
+    kind: Annotated[
+        Optional[str],
+        typer.Option("--kind", "-k", help="fact | preference | skill | attribute"),
+    ] = None,
+    process: Annotated[
+        Optional[str],
+        typer.Option("--process", "-p", help="Filter by process id."),
+    ] = None,
+) -> None:
+    """
+    Inspect an entity's stored memories (grouped by kind, mention_count desc).
+
+    This is the debugging / demo surface for the agent-native memory layer:
+        tracera memory inspect --entity user_123
+    """
+    _setup()
+    settings = _get_settings()
+    from tracera.memory.layer.store import MemoryKind, MemoryStore
+
+    store = MemoryStore(settings.memory_layer_db)
+    records = store.find_memories(entity, kind=kind, process_id=process, limit=10_000)
+    if not records:
+        console.print(
+            f"[dim]No memories stored for entity '{entity}' yet.[/]\n"
+            "[dim]Hint: the memory layer stores facts/preferences automatically "
+            "when attribution is set.[/]"
+        )
+        return
+
+    selected = [kind] if kind else [k.value for k in MemoryKind]
+    for k in selected:
+        group = [r for r in records if r.kind == k]
+        if not group:
+            continue
+        table = Table(
+            title=f"[bold cyan]{k}s[/] for [bold]{entity}[/]",
+            border_style="cyan",
+            show_header=True,
+        )
+        table.add_column("ID", style="dim", width=6)
+        table.add_column("Triple", style="bold magenta", width=36)
+        table.add_column("Text", style="white")
+        table.add_column("Mentions", justify="right", width=8)
+        for rec in group:
+            table.add_row(
+                str(rec.id),
+                rec.to_short_line(),
+                rec.text[:70],
+                str(rec.mention_count),
+            )
+        console.print(table)
+    console.print(
+        f"[dim]Total: {len(records)} memories for entity '{entity}'[/]"
+    )
+
+
+@memory_app.command("status")
+def memory_status() -> None:
+    """Show memory layer configuration and storage statistics."""
+    _setup()
+    settings = _get_settings()
+    from tracera.memory.layer.store import MemoryStore
+
+    enabled = settings.tracera_memory_enabled
+    console.print("[bold cyan]Memory Layer Status[/]\n")
+    console.print(
+        f"  Enabled:              [{'bold green' if enabled else 'bold red'}]"
+        f"{'yes' if enabled else 'no'}[/]"
+    )
+    processes = settings.memory_layer_processes
+    console.print(
+        "  Enabled processes:    "
+        + (", ".join(processes) if processes else "[dim]all[/]")
+    )
+    console.print(f"  Entity (CLI default): {settings.tracera_memory_entity}")
+    console.print(f"  Database:             {settings.memory_layer_db}")
+    console.print(f"  Top-K recall:         {settings.tracera_memory_top_k}")
+    console.print(f"  Dedup threshold:      {settings.tracera_memory_dedup_threshold}")
+
+    store = MemoryStore(settings.memory_layer_db)
+    stats = store.stats()
+    table = Table(title="Storage", border_style="purple", show_header=True)
+    table.add_column("Metric", style="bold magenta")
+    table.add_column("Value", style="white")
+    for key, value in [
+        ("Memories total", stats["memories_total"]),
+        ("By kind", ", ".join(f"{k}={v}" for k, v in stats["memories_by_kind"].items()) or "—"),
+        ("Entities", stats["entities"]),
+        ("Sessions", stats["sessions"]),
+        ("Jobs pending", stats["jobs"]["pending"]),
+        ("Jobs failed", stats["jobs"]["failed"]),
+    ]:
+        table.add_row(key, str(value))
+    console.print(table)
 
 
 # ── tui ───────────────────────────────────────────────────────────────────────
