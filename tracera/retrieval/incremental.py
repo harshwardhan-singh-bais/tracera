@@ -98,8 +98,36 @@ class IncrementalIndexer:
         return {}
 
     def _save_manifest(self, manifest: dict[str, str]) -> None:
+        """Save complete index snapshot metadata to disk."""
+        import subprocess
+        import datetime
+        # Get git SHA
+        git_sha = ""
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=str(self._workspace), capture_output=True, text=True, timeout=10
+            )
+            git_sha = result.stdout.strip()
+        except Exception:
+            pass
+        # Get parser versions
+        parser_versions = {lang: "0.1.0" for lang in self._parser.languages()}
+        # Full snapshot metadata
+        full_manifest = {
+            "snapshot": {
+                "repository": str(self._workspace),
+                "git_sha": git_sha,
+                "generation_timestamp": datetime.datetime.utcnow().isoformat(),
+                "files_indexed": len(manifest),
+                "files_excluded": 0,
+                "parser_versions": parser_versions,
+                "index_version": "1.0.0"
+            },
+            "files": manifest
+        }
         self._index_dir.mkdir(parents=True, exist_ok=True)
-        self._manifest_path.write_text(json.dumps(manifest, indent=2))
+        self._manifest_path.write_text(json.dumps(full_manifest, indent=2), encoding="utf-8")
 
     # ── Change detection ──────────────────────────────────────────────────────
 
@@ -242,3 +270,42 @@ class IncrementalIndexer:
             stats["new"], stats["modified"], stats["deleted"], stats["chunks_indexed"],
         )
         return stats
+
+    # ── Freshness checks ────────────────────────────────────────────────────────
+    def check_freshness(self) -> dict[str, dict[str, str]]:
+        """Return freshness state for every file in the index."""
+        import subprocess
+        from datetime import datetime
+        current_files = {f.path: f for f in self._scanner.scan()}
+        old_manifest = self._load_manifest()
+        old_files = old_manifest.get("files", {})
+        
+        # Get git status to find uncommitted changes
+        git_modified = set()
+        try:
+            result = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=str(self._workspace), capture_output=True, text=True, timeout=10
+            )
+            for line in result.stdout.strip().split("\n"):
+                if line:
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        git_modified.add(str(self._workspace / parts[1]))
+        except Exception:
+            pass
+
+        freshness = {}
+        for path, old_sha in old_files.items():
+            if path not in current_files:
+                freshness[path] = {"state": "missing", "reason": "File not found on filesystem"}
+            else:
+                current_sha = current_files[path].sha256
+                if current_sha != old_sha:
+                    if path in git_modified:
+                        freshness[path] = {"state": "edited_uncommitted", "reason": "File modified since last commit"}
+                    else:
+                        freshness[path] = {"state": "stale_index", "reason": "Filesystem SHA doesn't match index SHA"}
+                else:
+                    freshness[path] = {"state": "fresh", "reason": "Index matches filesystem"}
+        return freshness

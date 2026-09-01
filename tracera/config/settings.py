@@ -98,6 +98,29 @@ class Settings(BaseSettings):
 
     tracera_embedding_model: str = Field(
         "sentence-transformers/all-MiniLM-L6-v2",
+        alias="TRACERA_EMBEDDING_MODEL"
+    )
+
+    # ── Code Intelligence (Steps 21-41) ───────────────────────────────────────
+
+    code_intelligence_enabled: bool = Field(True, alias="CODE_INTELLIGENCE_ENABLED")
+    code_intelligence_index_path: Path = Field(
+        Path(".tracera/index"), alias="CODE_INTELLIGENCE_INDEX_PATH"
+    )
+    code_intelligence_ignore_patterns: str = Field(
+        "__pycache__,*.pyc,node_modules,.git,.venv,.idea,.vscode,*.min.js,*.log",
+        alias="CODE_INTELLIGENCE_IGNORE_PATTERNS"
+    )
+    code_intelligence_max_files: int = Field(10000, alias="CODE_INTELLIGENCE_MAX_FILES")
+    code_intelligence_parser: str = Field("tree-sitter", alias="CODE_INTELLIGENCE_PARSER")
+    code_intelligence_semantic_search: bool = Field(True, alias="CODE_INTELLIGENCE_SEMANTIC_SEARCH")
+    code_intelligence_embedding_model: str = Field(
+        "sentence-transformers/all-MiniLM-L6-v2", alias="CODE_INTELLIGENCE_EMBEDDING_MODEL"
+    )
+    code_intelligence_tool_profile: str = Field("standard", alias="CODE_INTELLIGENCE_TOOL_PROFILE")
+    code_intelligence_token_budget: int = Field(4000, alias="CODE_INTELLIGENCE_TOKEN_BUDGET")
+    code_intelligence_watcher: bool = Field(False, alias="CODE_INTELLIGENCE_WATCHER")
+    code_intelligence_memory_integration: bool = Field(True, alias="CODE_INTELLIGENCE_MEMORY_INTEGRATION")
         alias="TRACERA_EMBEDDING_MODEL",
     )
     tracera_embedding_device: Literal["cpu", "cuda", "mps"] = Field(

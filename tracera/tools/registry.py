@@ -120,6 +120,66 @@ def create_default_registry(workspace=None) -> ToolRegistry:
     return registry
 
 
+# ── Tool Profiles / Tiers (Step 23) ────────────────────────────────────────────
+
+TOOL_PROFILES: dict[str, list[str]] = {
+    "core": [
+        "search_symbols",
+        "get_symbol_source",
+        "get_file_outline",
+        "get_repo_map",
+        "assemble_code_context",
+    ],
+    "standard": [
+        "search_symbols",
+        "get_symbol_source",
+        "get_file_outline",
+        "get_repo_map",
+        "assemble_code_context",
+        "find_references",
+        "get_call_hierarchy",
+        "get_dependencies",
+        "get_blast_radius",
+        "get_changed_symbols",
+        "get_index_freshness",
+    ],
+    "advanced": [
+        "search_symbols",
+        "get_symbol_source",
+        "get_file_outline",
+        "get_repo_map",
+        "assemble_code_context",
+        "find_references",
+        "get_call_hierarchy",
+        "get_dependencies",
+        "get_blast_radius",
+        "get_changed_symbols",
+        "get_index_freshness",
+        "find_dead_code",
+        "get_hotspots",
+        "calculate_pagerank",
+        "plan_refactoring",
+        "get_code_provenance",
+        "assess_change_risk",
+        "structural_search",
+        "get_session_stats",
+        "plan_code_task",
+        "find_implementations",
+    ]
+}
+
+
+def get_tools_for_profile(profile: str) -> list[str]:
+    """Get the list of tool names that should be registered for a given profile."""
+    return TOOL_PROFILES.get(profile, TOOL_PROFILES["standard"])
+
+
+def filter_tools_by_profile(tools: list[Tool], profile: str) -> list[Tool]:
+    """Filter a list of tools to only include those allowed by the specified profile."""
+    allowed = set(get_tools_for_profile(profile))
+    return [tool for tool in tools if tool.name in allowed]
+
+
 def extend_registry_with_retrieval(
     registry: ToolRegistry,
     retriever: Any,
@@ -128,19 +188,14 @@ def extend_registry_with_retrieval(
     context_engine: Any | None = None,
     compressor: Any | None = None,
     context_recall: Any | None = None,
+    tool_profile: str = "standard",
 ) -> ToolRegistry:
     """
-    Phase 27/28 — Extend an existing registry with code-intelligence tools.
-
-    This makes the agent retrieval-aware: it can now call search_code,
-    find_symbol, find_definition, and get_context as native tools alongside
-    read_file/grep. When a symbol graph is available (Phases 25-26), the
-    graph-backed tools find_references and get_dependencies are registered
-    too, and get_context includes graph neighbours.
-
-    Phases 29/30: when context_engine/compressor are provided, retrieval
-    tool output is assembled + compressed into LLM-ready context blocks
-    instead of raw chunk dumps.
+    Phase 21-41 — Extend an existing registry with full code-intelligence tools.
+    
+    Implements tool tiering/profiles (Step 23) and registers all code intelligence
+    tools based on the selected profile. Core tools are always available, standard
+    adds common analysis tools, advanced includes all analytical capabilities.
 
     Args:
         registry: An existing ToolRegistry (from create_default_registry).
@@ -149,7 +204,73 @@ def extend_registry_with_retrieval(
         graph_retriever: A GraphRetriever instance (optional).
         context_engine: A ContextAssemblyEngine instance (optional).
         compressor: A ContextCompressor instance (optional).
-        context_recall: A ContextRecall instance for memory integration (optional).
+        context_recall: Memory recall integration (optional).
+        tool_profile: Tool tier profile (core/standard/advanced)
+    """
+    from tracera.tools.ast_tools import (
+        # Core tools (always available)
+        SearchSymbolsTool,
+        GetSymbolSourceTool,
+        GetFileOutlineTool,
+        GetRepoMapTool,
+        AssembleCodeContextTool,
+        # Standard tools
+        FindReferencesTool,
+        GetCallHierarchyTool,
+        GetDependenciesTool,
+        GetBlastRadiusTool,
+        GetChangedSymbolsTool,
+        GetIndexFreshnessTool,
+        # Advanced tools (only if profile allows)
+        FindDeadCodeTool,
+        GetHotspotsTool,
+        CalculatePageRankTool,
+        PlanRefactoringTool,
+        GetCodeProvenanceTool,
+        AssessChangeRiskTool,
+        StructuralSearchTool,
+        GetSessionStatsTool,
+        PlanCodeTaskTool,
+        FindImplementationsTool,
+    )
+
+    # Create all code intelligence tools
+    all_ci_tools = [
+        # Core
+        SearchSymbolsTool(retriever),
+        GetSymbolSourceTool(retriever),
+        GetFileOutlineTool(retriever),
+        GetRepoMapTool(graph_retriever) if graph_retriever else None,
+        AssembleCodeContextTool(context_engine, compressor) if context_engine else None,
+        # Standard
+        FindReferencesTool(graph_retriever) if graph_retriever else None,
+        GetCallHierarchyTool(graph_retriever) if graph_retriever else None,
+        GetDependenciesTool(graph_retriever) if graph_retriever else None,
+        GetBlastRadiusTool(graph_retriever) if graph_retriever else None,
+        GetChangedSymbolsTool(graph_retriever) if graph_retriever else None,
+        GetIndexFreshnessTool(retriever) if retriever else None,
+        # Advanced
+        FindDeadCodeTool(graph_retriever) if graph_retriever else None,
+        GetHotspotsTool(graph_retriever) if graph_retriever else None,
+        CalculatePageRankTool(graph_retriever) if graph_retriever else None,
+        PlanRefactoringTool(graph_retriever) if graph_retriever else None,
+        GetCodeProvenanceTool(graph_retriever) if graph_retriever else None,
+        AssessChangeRiskTool(graph_retriever) if graph_retriever else None,
+        StructuralSearchTool(graph_retriever) if graph_retriever else None,
+        GetSessionStatsTool(context_engine) if context_engine else None,
+        PlanCodeTaskTool(),
+        FindImplementationsTool(graph_retriever) if graph_retriever else None,
+    ]
+
+    # Filter out None values and apply profile filtering
+    ci_tools = [t for t in all_ci_tools if t is not None]
+    filtered_tools = filter_tools_by_profile(ci_tools, tool_profile)
+    
+    # Register all filtered tools
+    registry.register_many(filtered_tools)
+    log.info(f"Registered {len(filtered_tools)} code intelligence tools for profile '{tool_profile}'")
+    
+    return registry        context_recall: A ContextRecall instance for memory integration (optional).
 
     Returns:
         The same registry, extended with retrieval tools.
@@ -266,4 +387,3 @@ def extend_registry_with_ast_tools(
         ", ".join(t.name for t in tools),
     )
     return registry
-
