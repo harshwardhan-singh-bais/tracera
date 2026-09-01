@@ -31,8 +31,11 @@ Tool categories:
 from __future__ import annotations
 
 import asyncio
+import json
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
+from contextlib import asynccontextmanager
 
 from mcp.server.fastmcp import FastMCP
 
@@ -40,6 +43,11 @@ from tracera.config.settings import Settings, get_settings
 from tracera.logging import get_logger
 
 log = get_logger("mcp.server")
+
+# MCP API versioning (Phase 5)
+MCP_API_VERSION = "1.0.0"
+MCP_SERVER_NAME = "tracera-mcp-server"
+MCP_MIN_CLIENT_VERSION = "0.1.0"
 
 # ── Tool catalog ──────────────────────────────────────────────────────────────
 
@@ -162,9 +170,30 @@ class TraceraMCPServer:
         self._context_recall: Any = None
         self._legacy_memory: Any = None
 
+        # Server-side security configuration (Phase 4)
+        self._api_keys: set[str] = set()
+        self._auth_enabled = False
+        # Load API keys from settings if configured
+        if hasattr(self._settings, "tracera_mcp_api_keys") and self._settings.tracera_mcp_api_keys:
+            self._api_keys = set(self._settings.tracera_mcp_api_keys)
+            self._auth_enabled = True
+            log.info("MCP server authentication enabled with %d configured API keys", len(self._api_keys))
+        elif hasattr(self._settings, "tracera_mcp_api_key") and self._settings.tracera_mcp_api_key:
+            self._api_keys = {self._settings.tracera_mcp_api_key}
+            self._auth_enabled = True
+            log.info("MCP server authentication enabled with single configured API key")
+            
+        # Workspace boundary enforcement (Phase 4)
+        self._enforce_workspace_boundaries = getattr(
+            self._settings, "tracera_mcp_enforce_workspace_boundaries", True
+        )
+        if self._enforce_workspace_boundaries:
+            log.info("Workspace boundary enforcement enabled - all file operations restricted to: %s", self._ws_path)
+
         self._mcp = FastMCP(
             "tracera",
             instructions=SERVER_INSTRUCTIONS,
+            lifespan=self.lifespan,
         )
         self._register_all()
 
@@ -178,6 +207,87 @@ class TraceraMCPServer:
     @property
     def workspace_path(self) -> Path:
         return self._ws_path
+        
+    @property
+    def api_version(self) -> str:
+        """MCP API version supported by this server."""
+        return MCP_API_VERSION
+        
+    @property
+    def is_running(self) -> bool:
+        """Whether the server is currently running."""
+        return hasattr(self, '_server_task') and not self._server_task.done()
+
+    async def startup(self) -> None:
+        """
+        Lifecycle method: Initialize server resources before accepting connections.
+        Validates workspace, pre-imports critical components, and prepares for operation.
+        """
+        log.info("TRACERA MCP server starting up (API version %s)", MCP_API_VERSION)
+        log.info("Workspace path: %s", self._ws_path)
+        
+        # Validate workspace exists
+        if not self._ws_path.exists():
+            raise RuntimeError(f"Workspace path does not exist: {self._ws_path}")
+            
+        # Check if index is available (don't fail startup, just warn)
+        if not self._index_available():
+            log.warning(
+                "No code index found. Code intelligence tools will be unavailable. "
+                "Run `tracera index` to build the index."
+            )
+        else:
+            # Pre-warm the pipeline if index exists (optional, improves first request latency)
+            try:
+                self._pipeline_once()
+                log.info("Retrieval pipeline pre-warmed successfully")
+            except Exception as e:
+                log.warning("Failed to pre-warm retrieval pipeline: %s", e)
+                
+        log.info("TRACERA MCP server startup complete. Ready to accept connections.")
+
+    async def shutdown(self) -> None:
+        """
+        Lifecycle method: Gracefully shut down server resources.
+        Persists memory, closes connections, and cleans up.
+        """
+        log.info("TRACERA MCP server shutting down...")
+        
+        # Persist any in-memory state
+        if self._triple_store is not None:
+            try:
+                memory_dir = self._settings.memory_dir
+                memory_dir.mkdir(parents=True, exist_ok=True)
+                self._triple_store.save(memory_dir / "memory_triples.json")
+                log.info("Memory triples persisted successfully")
+            except Exception as e:
+                log.error("Failed to persist memory triples: %s", e)
+                
+        # Clean up all lazy-loaded components
+        self._pipeline = None
+        self._enhanced_memory = None
+        self._session_manager = None
+        self._triple_store = None
+        self._context_recall = None
+        
+        # Clear tool caches
+        self._retrieval_tools.clear()
+        self._ast_tools.clear()
+        self._refactor_tools.clear()
+        self._session_tools.clear()
+        self._provenance_tools.clear()
+        self._memory_tools.clear()
+        
+        log.info("TRACERA MCP server shutdown complete")
+
+    @asynccontextmanager
+    async def lifespan(self):
+        """FastMCP lifespan context manager for lifecycle management."""
+        await self.startup()
+        try:
+            yield
+        finally:
+            await self.shutdown()
 
     def _register_all(self) -> None:
         """Register all MCP tools across all categories."""
@@ -221,6 +331,49 @@ class TraceraMCPServer:
         # Repository
         self._mcp.add_tool(self.run_tests, name="run_tests")
         self._mcp.add_tool(self.inspect_repository, name="inspect_repository")
+        # Diagnostics (Phase 5)
+        self._mcp.add_tool(self.get_server_status, name="get_server_status")
+
+    # ── Server-side security validation (Phase 4) ────────────────────────────
+
+    def validate_authentication(self, headers: dict[str, str] | None = None) -> tuple[bool, str | None]:
+        """
+        Validate client authentication for remote connections.
+        Returns (is_authenticated, error_message).
+        """
+        if not self._auth_enabled:
+            return True, None
+            
+        if not headers:
+            return False, "Authentication required but no headers provided"
+            
+        auth_header = headers.get("authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return False, "Invalid authorization header format - expected 'Bearer <API_KEY>'"
+            
+        api_key = auth_header[7:].strip()
+        if api_key not in self._api_keys:
+            log.warning("Failed authentication attempt with invalid API key from remote client")
+            return False, "Invalid API key"
+            
+        return True, None
+
+    def validate_file_access(self, file_path: str | Path) -> tuple[bool, str | None]:
+        """
+        Enforce workspace boundaries - validate that file access is within the allowed workspace.
+        Returns (is_allowed, error_message).
+        """
+        if not self._enforce_workspace_boundaries:
+            return True, None
+            
+        abs_path = Path(file_path).resolve()
+        try:
+            # Check if the path is within our workspace
+            abs_path.relative_to(self._ws_path)
+            return True, None
+        except ValueError:
+            log.error("Blocked file access attempt outside workspace: %s", abs_path)
+            return False, f"Access to path outside workspace is forbidden: {file_path}. All operations restricted to: {self._ws_path}"
 
     # ── Lazy pipeline (Phases 16-26) ─────────────────────────────────────────
 
@@ -451,46 +604,244 @@ class TraceraMCPServer:
     # ── Generic tool runner ───────────────────────────────────────────────────
 
     async def _run_tool(self, tool_getter, tool_name: str, **kwargs: Any) -> str:
-        """Generic runner: get tool, execute, format result."""
-        tool = tool_getter(tool_name)
-        if tool is None:
-            _, err = self._pipeline_once()
-            return f"ERROR: {err or 'Tool unavailable — run `tracera index` first.'}"
-        result = await tool.execute(**kwargs)
-        if not result.success:
-            return f"ERROR: {result.error}"
-        return result.output
+        """Generic runner: get tool, execute, format result.
+        
+        Returns structured JSON with success status, output, metadata, and any errors.
+        Includes timeout handling and cancellation support.
+        Performs authentication and workspace boundary validation before execution.
+        """
+        start_time = datetime.now(timezone.utc)
+        
+        # Extract request context if provided (for authentication)
+        headers = kwargs.pop('headers', None)
+        
+        # 1. Authenticate the client (Phase 4)
+        auth_ok, auth_error = self.validate_authentication(headers)
+        if not auth_ok:
+            log.error("Authentication failed for tool %s: %s", tool_name, auth_error)
+            return json.dumps({
+                "success": False,
+                "tool_name": tool_name,
+                "error": f"Authentication failed: {auth_error}",
+                "output": None,
+                "metadata": {},
+                "duration_ms": (datetime.now(timezone.utc) - start_time).total_seconds() * 1000,
+                "status_code": 401
+            })
+            
+        # 2. Validate workspace boundaries for any file paths in kwargs (Phase 4)
+        for key, value in kwargs.items():
+            if isinstance(value, (str, Path)) and ('path' in key.lower() or 'file' in key.lower()):
+                access_ok, access_error = self.validate_file_access(value)
+                if not access_ok:
+                    return json.dumps({
+                        "success": False,
+                        "tool_name": tool_name,
+                        "error": access_error,
+                        "output": None,
+                        "metadata": {},
+                        "duration_ms": (datetime.now(timezone.utc) - start_time).total_seconds() * 1000,
+                        "status_code": 403
+                    })
+            elif isinstance(value, list):
+                # Check list of paths
+                for item in value:
+                    if isinstance(item, (str, Path)):
+                        access_ok, access_error = self.validate_file_access(item)
+                        if not access_ok:
+                            return json.dumps({
+                                "success": False,
+                                "tool_name": tool_name,
+                                "error": access_error,
+                                "output": None,
+                                "metadata": {},
+                                "duration_ms": (datetime.now(timezone.utc) - start_time).total_seconds() * 1000,
+                                "status_code": 403
+                            })
+        
+        # Log the tool call for audit/telemetry (Phase 4)
+        log.info("Executing MCP tool: %s, args: %s", tool_name, {k: v for k, v in kwargs.items() if not isinstance(v, (bytes, bytearray))})
+        
+        try:
+            tool = tool_getter(tool_name)
+            if tool is None:
+                _, err = self._pipeline_once()
+                error_msg = err or 'Tool unavailable — run `tracera index` first.'
+                log.warning("Tool %s unavailable: %s", tool_name, error_msg)
+                return json.dumps({
+                    "success": False,
+                    "error": error_msg,
+                    "tool_name": tool_name,
+                    "duration_ms": (datetime.now(timezone.utc) - start_time).total_seconds() * 1000,
+                    "output": None,
+                    "metadata": {}
+                })
+
+            # Execute with timeout protection (5 minute max for any tool)
+            result = await asyncio.wait_for(
+                tool.execute(**kwargs),
+                timeout=300.0
+            )
+
+            end_time = datetime.now(timezone.utc)
+            duration_ms = (end_time - start_time).total_seconds() * 1000
+            
+            if result.success:
+                log.info("Tool %s completed successfully in %.2fms", tool_name, duration_ms)
+                return json.dumps({
+                    "success": True,
+                    "tool_name": tool_name,
+                    "output": result.output,
+                    "metadata": result.metadata,
+                    "duration_ms": duration_ms,
+                    "error": None
+                })
+            else:
+                log.error("Tool %s failed: %s", tool_name, result.error)
+                return json.dumps({
+                    "success": False,
+                    "tool_name": tool_name,
+                    "error": result.error,
+                    "output": result.output,
+                    "metadata": result.metadata,
+                    "duration_ms": duration_ms
+                })
+                
+        except asyncio.TimeoutError:
+            duration_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+            error_msg = f"Tool execution timed out after 300 seconds"
+            log.error("Tool %s %s", tool_name, error_msg)
+            return json.dumps({
+                "success": False,
+                "tool_name": tool_name,
+                "error": error_msg,
+                "output": None,
+                "metadata": {},
+                "duration_ms": duration_ms
+            })
+        except asyncio.CancelledError:
+            duration_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+            log.info("Tool %s was cancelled", tool_name)
+            return json.dumps({
+                "success": False,
+                "tool_name": tool_name,
+                "error": "Tool execution was cancelled",
+                "output": None,
+                "metadata": {},
+                "duration_ms": duration_ms
+            })
+        except Exception as e:
+            duration_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+            error_msg = f"Unexpected error executing tool: {str(e)}"
+            log.exception("Tool %s encountered unexpected error", tool_name)
+            return json.dumps({
+                "success": False,
+                "tool_name": tool_name,
+                "error": error_msg,
+                "output": None,
+                "metadata": {},
+                "duration_ms": duration_ms
+            })
 
     # ══════════════════════════════════════════════════════════════════════════
     # CODE INTELLIGENCE TOOLS
     # ══════════════════════════════════════════════════════════════════════════
 
-    async def search_code(self, query: str, k: int = 5, language: str | None = None) -> str:
-        """Search the indexed codebase (hybrid BM25 + dense retrieval).
+    async def search_code(self, query: str, k: int = 5, language: str | None = None, file_pattern: str | None = None) -> str:
+        """Search the indexed codebase using hybrid BM25 + dense vector retrieval.
+        
+        Use this when you need to:
+        - Find code snippets related to a specific concept or functionality
+        - Locate implementations of features described in natural language
+        - Find files containing specific keywords or patterns
+        - Explore the codebase to understand how a subsystem works
+
+        Returns up to k matching code blocks with their full file paths, line numbers,
+        source code content, and similarity scores. Results are ranked by relevance.
 
         Args:
-            query: The search query (e.g. "authentication middleware").
-            k: Number of results to return (default 5).
-            language: Optional language filter (python, javascript, ...).
+            query: Natural language search query describing what you're looking for.
+                Examples: "user authentication middleware", "payment processing",
+                "JWT token validation", "database connection pool"
+            k: Maximum number of results to return. Default: 5. Recommended: 3-10.
+            language: Optional language filter to limit search to specific languages.
+                Supported values: python, javascript, typescript, java, cpp, csharp,
+                go, rust, ruby, php, swift, kotlin. Case-insensitive.
+            file_pattern: Optional glob pattern to filter files (e.g. "src/**/*.py",
+                "*/auth/*"). Only match files whose paths match this pattern.
         """
-        return await self._run_tool(self._get_retrieval_tool, "search_code", query=query, k=k, language=language)
+        return await self._run_tool(
+            self._get_retrieval_tool, 
+            "search_code", 
+            query=query, 
+            k=k, 
+            language=language,
+            file_pattern=file_pattern
+        )
 
-    async def find_symbol(self, name: str, symbol_type: str = "any") -> str:
-        """Find the definition of a specific class, function, or method by name.
+    async def find_symbol(self, name: str, symbol_type: str = "any", case_sensitive: bool = False) -> str:
+        """Find all definitions and declarations of a symbol in the codebase.
+        
+        Use this when you need to:
+        - Locate where a function, class, or variable is defined
+        - Find all implementations of an interface or abstract class
+        - Understand where a specific identifier is used across the codebase
+        - Locate the source code for a symbol you need to modify
+
+        Returns matching symbols with their:
+        - Full file path and line number of the definition
+        - Symbol type (function, class, variable, method, interface, enum)
+        - Complete signature or declaration
+        - Parent scope/class if applicable
+        - Source code snippet of the definition
 
         Args:
-            name: The exact or partial symbol name.
-            symbol_type: One of class, function, method, any (default any).
+            name: The symbol name to search for. Exact match is prioritized, but fuzzy
+                matching is also supported. Examples: "UserAuthentication", "connect_to_db"
+            symbol_type: Filter results to a specific symbol type. Supported values:
+                "function", "class", "variable", "method", "interface", "enum", "any" (default)
+            case_sensitive: Whether to perform a case-sensitive search. Default: False
         """
-        return await self._run_tool(self._get_retrieval_tool, "find_symbol", name=name, symbol_type=symbol_type)
+        return await self._run_tool(
+            self._get_retrieval_tool, 
+            "find_symbol", 
+            name=name, 
+            symbol_type=symbol_type,
+            case_sensitive=case_sensitive
+        )
 
-    async def find_references(self, symbol: str) -> str:
-        """Find everywhere a symbol is referenced or called (graph-backed).
+    async def find_references(self, symbol: str, include_definitions: bool = False, max_results: int = 50) -> str:
+        """Find all references, call-sites, and usages of a symbol across the entire codebase.
+        
+        Use this when you need to:
+        - Analyze the impact of modifying a function or class
+        - Find everywhere a specific API is called
+        - Understand how widely used a particular utility is
+        - Identify all callers before refactoring or deleting code
+        - Track down bugs related to incorrect usage of a symbol
+
+        Returns every location where the symbol is used, including:
+        - Full file path and line number for each reference
+        - Contextual source code around the usage
+        - The type of reference (function call, variable usage, import, assignment)
+        - Call chain information if available
+        - Summary statistics about total references and file distribution
 
         Args:
-            symbol: Name of the symbol to find references for.
+            symbol: The fully qualified or simple symbol name. Examples:
+                "UserService.authenticate", "database.connect", "calculate_total"
+            include_definitions: Whether to include the original symbol definition
+                in the results. Default: False (only return usages/references)
+            max_results: Maximum number of references to return. Default: 50.
+                Increase this for widely used symbols.
         """
-        return await self._run_tool(self._get_retrieval_tool, "find_references", symbol=symbol)
+        return await self._run_tool(
+            self._get_retrieval_tool, 
+            "find_references", 
+            symbol=symbol,
+            include_definitions=include_definitions,
+            max_results=max_results
+        )
 
     async def get_context(self, symbol: str) -> str:
         """Get full context for a symbol: definition, parent, related code.
@@ -1010,6 +1361,90 @@ class TraceraMCPServer:
             lines.append("**Memory:** not initialized")
 
         return "\n".join(lines)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # DIAGNOSTICS TOOLS (Phase 5)
+    # ══════════════════════════════════════════════════════════════════════════
+
+    async def get_server_status(self, client_version: str | None = None) -> str:
+        """Get server status, version information, and diagnostic details.
+        
+        Use this to verify compatibility between your MCP client and this server.
+        The server will validate the client version and return capability status.
+
+        Args:
+            client_version: Optional client version string to check compatibility.
+        """
+        import json
+        from packaging.version import parse as parse_version
+        
+        # Version compatibility check
+        compatible = True
+        version_warning = None
+        if client_version:
+            try:
+                client_ver = parse_version(client_version)
+                min_ver = parse_version(MCP_MIN_CLIENT_VERSION)
+                if client_ver < min_ver:
+                    compatible = False
+                    version_warning = (
+                        f"Client version {client_version} is incompatible. "
+                        f"Minimum supported client version: {MCP_MIN_CLIENT_VERSION}"
+                    )
+            except Exception:
+                version_warning = f"Could not parse client version: {client_version}"
+
+        # Collect all status information
+        status = {
+            "success": True,
+            "server": {
+                "name": MCP_SERVER_NAME,
+                "api_version": MCP_API_VERSION,
+                "min_client_version": MCP_MIN_CLIENT_VERSION,
+                "compatible": compatible,
+                "version_warning": version_warning,
+            },
+            "workspace": {
+                "path": str(self._ws_path),
+                "exists": self._ws_path.exists(),
+            },
+            "capabilities": {
+                "code_intelligence": self._index_available(),
+                "memory": self._context_recall is not None,
+            },
+            "tools": {
+                "total_registered": len(ALL_MCP_TOOLS),
+                "categories": {
+                    "code_intelligence": len(CODE_INTELLIGENCE_TOOLS),
+                    "context": len(CONTEXT_TOOLS),
+                    "memory": len(MEMORY_TOOLS),
+                    "safety": len(SAFETY_TOOLS),
+                    "repository": len(REPOSITORY_TOOLS),
+                }
+            },
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+        # Add memory stats if available
+        if self._enhanced_memory is not None:
+            status["memory_stats"] = self._enhanced_memory.stats()
+            
+        # Add index stats if available
+        if self._index_available() and self._pipeline is not None:
+            try:
+                index_manifest = self._settings.index_dir / "index_manifest.json"
+                import json as json_manifest
+                with open(index_manifest, 'r') as f:
+                    manifest = json_manifest.load(f)
+                    status["index_stats"] = {
+                        "created_at": manifest.get("created_at"),
+                        "total_files": manifest.get("total_files", 0),
+                        "total_symbols": manifest.get("total_symbols", 0),
+                    }
+            except Exception:
+                pass
+
+        return json.dumps(status, indent=2)
 
 
 def build_mcp_server(

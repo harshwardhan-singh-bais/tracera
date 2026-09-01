@@ -73,6 +73,13 @@ class Settings(BaseSettings):
     tracera_require_confirmation_for: str = Field(
         "delete", alias="TRACERA_REQUIRE_CONFIRMATION_FOR"
     )
+    
+    # ── MCP Server Security (Phase 4) ────────────────────────────────────────
+    # API keys for authenticating remote MCP clients (SSE/streamable-http)
+    tracera_mcp_api_key: str | None = Field(None, alias="TRACERA_MCP_API_KEY")
+    tracera_mcp_api_keys: list[str] = Field(default_factory=list, alias="TRACERA_MCP_API_KEYS")
+    # Enforce workspace boundary restrictions - block all file operations outside the configured workspace
+    tracera_mcp_enforce_workspace_boundaries: bool = Field(True, alias="TRACERA_MCP_ENFORCE_WORKSPACE_BOUNDARIES")
 
 
     # ── LLM Providers ─────────────────────────────────────────────────────────
