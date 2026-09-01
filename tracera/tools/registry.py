@@ -206,6 +206,9 @@ def extend_registry_with_retrieval(
         compressor: A ContextCompressor instance (optional).
         context_recall: Memory recall integration (optional).
         tool_profile: Tool tier profile (core/standard/advanced)
+
+    Returns:
+        The same registry, extended with retrieval tools.
     """
     from tracera.tools.ast_tools import (
         # Core tools (always available)
@@ -270,45 +273,6 @@ def extend_registry_with_retrieval(
     registry.register_many(filtered_tools)
     log.info(f"Registered {len(filtered_tools)} code intelligence tools for profile '{tool_profile}'")
     
-    return registry        context_recall: A ContextRecall instance for memory integration (optional).
-
-    Returns:
-        The same registry, extended with retrieval tools.
-    """
-    from tracera.tools.code_search import (
-        SearchCodeTool,
-        FindSymbolTool,
-        FindDefinitionTool,
-        GetContextTool,
-        FindReferencesTool,
-        GetDependenciesTool,
-    )
-
-    tools: list[Tool] = [
-        SearchCodeTool(retriever, compressor, context_engine, context_recall),
-        FindSymbolTool(retriever, context_recall=context_recall),
-        FindDefinitionTool(retriever, compressor, context_recall),
-    ]
-
-    if graph_retriever is not None:
-        graph = graph_retriever.graph
-        tools.append(GetContextTool(
-            retriever, expander, graph_retriever,
-            compressor=compressor, context_engine=context_engine, context_recall=context_recall,
-        ))
-        tools.append(FindReferencesTool(graph))
-        tools.append(GetDependenciesTool(graph))
-    else:
-        tools.append(GetContextTool(
-            retriever, expander,
-            compressor=compressor, context_engine=context_engine, context_recall=context_recall,
-        ))
-
-    registry.register_many(tools)
-    log.info(
-        "Registry extended with retrieval tools: %s",
-        ", ".join(t.name for t in tools),
-    )
     return registry
 
 
@@ -329,51 +293,41 @@ def extend_registry_with_ast_tools(
     - Module coupling and dependency cycle detection
     """
     from tracera.tools.ast_tools import (
-        FindImportersTool, GetBlastRadiusTool, GetCallHierarchyTool,
+        GetBlastRadiusTool, GetCallHierarchyTool,
         FindDeadCodeTool, GetChangedSymbolsTool, GetHotspotsTool,
-        SearchAstTool, GetClassHierarchyTool,
-    )
-    from tracera.tools.refactor_tools import (
-        PlanRefactoringTool, CheckEditSafeTool,
-        CheckDeleteSafeTool, GetPrRiskProfileTool,
-    )
-    from tracera.tools.session_tools import (
-        AssembleTaskContextTool, PlanTurnTool,
-        GetRankedContextTool, GetSessionStatsTool, GetRepoMapTool,
-    )
-    from tracera.tools.provenance_tools import (
-        GetSymbolProvenanceTool, AuditAgentConfigTool,
-        GetEndpointImpactTool, GetDependencyCyclesTool,
-        GetCouplingMetricsTool,
+        FindReferencesTool, FindImplementationsTool,
+        SearchSymbolsTool, GetSymbolSourceTool, GetFileOutlineTool,
+        GetRepoMapTool, AssembleCodeContextTool,
+        GetDependenciesTool, GetIndexFreshnessTool,
+        CalculatePageRankTool, PlanRefactoringTool,
+        GetCodeProvenanceTool, AssessChangeRiskTool,
+        StructuralSearchTool, GetSessionStatsTool,
+        PlanCodeTaskTool,
     )
 
     tools: list[Tool] = [
         # Structural analysis
-        FindImportersTool(retrieval_pipeline),
         GetBlastRadiusTool(retrieval_pipeline),
         GetCallHierarchyTool(retrieval_pipeline),
         FindDeadCodeTool(retrieval_pipeline),
         GetChangedSymbolsTool(workspace, retrieval_pipeline),
         GetHotspotsTool(workspace, retrieval_pipeline),
-        SearchAstTool(workspace),
-        GetClassHierarchyTool(retrieval_pipeline),
-        # Refactoring & safety
-        PlanRefactoringTool(retrieval_pipeline, workspace),
-        CheckEditSafeTool(retrieval_pipeline),
-        CheckDeleteSafeTool(retrieval_pipeline),
-        GetPrRiskProfileTool(workspace, retrieval_pipeline),
-        # Session & context
-        AssembleTaskContextTool(retrieval_pipeline),
-        PlanTurnTool(retrieval_pipeline),
-        GetRankedContextTool(retrieval_pipeline),
+        FindReferencesTool(retrieval_pipeline),
+        FindImplementationsTool(retrieval_pipeline),
+        SearchSymbolsTool(retrieval_pipeline),
+        GetSymbolSourceTool(retrieval_pipeline),
+        GetFileOutlineTool(retrieval_pipeline),
+        GetRepoMapTool(retrieval_pipeline),
+        AssembleCodeContextTool(None, None),
+        GetDependenciesTool(retrieval_pipeline),
+        GetIndexFreshnessTool(retrieval_pipeline),
+        CalculatePageRankTool(retrieval_pipeline),
+        PlanRefactoringTool(retrieval_pipeline),
+        GetCodeProvenanceTool(retrieval_pipeline),
+        AssessChangeRiskTool(retrieval_pipeline),
+        StructuralSearchTool(retrieval_pipeline),
         GetSessionStatsTool(session_manager),
-        GetRepoMapTool(retrieval_pipeline, workspace),
-        # Provenance & config
-        GetSymbolProvenanceTool(retrieval_pipeline, workspace),
-        AuditAgentConfigTool(workspace, retrieval_pipeline),
-        GetEndpointImpactTool(retrieval_pipeline),
-        GetDependencyCyclesTool(retrieval_pipeline),
-        GetCouplingMetricsTool(retrieval_pipeline),
+        PlanCodeTaskTool(),
     ]
 
     # Wire up the pipeline reference for tools that need it

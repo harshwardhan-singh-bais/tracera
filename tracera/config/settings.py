@@ -121,8 +121,7 @@ class Settings(BaseSettings):
     code_intelligence_token_budget: int = Field(4000, alias="CODE_INTELLIGENCE_TOKEN_BUDGET")
     code_intelligence_watcher: bool = Field(False, alias="CODE_INTELLIGENCE_WATCHER")
     code_intelligence_memory_integration: bool = Field(True, alias="CODE_INTELLIGENCE_MEMORY_INTEGRATION")
-        alias="TRACERA_EMBEDDING_MODEL",
-    )
+
     tracera_embedding_device: Literal["cpu", "cuda", "mps"] = Field(
         "cpu", alias="TRACERA_EMBEDDING_DEVICE"
     )

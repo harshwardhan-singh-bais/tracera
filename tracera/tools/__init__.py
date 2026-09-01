@@ -8,42 +8,33 @@ from tracera.tools.list_dir import ListDirTool
 from tracera.tools.grep import GrepTool
 from tracera.tools.run_command import RunCommandTool
 
-# jCodeMunch-inspired structural analysis tools
+# Code intelligence tools (Steps 21-41)
 from tracera.tools.ast_tools import (
-    FindImportersTool, GetBlastRadiusTool, GetCallHierarchyTool,
+    GetBlastRadiusTool, GetCallHierarchyTool,
     FindDeadCodeTool, GetChangedSymbolsTool, GetHotspotsTool,
-    SearchAstTool, GetClassHierarchyTool,
-)
-from tracera.tools.refactor_tools import (
-    PlanRefactoringTool, CheckEditSafeTool,
-    CheckDeleteSafeTool, GetPrRiskProfileTool,
-)
-from tracera.tools.session_tools import (
-    AssembleTaskContextTool, PlanTurnTool,
-    GetRankedContextTool, GetSessionStatsTool, GetRepoMapTool,
-)
-from tracera.tools.provenance_tools import (
-    GetSymbolProvenanceTool, AuditAgentConfigTool,
-    GetEndpointImpactTool, GetDependencyCyclesTool,
-    GetCouplingMetricsTool,
+    FindReferencesTool, FindImplementationsTool,
+    SearchSymbolsTool, GetSymbolSourceTool, GetFileOutlineTool,
+    GetRepoMapTool, AssembleCodeContextTool,
+    GetDependenciesTool, GetIndexFreshnessTool,
+    CalculatePageRankTool, PlanRefactoringTool,
+    GetCodeProvenanceTool, AssessChangeRiskTool,
+    StructuralSearchTool, GetSessionStatsTool,
+    PlanCodeTaskTool,
 )
 
 __all__ = [
     "Tool", "ToolResult", "ToolRegistry", "create_default_registry",
     "ReadFileTool", "WriteFileTool", "EditFileTool",
     "ListDirTool", "GrepTool", "RunCommandTool",
-    # AST & structural
-    "FindImportersTool", "GetBlastRadiusTool", "GetCallHierarchyTool",
+    # Code intelligence
+    "GetBlastRadiusTool", "GetCallHierarchyTool",
     "FindDeadCodeTool", "GetChangedSymbolsTool", "GetHotspotsTool",
-    "SearchAstTool", "GetClassHierarchyTool",
-    # Refactoring & safety
-    "PlanRefactoringTool", "CheckEditSafeTool",
-    "CheckDeleteSafeTool", "GetPrRiskProfileTool",
-    # Session & context
-    "AssembleTaskContextTool", "PlanTurnTool",
-    "GetRankedContextTool", "GetSessionStatsTool", "GetRepoMapTool",
-    # Provenance & config
-    "GetSymbolProvenanceTool", "AuditAgentConfigTool",
-    "GetEndpointImpactTool", "GetDependencyCyclesTool",
-    "GetCouplingMetricsTool",
+    "FindReferencesTool", "FindImplementationsTool",
+    "SearchSymbolsTool", "GetSymbolSourceTool", "GetFileOutlineTool",
+    "GetRepoMapTool", "AssembleCodeContextTool",
+    "GetDependenciesTool", "GetIndexFreshnessTool",
+    "CalculatePageRankTool", "PlanRefactoringTool",
+    "GetCodeProvenanceTool", "AssessChangeRiskTool",
+    "StructuralSearchTool", "GetSessionStatsTool",
+    "PlanCodeTaskTool",
 ]

@@ -334,20 +334,40 @@ class TraceraMCPServer:
             return None
 
         from tracera.tools.ast_tools import (
-            FindImportersTool, GetBlastRadiusTool, GetCallHierarchyTool,
+            GetBlastRadiusTool, GetCallHierarchyTool,
             FindDeadCodeTool, GetChangedSymbolsTool, GetHotspotsTool,
-            SearchAstTool, GetClassHierarchyTool,
+            FindReferencesTool, FindImplementationsTool,
+            SearchSymbolsTool, GetSymbolSourceTool, GetFileOutlineTool,
+            GetRepoMapTool, AssembleCodeContextTool,
+            GetDependenciesTool, GetIndexFreshnessTool,
+            CalculatePageRankTool, PlanRefactoringTool,
+            GetCodeProvenanceTool, AssessChangeRiskTool,
+            StructuralSearchTool, GetSessionStatsTool,
+            PlanCodeTaskTool,
         )
 
         factory: dict[str, Any] = {
-            "find_importers": lambda: FindImportersTool(pipeline),
             "get_blast_radius": lambda: GetBlastRadiusTool(pipeline),
             "get_call_hierarchy": lambda: GetCallHierarchyTool(pipeline),
             "find_dead_code": lambda: FindDeadCodeTool(pipeline),
             "get_changed_symbols": lambda: GetChangedSymbolsTool(None, pipeline),
             "get_hotspots": lambda: GetHotspotsTool(None, pipeline),
-            "search_ast": lambda: SearchAstTool(None),
-            "get_class_hierarchy": lambda: GetClassHierarchyTool(pipeline),
+            "find_references": lambda: FindReferencesTool(pipeline),
+            "find_implementations": lambda: FindImplementationsTool(pipeline),
+            "search_symbols": lambda: SearchSymbolsTool(pipeline),
+            "get_symbol_source": lambda: GetSymbolSourceTool(pipeline),
+            "get_file_outline": lambda: GetFileOutlineTool(pipeline),
+            "get_repo_map": lambda: GetRepoMapTool(pipeline),
+            "assemble_code_context": lambda: AssembleCodeContextTool(None, None),
+            "get_dependencies": lambda: GetDependenciesTool(pipeline),
+            "get_index_freshness": lambda: GetIndexFreshnessTool(pipeline),
+            "calculate_pagerank": lambda: CalculatePageRankTool(pipeline),
+            "plan_refactoring": lambda: PlanRefactoringTool(pipeline),
+            "get_code_provenance": lambda: GetCodeProvenanceTool(pipeline),
+            "assess_change_risk": lambda: AssessChangeRiskTool(pipeline),
+            "structural_search": lambda: StructuralSearchTool(pipeline),
+            "get_session_stats": lambda: GetSessionStatsTool(None),
+            "plan_code_task": lambda: PlanCodeTaskTool(),
         }
         if name in factory:
             self._ast_tools[name] = factory[name]()
