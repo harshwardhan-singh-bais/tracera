@@ -281,7 +281,7 @@ class TraceraMCPServer:
         log.info("TRACERA MCP server shutdown complete")
 
     @asynccontextmanager
-    async def lifespan(self):
+    async def lifespan(self, _server):
         """FastMCP lifespan context manager for lifecycle management."""
         await self.startup()
         try:

@@ -1,0 +1,36 @@
+{
+  "manifest_version": "0.2",
+  "name": "tracera",
+  "version": "1.0.0",
+  "description": "TRACERA is an AI coding-agent MCP server that provides deep repository intelligence, code search, symbol analysis, dependency analysis, context assembly, memory, safety checks, refactoring planning, test execution, and repository inspection.",
+  "author": {
+    "name": "harshwardhan"
+  },
+  "server": {
+    "type": "python",
+    "entry_point": "server.py",
+    "mcp_config": {
+      "command": "python",
+      "args": [
+        "${__dirname}/server.py"
+      ],
+      "env": {
+        "PYTHONPATH": "${__dirname}"
+      }
+    }
+  },
+  "user_config": {
+    "workspace": {
+      "type": "directory",
+      "title": "TRACERA Workspace",
+      "description": "The local repository workspace that TRACERA should analyze and operate on.",
+      "required": true,
+      "sensitive": false
+    }
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/harshwardhan-singh-bais/tracera"
+  }
+}
