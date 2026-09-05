@@ -1733,6 +1733,14 @@ def mcp_serve(
         str,
         typer.Option("--transport", "-t", help="stdio | sse | streamable-http"),
     ] = "stdio",
+    host: Annotated[
+        str,
+        typer.Option("--host", help="Host to bind for SSE/streamable-http transports."),
+    ] = "127.0.0.1",
+    port: Annotated[
+        int,
+        typer.Option("--port", "-p", help="Port to bind for SSE/streamable-http transports."),
+    ] = 8000,
     check: Annotated[
         bool,
         typer.Option("--check", help="List exposed tools and exit (no server)."),
@@ -1770,6 +1778,7 @@ def mcp_serve(
 
     console.print(f"[dim]TRACERA MCP server — transport={transport} workspace={ws_path}[/]")
     console.print(f"[dim]Tools: {len(ALL_MCP_TOOLS)} tools across Code Intelligence, Context, Memory, Safety, Repository[/]")
+    
     server.mcp.run(transport=transport)
 
 

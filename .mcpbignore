@@ -1,0 +1,11 @@
+.venv/
+.git/
+__pycache__/
+.pytest_cache/
+.crush/
+.demo_tmp/
+.utim_tmp/
+.claude/
+.tracera/memory/
+tests/
+*.pyc
