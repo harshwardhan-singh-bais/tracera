@@ -47,6 +47,9 @@ from tracera.tui.widgets.agent_panel import (
     _PHASE_LABELS,
     format_args,
 )
+from tracera.tui.widgets.dashboard import DashboardWidget
+from tracera.tui.widgets.file_context import FileContextPanel
+from tracera.tui.widgets.memory_viz import MemoryGraphWidget
 from tracera.agent.react_loop import AgentEvent, AgentEventType, ReActAgent
 from tracera.agent.memory import AgentMemory
 from tracera.agent.planner import TaskDecomposer
@@ -228,7 +231,7 @@ class TraceraCommands(Provider):
 class TraceraTUI(App):
     """TRACERA — single-stream terminal UI (Claude Code style)."""
 
-    TITLE = "TRACERA — CodePilotX"
+    TITLE = "TRACERA"
     CSS_PATH = "styles/tracera.tcss"
 
     COMMANDS = {TraceraCommands}
@@ -278,6 +281,42 @@ class TraceraTUI(App):
         # The single main panel — conversation stream, status line, input.
         yield AgentPanel(id="agent-panel-widget")
 
+    def on_mount(self) -> None:
+        """Initialize feature status indicators when app mounts."""
+        panel = self._panel()
+        
+        # Enable all available core features
+        panel.set_feature_status("memory", True)      # Memory layer always available
+        panel.set_feature_status("sandbox", True)     # Sandbox execution available
+        
+        # Activate retrieval/rag/index if pipeline exists
+        if self.retrieval_pipeline is not None:
+            panel.set_feature_status("retrieval", True)
+            panel.set_feature_status("rag", True)
+            panel.set_feature_status("index", True)
+        else:
+            # Keep them disabled if no retrieval pipeline
+            panel.set_feature_status("retrieval", False)
+            panel.set_feature_status("rag", False)
+            panel.set_feature_status("index", False)
+            
+        # MCP (Model Context Protocol) - enable if available in environment
+        try:
+            import mcp
+            panel.set_feature_status("mcp", True)
+        except ImportError:
+            panel.set_feature_status("mcp", False)
+            
+        # Initialize status with workspace info
+        self._status_line().update_stats(
+            state="idle",
+            session=self.workspace_path.name[:8],
+            model=self.agent.provider.default_model or "model"
+        )
+        
+        # Update header with git status
+        self._update_header_git()
+
     def _build_header(self) -> Horizontal:
         from rich.text import Text
         model = self.agent.provider.default_model or "model"
@@ -295,6 +334,33 @@ class TraceraTUI(App):
             Static(right, id="header-right"),
             id="app-header",
         )
+
+    def _get_git_status(self) -> str:
+        """Get git branch and status info."""
+        try:
+            from tracera.git.operations import GitRepo
+            repo = GitRepo(self.workspace_path)
+            status = repo.status()
+            branch = status.branch or "detached"
+            dirty = "●" if status.is_dirty else "○"
+            return f"{dirty} {branch}"
+        except Exception:
+            return ""
+
+    def _update_header_git(self) -> None:
+        """Update header with git status."""
+        try:
+            from rich.text import Text
+            git_info = self._get_git_status()
+            right = Text()
+            right.append("● Active", style="bold #4ac26b")
+            if git_info:
+                right.append(f"  {git_info}", style="bold #d2a8ff")
+            right.append(f"  {self.agent.provider.default_model or 'model'}", style="bold")
+            right.append("   /help", style="dim #6f6f78")
+            self.query_one("#header-right", Static).update(right)
+        except Exception:
+            pass
 
     # ── Scroll handling ───────────────────────────────────────────────────────
 

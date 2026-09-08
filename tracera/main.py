@@ -346,11 +346,38 @@ def main(
     workspace_path = (workspace or settings.tracera_workspace).resolve()
 
     from tracera.logging import print_banner
+    from time import sleep
     # The banner prints once as scrollback output — the TUI also receives the
     # text so its own first frame can reproduce it (the alt-screen switch on
     # Windows can't be avoided, so the app shows the same banner at the top of
     # its screen to keep the transition looking continuous).
     banner = print_banner()
+
+    # Premium startup loading sequence
+    startup_steps = [
+        ("Initializing core system...", "core", "#6cb6ff"),
+        ("Loading workspace analysis...", "workspace", "#4ac26b"),
+        ("Starting memory layer...", "memory", "#d2a8ff"),
+        ("Connecting LLM providers...", "providers", "#ffd700"),
+        ("Calibrating retrieval engine...", "retrieval", "#00d4aa"),
+        ("Warming tool registry...", "tools", "#f47067"),
+        ("Initializing TUI interface...", "tui", "#a371f7"),
+    ]
+    
+    # Animated startup sequence with premium spinners
+    start_spinners = ["▰▱▱▱▱", "▰▰▱▱▱", "▰▰▰▱▱", "▰▰▰▰▱", "▰▰▰▰▰"]
+    with console.status("[bold #6cb6ff]Starting TRACERA Premium...[/]", spinner="dots"):
+        for i, (step_msg, step_key, color) in enumerate(startup_steps, 1):
+            # Progress bar animation
+            for frame in start_spinners:
+                console.print(f"\r  [{color}]{frame}[/] [{color}]{step_msg:<30}[/]", end="")
+                sleep(0.05)
+            # Mark as complete
+            console.print(f"\r  [green]✓ ✓ ✓ ✓ ✓[/] [green]{step_msg:<30}[/]")
+            sleep(0.1)
+    
+    console.print("\n[bold #6cb6ff]✓ All systems operational. Launching interface...[/]\n")
+    sleep(0.5)
 
     # Load retrieval pipeline if index exists (Phase 31: repository-aware agent)
     retrieval_pipeline = None

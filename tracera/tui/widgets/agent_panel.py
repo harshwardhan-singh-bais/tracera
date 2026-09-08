@@ -38,7 +38,20 @@ from rich.text import Text
 
 from tracera.tui.diffutil import is_image
 
-_SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+# Premium multi-style spinner collections for different states
+_SPINNERS = {
+    "thinking": ["◐", "◓", "◑", "◒"],  # Smooth circle rotation
+    "running": ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],  # Classic braille
+    "loading": ["▰▱▱▱▱", "▰▰▱▱▱", "▰▰▰▱▱", "▰▰▰▰▱", "▰▰▰▰▰", "▱▰▰▰▰", "▱▱▰▰▰", "▱▱▱▰▰", "▱▱▱▱▰"],  # Progress wave
+    "pulse": ["●", "○", "◎", "◉", "●", "○", "◎", "◉"],  # Pulsing effect
+    "wave": ["⎽", "⎼", "⎻", "⎺", "⎼", "⎻"],  # Vertical wave
+    "diamond": ["◇", "◆", "◇", "◆"],  # Blinking diamond
+    "arrows": ["→", "↘", "↓", "↙", "←", "↖", "↑", "↗"],  # Spinning arrows
+    "blocks": ["█", "▉", "▊", "▋", "▌", "▍", "▎", "▏"],  # Filling block
+}
+
+# Default to thinking spinner for backward compatibility
+_SPINNER = _SPINNERS["thinking"]
 
 
 def format_args(args: dict) -> str:
@@ -127,21 +140,38 @@ class ThinkingDisclosure(Widget):
 # ── Phase marker rows (full agent-loop visualization) ────────────────────────
 
 class PhaseRow(Static):
-    """A phase marker in the stream, in real execution order:
+    """A premium phase marker with dynamic spinner selection based on phase:
 
-        ⠋ Thinking      ← active (animated)
-        ◇ Thinking      ← superseded by the next phase (dim)
+        ◐ Planning     ← active (animated circle)
+        ◇ Planning     ← superseded by the next phase (dim)
     """
 
-    def __init__(self, label: str, **kwargs) -> None:
+    # Map phases to appropriate spinners - all consistent blue theme
+    _PHASE_CONFIG = {
+        "planning": ("thinking", "#6cb6ff"),  # Circle rotation - planning
+        "thinking": ("pulse", "#6cb6ff"),     # Pulsing - thinking
+        "searching": ("running", "#6cb6ff"),  # Classic - searching
+        "indexing": ("loading", "#6cb6ff"),   # Progress wave - indexing
+        "running": ("blocks", "#6cb6ff"),     # Filling block - executing
+        "generating": ("wave", "#6cb6ff"),    # Vertical wave - generating
+        "writing": ("arrows", "#6cb6ff"),     # Spinning arrows - writing
+    }
+
+    def __init__(self, label: str, phase_type: str = "thinking", **kwargs) -> None:
         super().__init__(**kwargs)
         self.phase_label = label
+        self.phase_type = phase_type.lower()
         self._frame = 0
         self._spinning = True
+        # Get appropriate spinner and color for this phase
+        spinner_key, self._color = self._PHASE_CONFIG.get(self.phase_type, ("thinking", "#6cb6ff"))
+        self._spinner = _SPINNERS[spinner_key]
 
     def on_mount(self) -> None:
         if self._spinning:
-            self.set_interval(0.1, self._tick)
+            # Adjust tick rate based on spinner complexity
+            tick_rate = 0.15 if len(self._spinner) > 6 else 0.2
+            self.set_interval(tick_rate, self._tick)
 
     def freeze(self) -> None:
         self._spinning = False
@@ -156,10 +186,10 @@ class PhaseRow(Static):
         text = Text()
         if self._spinning:
             text.append(
-                f" {_SPINNER[self._frame % len(_SPINNER)]} ",
-                style="bold #6cb6ff",
+                f" {self._spinner[self._frame % len(self._spinner)]} ",
+                style=f"bold {self._color}",
             )
-            text.append(self.phase_label, style="bold #6cb6ff")
+            text.append(self.phase_label, style=f"bold {self._color}")
         else:
             text.append(" ◇ ", style="dim #9a9aa3")
             text.append(self.phase_label, style="dim #9a9aa3")
@@ -180,7 +210,7 @@ _DIFF_PREFIX = {"add": "+", "del": "-", "hunk": "  ", "ctx": "  ", "ellipsis": "
 
 class ToolRow(Static):
     """
-    One compact inline row per tool call:
+    One compact inline row per tool call with color-coded categories:
 
         ⠋ run_command (command='pytest')        ← in-flight (animated)
         ✓ read_file  (path='a.py')   12ms
@@ -193,12 +223,40 @@ class ToolRow(Static):
             + new line
     """
 
+    # Tool category colors for timeline visualization
+    _TOOL_CATEGORIES = {
+        # Search/analysis tools - blue
+        "search_code": "#6cb6ff",
+        "find_symbol": "#6cb6ff",
+        "find_definition": "#6cb6ff",
+        "grep": "#6cb6ff",
+        "get_context": "#6cb6ff",
+        "get_dependencies": "#6cb6ff",
+        "find_references": "#6cb6ff",
+        # Read tools - yellow
+        "read_file": "#ffd700",
+        "list_dir": "#ffd700",
+        # Write/edit tools - green
+        "write_file": "#4ac26b",
+        "edit_file": "#4ac26b",
+        "delete_file": "#4ac26b",
+        # Command tools - purple
+        "run_command": "#d2a8ff",
+        # Git tools - orange
+        "git": "#ff9f43",
+        # Memory tools - pink
+        "memory": "#ff6b6b",
+        # Test tools - cyan
+        "test": "#00d2d3",
+    }
+
     def __init__(
         self,
         name: str,
         args_str: str = "",
         *,
         verbose: bool = True,
+        spinner_type: str = "running",
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -211,6 +269,8 @@ class ToolRow(Static):
         self._frame = 0
         # NOTE: not named ``_running`` — Textual's MessagePump owns that.
         self._spinning = False
+        self._spinner_type = spinner_type
+        self._spinner = _SPINNERS[spinner_type]
         # Diff state — filled by the app when the tool touched a file.
         self.diff_path: str | None = None
         self.snapshot: str | None = None
@@ -220,16 +280,25 @@ class ToolRow(Static):
         self._diff_removed = 0
         self.expanded = False
 
+    def _get_tool_color(self) -> str:
+        """Get color based on tool category."""
+        return self._TOOL_CATEGORIES.get(self.tool_name, "#dcdcf5")
+
     # ── Lifecycle ────────────────────────────────────────────────────────────
 
     def on_mount(self) -> None:
         if self._spinning:
-            self.set_interval(0.1, self._tick)
+            tick_rate = 0.1 if len(self._spinner) > 6 else 0.15
+            self.set_interval(tick_rate, self._tick)
 
-    def start_spinner(self) -> None:
+    def start_spinner(self, spinner_type: str = "running") -> None:
+        """Start spinning with a specific spinner type."""
+        self._spinner_type = spinner_type
+        self._spinner = _SPINNERS[spinner_type]
         self._spinning = True
         if self.is_mounted:
-            self.set_interval(0.1, self._tick)
+            tick_rate = 0.1 if len(self._spinner) > 6 else 0.15
+            self.set_interval(tick_rate, self._tick)
 
     def finish(self, success: bool, duration_ms: float, output: str = "") -> None:
         self._spinning = False
@@ -252,7 +321,7 @@ class ToolRow(Static):
 
     def _tick(self) -> None:
         if self._spinning:
-            self._frame = (self._frame + 1) % len(_SPINNER)
+            self._frame = (self._frame + 1) % len(self._spinner)
             self.refresh()
 
     # ── Interaction ──────────────────────────────────────────────────────────
@@ -264,11 +333,43 @@ class ToolRow(Static):
 
     # ── Rendering ────────────────────────────────────────────────────────────
 
+    def __init__(
+        self,
+        name: str,
+        args_str: str = "",
+        *,
+        verbose: bool = True,
+        spinner_type: str = "running",
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.tool_name = name
+        self.args_str = args_str
+        self.verbose = verbose
+        self.success = True
+        self.duration_ms: float | None = None
+        self.output = ""
+        self._frame = 0
+        # NOTE: not named ``_running`` — Textual's MessagePump owns that.
+        self._spinning = False
+        self._spinner_type = spinner_type
+        self._spinner = _SPINNERS[spinner_type]
+        # Diff state — filled by the app when the tool touched a file.
+        self.diff_path: str | None = None
+        self.snapshot: str | None = None
+        self.snapshot_path: str | None = None
+        self._diff_lines: list[tuple[str, str]] = []
+        self._diff_added = 0
+        self._diff_removed = 0
+        self.expanded = False
+
     def render(self) -> Text:
         text = Text()
+        tool_color = self._get_tool_color()
+        
         if self._spinning:
-            text.append(f" {_SPINNER[self._frame]} ", style="bold #6cb6ff")
-            text.append(self.tool_name, style="bold #6cb6ff")
+            text.append(f" {self._spinner[self._frame]} ", style=f"bold {tool_color}")
+            text.append(self.tool_name, style=f"bold {tool_color}")
             if self.verbose and self.args_str:
                 text.append(f"  {self.args_str}", style="dim #8a8a96")
             return text
@@ -276,7 +377,7 @@ class ToolRow(Static):
         icon = "✓" if self.success else "✗"
         icon_style = "bold #4ac26b" if self.success else "bold #f47067"
         text.append(f" {icon} ", style=icon_style)
-        text.append(self.tool_name, style="bold #dcdcf5")
+        text.append(self.tool_name, style=f"bold {tool_color}")
 
         if self.diff_path and self.success:
             # Code-gen summary: 📝 path  +N -M
@@ -290,7 +391,14 @@ class ToolRow(Static):
             text.append(f"  {self.args_str}", style="dim #8a8a96")
 
         if self.duration_ms is not None:
-            text.append(f"  {self.duration_ms:.0f}ms", style="dim #6cb6ff")
+            # Color-coded duration bar
+            if self.duration_ms < 100:
+                dur_color = "#4ac26b"  # Fast - green
+            elif self.duration_ms < 500:
+                dur_color = "#ffd700"  # Medium - yellow
+            else:
+                dur_color = "#f47067"  # Slow - red
+            text.append(f"  {self.duration_ms:.0f}ms", style=f"dim {dur_color}")
 
         if not self.success and self.output:
             preview = self.output.strip().splitlines()
@@ -431,33 +539,53 @@ _PHASE_LABELS = {
 
 
 class LoaderPill(Widget):
-    """Rounded pill shown in place of the input while the agent works.
+    """Premium rounded pill with dynamic animations and phase-specific spinners.
 
-    Shows the live phase label with an animated glyph and a stop button.
+    Shows the live phase label with an animated glyph that changes based on
+    the current phase, plus a sleek stop button.
     """
 
     class StopRequested(Message):
         pass
 
+    # Phase configurations for the loader pill - consistent blue theme
+    _LOADER_PHASES = {
+        "planning": ("◐", "#6cb6ff", "Planning task..."),
+        "thinking": ("◉", "#6cb6ff", "Processing..."),
+        "searching": ("⠋", "#6cb6ff", "Searching codebase..."),
+        "indexing": ("▰▱▱▱▱", "#6cb6ff", "Building index..."),
+        "running": ("█", "#6cb6ff", "Executing..."),
+        "generating": ("⎽", "#6cb6ff", "Generating response..."),
+        "writing": ("→", "#6cb6ff", "Writing changes..."),
+        "done": ("✓", "#6cb6ff", "Complete!"),
+    }
+
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._phase = "thinking"
         self._frame = 0
+        self._full_spinner = _SPINNERS["pulse"]
 
     def compose(self) -> ComposeResult:
-        yield Static("⠋", id="loader-icon")
-        yield Static("Thinking", id="loader-label")
+        yield Static("◉", id="loader-icon")
+        yield Static("Processing...", id="loader-label")
         yield Static(" ● ", id="loader-stop")
 
     def on_mount(self) -> None:
-        self.set_interval(0.1, self._tick)
+        self.set_interval(0.15, self._tick)
 
     def set_phase(self, phase: str) -> None:
-        self._phase = phase if phase in _PHASE_LABELS else "thinking"
+        """Update the loader with phase-specific styling."""
+        self._phase = phase.lower() if phase.lower() in self._LOADER_PHASES else "thinking"
+        icon, color, label = self._LOADER_PHASES[self._phase]
         try:
-            self.query_one("#loader-label", Static).update(
-                _PHASE_LABELS[self._phase]
-            )
+            # Update label and get the widget to apply color
+            label_widget = self.query_one("#loader-label", Static)
+            label_widget.update(label)
+            
+            # Update icon widget
+            icon_widget = self.query_one("#loader-icon", Static)
+            icon_widget.update(icon)
         except Exception:
             pass
 
@@ -466,9 +594,9 @@ class LoaderPill(Widget):
             return
         self._frame += 1
         try:
-            self.query_one("#loader-icon", Static).update(
-                _SPINNER[self._frame % len(_SPINNER)]
-            )
+            # Use full animated spinner for main phases
+            icon = self._full_spinner[self._frame % len(self._full_spinner)]
+            self.query_one("#loader-icon", Static).update(icon)
         except Exception:
             pass
 
@@ -491,10 +619,21 @@ _STATE_GLYPHS = {
 
 class InlineStatus(Static):
     """
-    Thin single-line status, pinned above the input:
+    Premium system status line with comprehensive metrics and feature indicators:
 
-        ● IDLE  session — · model —   0 tools · 0 iter   tokens 0   elapsed 0:00
+        ● ACTIVE  session 8f2c7b · gemini-pro · 12 tools · 5 iter · 2.4k tok · 01:23
+        [◉ MEM] [◉ RET] [◎ RAG] [◉ MCP]  Features: Memory, Retrieval, RAG, MCP
     """
+
+    # Feature status indicators - all consistent blue theme
+    _FEATURES = {
+        "memory": ("MEMORY", "#6cb6ff"),  # Memory layer
+        "retrieval": ("RETR", "#6cb6ff"),  # Code retrieval
+        "rag": ("RAG", "#6cb6ff"),        # RAG active
+        "mcp": ("MCP", "#6cb6ff"),        # MCP server
+        "index": ("IDX", "#6cb6ff"),      # Code index
+        "sandbox": ("SBX", "#6cb6ff"),    # Sandbox
+    }
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -507,13 +646,30 @@ class InlineStatus(Static):
         self._elapsed_ms = 0.0
         self._started_at: float | None = None
         self._frame = 0
+        # Feature status tracking
+        self._feature_status = {
+            "memory": True,
+            "retrieval": False,
+            "rag": False,
+            "mcp": False,
+            "index": False,
+            "sandbox": True,
+        }
+        # Premium spinners for active states
+        self._state_spinners = _SPINNERS["pulse"]
+
+    def set_feature_status(self, feature: str, active: bool) -> None:
+        """Update feature active status."""
+        if feature in self._feature_status:
+            self._feature_status[feature] = active
+            self._refresh()
 
     def on_mount(self) -> None:
         self._refresh()
-        self.set_interval(0.25, self._tick)
+        self.set_interval(0.2, self._tick)
 
     def _tick(self) -> None:
-        if self._state in ("thinking", "running"):
+        if self._state in ("thinking", "running", "active"):
             self._frame += 1
         self._refresh()
 
@@ -527,7 +683,11 @@ class InlineStatus(Static):
         iterations: int | None = None,
         tokens: int | None = None,
         elapsed_ms: float | None = None,
+        memory_hits: int | None = None,
+        retrieval_hits: int | None = None,
+        cost_estimate: float | None = None,
     ) -> None:
+        """Enhanced stats with more metrics."""
         if state is not None:
             self._state = state
             self._started_at = (
@@ -545,6 +705,10 @@ class InlineStatus(Static):
             self._tokens = tokens
         if elapsed_ms is not None:
             self._elapsed_ms = elapsed_ms
+        # Store additional metrics
+        self._memory_hits = memory_hits or 0
+        self._retrieval_hits = retrieval_hits or 0
+        self._cost_estimate = cost_estimate or 0.0
         self._refresh()
 
     def _elapsed_text(self) -> str:
@@ -554,22 +718,83 @@ class InlineStatus(Static):
         total = int(ms // 1000)
         return f"{total // 60}:{total % 60:02d}"
 
+    def _render_features(self) -> Text:
+        """Render feature status indicators."""
+        feat_text = Text()
+        feat_text.append("  [", style="dim #55555e")
+        for feat, (label, color) in self._FEATURES.items():
+            active = self._feature_status[feat]
+            icon = "◉" if active else "◎"
+            feat_text.append(f"{icon} {label}", style=f"{'bold' if active else 'dim'} {color}")
+            if feat != list(self._FEATURES.keys())[-1]:
+                feat_text.append(" ", style="dim #55555e")
+        feat_text.append("]", style="dim #55555e")
+        return feat_text
+
     def _refresh(self) -> None:
         glyph, color = _STATE_GLYPHS.get(self._state, ("●", "#9a9aa3"))
         if self._state in ("thinking", "running"):
-            glyph = "⠋" if self._frame % 2 == 0 else "⠙"
+            glyph = self._state_spinners[self._frame % len(self._state_spinners)]
+        
         text = Text()
+        # Main status
         text.append(f" {glyph} ", style=f"bold {color}")
         text.append(self._state.upper(), style=f"bold {color}")
-        text.append(f"   session {self._session[:10]}", style="dim #9a9aa3")
-        text.append(f" · model {self._model[:16]}", style="dim #9a9aa3")
-        text.append(
-            f"   {self._tool_calls} tools · {self._iterations} iter",
-            style="dim #9a9aa3",
-        )
-        text.append(f"   tokens {self._tokens:,}", style="dim #6cb6ff")
-        text.append(f"   elapsed {self._elapsed_text()}", style="dim #d2a8ff")
+        
+        # Core metrics
+        text.append(f"   session {self._session[:8]}", style="dim #9a9aa3")
+        text.append(f" · {self._model[:14]}", style="dim #9a9aa3")
+        text.append(f" · {self._tool_calls} tools", style="dim #9a9aa3")
+        text.append(f" · {self._iterations} iter", style="dim #9a9aa3")
+        
+        # Token progress bar
+        text.append_text(self._render_token_bar())
+        
+        # Enhanced metrics
+        if hasattr(self, '_memory_hits') and self._memory_hits > 0:
+            text.append(f" · mem:{self._memory_hits}", style="dim #d2a8ff")
+        if hasattr(self, '_retrieval_hits') and self._retrieval_hits > 0:
+            text.append(f" · ret:{self._retrieval_hits}", style="dim #4ac26b")
+        if hasattr(self, '_cost_estimate') and self._cost_estimate > 0:
+            text.append(f" · ${self._cost_estimate:.3f}", style="dim #ffd700")
+        
+        # Elapsed time
+        text.append(f" · {self._elapsed_text()}", style="dim #d2a8ff")
+        
+        # Feature status indicators on new line
+        text.append("\n")
+        text.append_text(self._render_features())
+        
         self.update(text)
+
+    def _render_token_bar(self) -> Text:
+        """Render a compact token usage progress bar."""
+        text = Text()
+        
+        # Assume 100k token context limit for visualization
+        max_tokens = 100_000
+        current = min(self._tokens, max_tokens)
+        ratio = current / max_tokens if max_tokens > 0 else 0
+        
+        # Choose color based on usage
+        if ratio < 0.5:
+            bar_color = "#4ac26b"  # Green
+        elif ratio < 0.8:
+            bar_color = "#ffd700"  # Yellow
+        else:
+            bar_color = "#f47067"  # Red
+        
+        # Format token count
+        if self._tokens >= 1_000_000:
+            tok_str = f"{self._tokens / 1_000_000:.1f}M"
+        elif self._tokens >= 1_000:
+            tok_str = f"{self._tokens / 1_000:.1f}k"
+        else:
+            tok_str = str(self._tokens)
+        
+        text.append(f" · {tok_str} tok", style=f"dim {bar_color}")
+        
+        return text
 
 
 # ── The stream panel ─────────────────────────────────────────────────────────
@@ -634,6 +859,16 @@ class AgentPanel(Widget):
             self.post_message(self.SubmitTask(text))
 
     # ── Stream helpers ───────────────────────────────────────────────────────
+
+    def set_feature_status(self, feature: str, active: bool) -> None:
+        """Set feature status indicator in the status line."""
+        status_line = self.query_one("#status-line", InlineStatus)
+        status_line.set_feature_status(feature, active)
+        
+    def update_system_metrics(self, **kwargs) -> None:
+        """Update system metrics in status line."""
+        status_line = self.query_one("#status-line", InlineStatus)
+        status_line.update_stats(**kwargs)
 
     def _stream(self) -> ScrollableContainer:
         return self.query_one("#stream", ScrollableContainer)

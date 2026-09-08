@@ -17,13 +17,19 @@ from tracera.tui.widgets.agent_panel import (
     ThinkingDisclosure,
     format_args,
 )
+from tracera.tui.widgets.dashboard import DashboardWidget
+from tracera.tui.widgets.file_context import FileContextPanel
+from tracera.tui.widgets.memory_viz import MemoryGraphWidget
 
 __all__ = [
     "AgentPanel",
     "AttachmentChip",
     "CollapsibleRow",
+    "DashboardWidget",
+    "FileContextPanel",
     "InlineStatus",
     "LoaderPill",
+    "MemoryGraphWidget",
     "MessageWidget",
     "PhaseRow",
     "ToolRow",

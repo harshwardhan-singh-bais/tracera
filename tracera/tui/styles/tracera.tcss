@@ -403,3 +403,126 @@ AttachmentChip {
     text-style: dim;
     margin-top: 1;
 }
+
+/* ── Dashboard Widget ────────────────────────────────────────────────────── */
+
+#dashboard-container {
+    width: 1fr;
+    height: auto;
+    margin: 1 0;
+    padding: 1;
+    border: round #3a3a4a;
+}
+
+#dash-header {
+    width: 1fr;
+    height: auto;
+    color: #6cb6ff;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#dash-system {
+    width: 1fr;
+    height: auto;
+    color: #e0e0ff;
+    margin-bottom: 1;
+}
+
+#dash-features {
+    width: 1fr;
+    height: auto;
+    color: #9a9aa3;
+    margin-bottom: 1;
+}
+
+#dash-actions {
+    width: 1fr;
+    height: auto;
+    color: #9a9aa3;
+}
+
+/* ── File Context Panel ──────────────────────────────────────────────────── */
+
+#file-context-container {
+    width: 1fr;
+    height: auto;
+    margin: 1 0;
+    padding: 1;
+    border: round #3a3a4a;
+}
+
+#file-context-header {
+    width: 1fr;
+    height: auto;
+    color: #6cb6ff;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#file-context-list {
+    width: 1fr;
+    height: auto;
+    color: #e0e0ff;
+}
+
+/* ── Memory Graph Widget ─────────────────────────────────────────────────── */
+
+#memory-graph-container {
+    width: 1fr;
+    height: auto;
+    margin: 1 0;
+    padding: 1;
+    border: round #3a3a4a;
+}
+
+#memory-graph-header {
+    width: 1fr;
+    height: auto;
+    color: #d2a8ff;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#memory-graph-content {
+    width: 1fr;
+    height: auto;
+    color: #e0e0ff;
+}
+
+/* ── Tool Timeline Enhancements ──────────────────────────────────────────── */
+
+ToolRow {
+    width: 1fr;
+    height: auto;
+    padding: 0 1;
+    margin: 0 0;
+}
+
+ToolRow:hover {
+    background: #1a1a2420;
+}
+
+/* ── Status Bar Enhancements ─────────────────────────────────────────────── */
+
+#status-line {
+    width: 1fr;
+    height: 2;
+    color: #9a9aa3;
+    padding: 0 1;
+}
+
+/* ── Git Status Indicator ────────────────────────────────────────────────── */
+
+.git-status {
+    color: #d2a8ff;
+    text-style: bold;
+}
+
+.git-dirty {
+    color: #ffd700;
+}
+
+.git-clean {
+    color: #4ac26b;
+}
