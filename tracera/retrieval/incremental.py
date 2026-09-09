@@ -94,7 +94,8 @@ class IncrementalIndexer:
     def _load_manifest(self) -> dict[str, str]:
         """Load {file_path: sha256} manifest from disk."""
         if self._manifest_path.exists():
-            return json.loads(self._manifest_path.read_text())
+            data = json.loads(self._manifest_path.read_text())
+            return data.get("files", {})
         return {}
 
     def _save_manifest(self, manifest: dict[str, str]) -> None:

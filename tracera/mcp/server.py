@@ -101,12 +101,17 @@ REPOSITORY_TOOLS = [
     "inspect_repository",
 ]
 
+DIAGNOSTICS_TOOLS = [
+    "get_server_status",
+]
+
 ALL_MCP_TOOLS = (
     CODE_INTELLIGENCE_TOOLS
     + CONTEXT_TOOLS
     + MEMORY_TOOLS
     + SAFETY_TOOLS
     + REPOSITORY_TOOLS
+    + DIAGNOSTICS_TOOLS
 )
 
 SERVER_INSTRUCTIONS = (

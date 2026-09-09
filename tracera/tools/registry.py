@@ -124,28 +124,36 @@ def create_default_registry(workspace=None) -> ToolRegistry:
 
 TOOL_PROFILES: dict[str, list[str]] = {
     "core": [
-        "search_symbols",
-        "get_symbol_source",
+        "search_code",
+        "find_symbol",
+        "find_definition",
+        "get_context",
+        "get_dependencies",
         "get_file_outline",
         "get_repo_map",
         "assemble_code_context",
     ],
     "standard": [
-        "search_symbols",
-        "get_symbol_source",
+        "search_code",
+        "find_symbol",
+        "find_definition",
+        "get_context",
+        "get_dependencies",
         "get_file_outline",
         "get_repo_map",
         "assemble_code_context",
         "find_references",
         "get_call_hierarchy",
-        "get_dependencies",
         "get_blast_radius",
         "get_changed_symbols",
         "get_index_freshness",
     ],
     "advanced": [
-        "search_symbols",
-        "get_symbol_source",
+        "search_code",
+        "find_symbol",
+        "find_definition",
+        "get_context",
+        "get_dependencies",
         "get_file_outline",
         "get_repo_map",
         "assemble_code_context",
@@ -210,17 +218,21 @@ def extend_registry_with_retrieval(
     Returns:
         The same registry, extended with retrieval tools.
     """
+    from tracera.tools.code_search import (
+        SearchCodeTool,
+        FindSymbolTool,
+        FindDefinitionTool,
+        GetContextTool,
+        GetDependenciesTool,
+    )
     from tracera.tools.ast_tools import (
         # Core tools (always available)
-        SearchSymbolsTool,
-        GetSymbolSourceTool,
         GetFileOutlineTool,
         GetRepoMapTool,
         AssembleCodeContextTool,
         # Standard tools
         FindReferencesTool,
         GetCallHierarchyTool,
-        GetDependenciesTool,
         GetBlastRadiusTool,
         GetChangedSymbolsTool,
         GetIndexFreshnessTool,
@@ -239,16 +251,18 @@ def extend_registry_with_retrieval(
 
     # Create all code intelligence tools
     all_ci_tools = [
-        # Core
-        SearchSymbolsTool(retriever),
-        GetSymbolSourceTool(retriever),
+        # Core (from code_search.py - these are the primary agent-facing tools)
+        SearchCodeTool(retriever, compressor=compressor, context_engine=context_engine, context_recall=context_recall),
+        FindSymbolTool(retriever, context_recall=context_recall),
+        FindDefinitionTool(retriever, compressor=compressor, context_recall=context_recall),
+        GetContextTool(retriever, expander, graph_retriever, compressor=compressor, context_engine=context_engine, context_recall=context_recall),
+        GetDependenciesTool(graph_retriever) if graph_retriever else None,
         GetFileOutlineTool(retriever),
         GetRepoMapTool(graph_retriever) if graph_retriever else None,
         AssembleCodeContextTool(context_engine, compressor) if context_engine else None,
         # Standard
         FindReferencesTool(graph_retriever) if graph_retriever else None,
         GetCallHierarchyTool(graph_retriever) if graph_retriever else None,
-        GetDependenciesTool(graph_retriever) if graph_retriever else None,
         GetBlastRadiusTool(graph_retriever) if graph_retriever else None,
         GetChangedSymbolsTool(graph_retriever) if graph_retriever else None,
         GetIndexFreshnessTool(retriever) if retriever else None,
@@ -285,49 +299,56 @@ def extend_registry_with_ast_tools(
     """
     Register jCodeMunch-inspired structural analysis and intelligence tools.
 
-    Adds 20+ tools covering:
-    - AST structural queries (find_importers, get_blast_radius, etc.)
-    - Refactoring and safety preflight (plan_refactoring, check_edit_safe, etc.)
-    - Session economics and context assembly
-    - Symbol provenance and agent config auditing
-    - Module coupling and dependency cycle detection
+    Adds unique AST-level tools that complement the code-search tools:
+    - AST structural queries (find_importers)
+    - Refactoring and safety preflight (check_edit_safe, check_delete_safe, plan_refactoring, get_pr_risk_profile)
+    - Code provenance and git history (get_symbol_provenance)
+    - Risk assessment (assess_change_risk)
+    - Module coupling and dependency cycle detection (get_dependency_cycles, get_coupling_metrics, get_endpoint_impact)
+    - Structural pattern matching (structural_search)
+    - PageRank importance (calculate_pagerank)
     """
     from tracera.tools.ast_tools import (
-        GetBlastRadiusTool, GetCallHierarchyTool,
-        FindDeadCodeTool, GetChangedSymbolsTool, GetHotspotsTool,
-        FindReferencesTool, FindImplementationsTool,
-        SearchSymbolsTool, GetSymbolSourceTool, GetFileOutlineTool,
-        GetRepoMapTool, AssembleCodeContextTool,
-        GetDependenciesTool, GetIndexFreshnessTool,
-        CalculatePageRankTool, PlanRefactoringTool,
-        GetCodeProvenanceTool, AssessChangeRiskTool,
-        StructuralSearchTool, GetSessionStatsTool,
-        PlanCodeTaskTool,
+        FindImportersTool,
+        CalculatePageRankTool,
+        PlanRefactoringTool,
+        GetCodeProvenanceTool,
+        AssessChangeRiskTool,
+        StructuralSearchTool,
+    )
+    from tracera.tools.refactor_tools import (
+        PlanRefactoringTool as RefactorPlanTool,
+        CheckEditSafeTool,
+        CheckDeleteSafeTool,
+        GetPrRiskProfileTool,
+    )
+    from tracera.tools.provenance_tools import (
+        GetSymbolProvenanceTool,
+        GetDependencyCyclesTool,
+        GetCouplingMetricsTool,
+        GetEndpointImpactTool,
+        AuditAgentConfigTool,
     )
 
     tools: list[Tool] = [
-        # Structural analysis
-        GetBlastRadiusTool(retrieval_pipeline),
-        GetCallHierarchyTool(retrieval_pipeline),
-        FindDeadCodeTool(retrieval_pipeline),
-        GetChangedSymbolsTool(workspace, retrieval_pipeline),
-        GetHotspotsTool(workspace, retrieval_pipeline),
-        FindReferencesTool(retrieval_pipeline),
-        FindImplementationsTool(retrieval_pipeline),
-        SearchSymbolsTool(retrieval_pipeline),
-        GetSymbolSourceTool(retrieval_pipeline),
-        GetFileOutlineTool(retrieval_pipeline),
-        GetRepoMapTool(retrieval_pipeline),
-        AssembleCodeContextTool(None, None),
-        GetDependenciesTool(retrieval_pipeline),
-        GetIndexFreshnessTool(retrieval_pipeline),
-        CalculatePageRankTool(retrieval_pipeline),
-        PlanRefactoringTool(retrieval_pipeline),
-        GetCodeProvenanceTool(retrieval_pipeline),
-        AssessChangeRiskTool(retrieval_pipeline),
+        # Unique structural analysis (not in code_search)
+        FindImportersTool(retrieval_pipeline),
+        # Refactoring and safety preflight
+        CheckEditSafeTool(retrieval_pipeline),
+        CheckDeleteSafeTool(retrieval_pipeline),
+        GetPrRiskProfileTool(None, retrieval_pipeline),
+        # Code provenance
+        GetSymbolProvenanceTool(retrieval_pipeline, workspace),
+        GetDependencyCyclesTool(retrieval_pipeline),
+        GetCouplingMetricsTool(retrieval_pipeline),
+        GetEndpointImpactTool(retrieval_pipeline),
+        AuditAgentConfigTool(None, retrieval_pipeline),
+        # Risk assessment
+        AssessChangeRiskTool(retrieval_pipeline, workspace),
+        # Structural pattern matching
         StructuralSearchTool(retrieval_pipeline),
-        GetSessionStatsTool(session_manager),
-        PlanCodeTaskTool(),
+        # PageRank importance
+        CalculatePageRankTool(retrieval_pipeline),
     ]
 
     # Wire up the pipeline reference for tools that need it

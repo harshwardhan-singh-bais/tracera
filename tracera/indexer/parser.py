@@ -69,3 +69,7 @@ class LanguageParser:
         if not parser:
             return None
         return parser.parse(code)
+
+    def languages(self) -> list[str]:
+        """Return list of languages that have been loaded."""
+        return list(self._languages.keys())

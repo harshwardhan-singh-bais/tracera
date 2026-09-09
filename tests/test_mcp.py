@@ -52,12 +52,18 @@ EXPECTED_REPOSITORY = {
     "run_tests", "inspect_repository",
 }
 
+# Diagnostic tools
+EXPECTED_DIAGNOSTICS = {
+    "get_server_status",
+}
+
 ALL_EXPECTED = (
     EXPECTED_CODE_INTELLIGENCE
     | EXPECTED_CONTEXT
     | EXPECTED_MEMORY
     | EXPECTED_SAFETY
     | EXPECTED_REPOSITORY
+    | EXPECTED_DIAGNOSTICS
 )
 
 
@@ -90,7 +96,7 @@ def test_tool_catalog_lists_are_complete():
     assert len(MEMORY_TOOLS) == 6
     assert len(SAFETY_TOOLS) == 6
     assert len(REPOSITORY_TOOLS) == 2
-    assert len(ALL_MCP_TOOLS) == 35
+    assert len(ALL_MCP_TOOLS) == 36  # includes get_server_status
 
 
 def test_no_duplicate_tools_across_categories():
