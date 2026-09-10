@@ -3,10 +3,8 @@
 > **Goal:** verify every **implemented** phase of the TRACERA roadmap in one
 > guided pass against a real codebase — the tracéra repo itself.
 >
-> **Tested:** phases **1–40** and **42–59**
-> **Excluded (not implemented):** phase **41** (MCP manager / unified
-> registry exists but is not wired for runtime agent use) and phases
-> **60–66** (never implemented, undocumented).
+> **Tested:** phases **1–41** and **42–61**
+> **Excluded (not implemented):** phases **62–66**
 > **Roadmap only (not implemented):** phases **67–72** (proven static
 > analysis — see README).
 
@@ -357,7 +355,7 @@ pytest suite from §2 covers it.)
 | 38 | fix run tail | pre/post regression table, 0 regressions |
 | 39 | `tracera mcp serve --check` | 7 tools listed |
 | 40 | `tracera mcp connect <file>` | remote tools discovered/merged |
-| 41 | — | **excluded** |
+| 41 | `.tracera/mcp_servers.json` → `tracera` | external MCP tools in the runtime registry |
 | 42 | `tracera delegate` | 5 roles with tool subsets |
 | 43 | `tracera delegate --parallel` | orchestrated steps |
 | 44 | delegation report | aggregated + conflicts detected |
@@ -376,7 +374,9 @@ pytest suite from §2 covers it.)
 | 57 | TUI coding task | live phases, tool rows, inline diffs |
 | 58 | TUI `/inspect` `/deps` | structure + dependency rows |
 | 59 | TUI `/debug <q>` | per-strategy comparison row |
-| 60–66 | — | **excluded (not implemented)** |
+| 60 | `tracera observability` / TUI `/observability` | LLM/tool/retrieval telemetry, cost |
+| 61 | `TRACERA_PROFILE=production tracera status` | profile changes effective defaults |
+| 62–66 | — | **excluded (not implemented)** |
 | 67–72 | — | **roadmap only (not implemented)** |
 
 ---

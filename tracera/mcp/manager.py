@@ -170,6 +170,18 @@ class MCPManager:
         finally:
             await self.disconnect_all()
 
+    async def attach_live(self, registry: Any) -> int:
+        """
+        Connect to all servers and register every remote tool into *registry*
+        — and KEEP the connections open for the lifetime of the caller.
+
+        This is the Phase 41 runtime path: the returned manager must be held
+        by the caller (e.g. the agent) for as long as the MCP tools are to
+        remain usable. Call :meth:`disconnect_all` to tear everything down.
+        """
+        merged = await self.connect_all()
+        return await self.register(merged, registry)
+
     @property
     def connected_servers(self) -> list[str]:
         return list(self._clients.keys())

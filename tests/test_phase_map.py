@@ -17,29 +17,32 @@ def test_all_phases_1_to_72_present():
     assert numbers == list(range(1, 73))
 
 
-def test_implemented_phases_are_1_40_and_42_59():
+def test_implemented_phases_are_1_41_and_42_61():
     impl = {p.number for p in implemented()}
-    assert impl == {*range(1, 41), *range(42, 60)}
+    assert impl == {*range(1, 42), *range(42, 62)}
 
 
 def test_excluded_and_roadmap_statuses():
     excl = {p.number for p in PHASES if p.status == STATUS_EXCLUDED}
-    assert excl == {41, *range(60, 67)}
+    assert excl == set(range(62, 67))
     rd = {p.number for p in PHASES if p.status == STATUS_ROADMAP}
     assert rd == set(range(67, 73))
 
 
 def test_counts():
     c = counts()
-    assert c[STATUS_IMPLEMENTED] == 58
-    assert c[STATUS_EXCLUDED] == 8
+    assert c[STATUS_IMPLEMENTED] == 61
+    assert c[STATUS_EXCLUDED] == 5
     assert c[STATUS_ROADMAP] == 6
 
 
 def test_get_phase_roundtrip():
     p = get_phase(36)
     assert p is not None and p.number == 36 and p.status == STATUS_IMPLEMENTED
-    assert get_phase(41).status == STATUS_EXCLUDED
+    assert get_phase(41).status == STATUS_IMPLEMENTED
+    assert get_phase(60).status == STATUS_IMPLEMENTED
+    assert get_phase(61).status == STATUS_IMPLEMENTED
+    assert get_phase(63).status == STATUS_EXCLUDED
     assert get_phase(70).status == STATUS_ROADMAP
     assert get_phase(999) is None
 

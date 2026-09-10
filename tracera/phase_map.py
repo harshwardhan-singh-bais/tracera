@@ -70,7 +70,7 @@ _TITLES: dict[int, str] = {
     38: "Regression protection",
     39: "MCP server (7 capabilities as MCP tools)",
     40: "MCP client (connect to external MCP servers)",
-    41: "MCP manager + unified tool registry",  # excluded — not fully wired
+    41: "MCP manager + unified tool registry",
     42: "Sub-agent framework (Researcher / Coder / Tester / Reviewer / Debugger)",
     43: "Task delegation (orchestrator)",
     44: "Result aggregation (conflict detection, shared state)",
@@ -89,6 +89,8 @@ _TITLES: dict[int, str] = {
     57: "Rich execution display (live phases, inline tool rows)",
     58: "Repository inspection (/inspect, /deps)",
     59: "Retrieval debugging (/debug)",
+    60: "Observability (LLM/tool/retrieval telemetry, cost)",
+    61: "Configuration profiles applied to settings",
 }
 
 #: Titles for roadmap phases 67–72 (see README "Proven Static Analysis").
@@ -101,17 +103,24 @@ _ROADMAP_TITLES: dict[int, str] = {
     72: "Language #2",
 }
 
-#: Phase 41 (not fully wired) and phases 60–66 (never implemented).
-_EXCLUDED: set[int] = {41, *range(60, 67)}
+#: Phase titles for excluded (not implemented) phases 62–66.
+_EXCLUDED_TITLES: dict[int, str] = {
+    62: "Comprehensive automated tests (unit + integration + e2e)",
+    63: "Docker deployment",
+    64: "CI/CD (lint, type-check, tests, security)",
+    65: "Documentation (architecture, retrieval, agent, MCP)",
+    66: "Benchmark report (graphs/tables)",
+}
+
+#: Phases never implemented: 62–66.
+_EXCLUDED: set[int] = set(range(62, 67))
 
 
 def _build() -> list[Phase]:
     phases: list[Phase] = []
     for number in range(1, 73):
         if number in _EXCLUDED:
-            title = (
-                "Not implemented" if number >= 60 else _TITLES.get(number, "Not implemented")
-            )
+            title = _EXCLUDED_TITLES.get(number, "Not implemented")
             status = STATUS_EXCLUDED
         elif number in _ROADMAP_TITLES:
             title = _ROADMAP_TITLES[number]

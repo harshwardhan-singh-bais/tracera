@@ -1483,6 +1483,73 @@ class MemoryStore:
 
     # ── Periodic Consolidation Job ─────────────────────────────────────────────
 
+    def preview_consolidation(
+        self,
+        entity_id: str | None = None,
+        *,
+        similarity_threshold: float = 0.92,
+        max_candidates: int = 50,
+    ) -> dict[str, Any]:
+        """
+        Dry-run of :meth:`run_consolidation` — find near-duplicate memory pairs
+        WITHOUT modifying anything, so the CLI can show what *would* be merged.
+        """
+        candidates: list[dict[str, Any]] = []
+        scanned = 0
+
+        with self._lock:
+            conn = self._conn()
+
+            if entity_id:
+                entity_pk = self.register_entity(entity_id)
+                entity_rows = [{"id": entity_pk, "external_id": entity_id}]
+            else:
+                entity_rows = conn.execute(
+                    "SELECT id, external_id FROM entities"
+                ).fetchall()
+
+            for entity_row in entity_rows:
+                entity_pk = entity_row["id"]
+                rows = conn.execute(
+                    """
+                    SELECT * FROM memories
+                    WHERE entity_id = ? AND status = 'active'
+                    ORDER BY mention_count DESC, confidence DESC
+                    """,
+                    (entity_pk,),
+                ).fetchall()
+                if len(rows) < 2:
+                    continue
+                scanned += len(rows)
+
+                for i, row_i in enumerate(rows):
+                    if len(candidates) >= max_candidates:
+                        break
+                    try:
+                        emb_i = json.loads(row_i["embedding"])
+                    except (TypeError, ValueError):
+                        continue
+                    for row_j in rows[i + 1:]:
+                        if len(candidates) >= max_candidates:
+                            break
+                        try:
+                            emb_j = json.loads(row_j["embedding"])
+                        except (TypeError, ValueError):
+                            continue
+                        score = cosine_similarity(emb_i, emb_j)
+                        if score >= similarity_threshold:
+                            candidates.append({
+                                "entity": entity_row["external_id"],
+                                "keeper_text": (row_i["text"] if row_i["confidence"] >= row_j["confidence"]
+                                                else row_j["text"])[:80],
+                                "merge_text": (row_j["text"] if row_i["confidence"] >= row_j["confidence"]
+                                               else row_i["text"])[:80],
+                                "similarity": round(score, 3),
+                            })
+
+        return {"scanned": scanned, "candidates": candidates}
+
+
     def run_consolidation(
         self,
         entity_id: str | None = None,

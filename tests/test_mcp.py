@@ -409,3 +409,30 @@ def test_manager_loads_config_from_file(tmp_path):
     manager = MCPManager.from_file(config_file)
     assert manager.configs[0].name == "filesystem"
     assert manager.configs[0].args[0] == "-y"
+
+
+async def test_attach_live_keeps_connections_open(mcp_settings, tmp_path):
+    """Phase 41 runtime path — attach_live registers tools and stays connected."""
+    from tracera.mcp.manager import MCPManager, MCPServerConfig
+    from tracera.tools.registry import ToolRegistry
+
+    repo_root = Path(__file__).resolve().parent.parent
+    manager = MCPManager([
+        MCPServerConfig(
+            name="live-a",
+            command=sys.executable,
+            args=["-m", "tracera.mcp.server"],
+            cwd=str(repo_root),
+        ),
+    ])
+    registry = ToolRegistry()
+
+    added = await manager.attach_live(registry)
+    assert added == len(ALL_EXPECTED)
+
+    # Connection is still live — a tool executes through it.
+    result = await registry.execute("live-a_inspect_repository", "live-1", {})
+    assert result.success
+    assert "Repository:" in result.output
+
+    await manager.disconnect_all()

@@ -24,8 +24,8 @@ _PROFILES: dict[str, dict[str, Any]] = {
         "tracera_max_iterations": 50,
         "tracera_max_tool_calls": 200,
         "tracera_command_timeout": 30,
-        "tracera_default_provider": "openai",
-        "tracera_default_model": "gpt-4o",
+        "tracera_default_provider": "groq",
+        "tracera_default_model": "openai/gpt-oss-120b",
         "tracera_default_temperature": 0.2,
     },
     "production": {

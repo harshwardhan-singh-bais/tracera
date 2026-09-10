@@ -27,6 +27,7 @@ from tracera.providers.base import (
     ToolSchema,
 )
 from tracera.tools.registry import ToolRegistry
+from tracera.observability import get_telemetry
 
 log = get_logger("agent.react")
 
@@ -256,7 +257,10 @@ class ReActAgent:
 
         terminated_by_error = False
 
+        telemetry = get_telemetry()
+
         for iteration in range(self.max_iterations):
+            telemetry.record_iteration()
             yield AgentEvent(
                 type=AgentEventType.THINKING,
                 iteration=iteration,
@@ -309,6 +313,12 @@ class ReActAgent:
             except Exception as e:
                 error_msg = f"LLM call failed: {e}"
                 conversation.add_error(error_msg)
+                telemetry.record_llm(
+                    provider=getattr(self.provider, "name", ""),
+                    model=self.model or "",
+                    error=True,
+                )
+                telemetry.record_error(error_msg, category="llm")
                 # Phase 10: remember recurring provider/LLM failures
                 if self.memory_writer is not None:
                     self.memory_writer("error", error_msg)
@@ -329,6 +339,13 @@ class ReActAgent:
             conversation.record_llm_usage(
                 tokens_in=response.usage.prompt_tokens,
                 tokens_out=response.usage.completion_tokens,
+                latency_ms=response.latency_ms,
+            )
+            telemetry.record_llm(
+                provider=getattr(self.provider, "name", ""),
+                model=response.model or self.model or "",
+                prompt_tokens=response.usage.prompt_tokens,
+                completion_tokens=response.usage.completion_tokens,
                 latency_ms=response.latency_ms,
             )
 
@@ -400,6 +417,14 @@ class ReActAgent:
                         tool_success=result.success,
                         metadata={"duration_ms": result.duration_ms},
                     )
+
+                    telemetry.record_tool(
+                        name=tool_call.name,
+                        duration_ms=result.duration_ms,
+                        success=result.success,
+                    )
+                    if telemetry.classify_tool(tool_call.name) == "retrieval":
+                        telemetry.record_retrieval(kind=tool_call.name)
 
                 # Continue loop — go back to LLM with observations
                 continue

@@ -563,6 +563,36 @@ async def test_memory_consolidation_merges_duplicates(tmp_path):
     assert stats["merged"] >= 0  # May or may not merge depending on embeddings
 
 
+async def test_preview_consolidation_is_read_only(tmp_path):
+    """Phase 66 — dry-run preview finds candidates without mutating the store."""
+    layer = make_layer(tmp_path)
+    store = layer.store
+
+    store.upsert_memory(
+        entity_id="user_1", process_id="agent", kind="fact",
+        subject="user", predicate="favorite_color", object="blue",
+        text="User's favorite color is blue.",
+        embedding=fake_embed("favorite color is blue"),
+        job_id=200,
+    )
+    store.upsert_memory(
+        entity_id="user_1", process_id="agent", kind="fact",
+        subject="user", predicate="favorite_color", object="blue",
+        text="User really likes blue.",
+        embedding=fake_embed("really likes blue"),
+        job_id=201,
+    )
+
+    before = store.count_memories("user_1")
+
+    preview = store.preview_consolidation(entity_id="user_1", similarity_threshold=0.9)
+    assert "scanned" in preview
+    assert isinstance(preview["candidates"], list)
+
+    # Dry-run must not have modified the store.
+    assert store.count_memories("user_1") == before
+
+
 async def test_memory_supersession_and_versioning(tmp_path):
     """Test that superseding a memory creates version history."""
     layer = make_layer(tmp_path)

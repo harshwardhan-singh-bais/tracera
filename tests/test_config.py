@@ -4,6 +4,8 @@ import os
 import pytest
 from pathlib import Path
 
+from tracera.config.settings import get_settings
+
 
 def test_settings_defaults(tmp_path, monkeypatch):
     """Settings load with sensible defaults."""
@@ -80,6 +82,40 @@ def test_profile_defaults():
 
     prod = get_profile_defaults("production")
     assert prod["tracera_log_level"] == "WARNING"
+
+
+def test_profile_selection_changes_behavior(tmp_path, monkeypatch):
+    """Phase 61 — TRACERA_PROFILE=production changes effective defaults."""
+    monkeypatch.chdir(tmp_path)
+    for var in list(os.environ):
+        if var.startswith("TRACERA_"):
+            monkeypatch.delenv(var, raising=False)
+
+    from tracera.config.settings import reset_settings
+    reset_settings()
+
+    # Default profile → development defaults (groq, 50 iterations, INFO).
+    monkeypatch.setenv("TRACERA_PROFILE", "development")
+    reset_settings()
+    dev = get_settings()
+    assert dev.tracera_max_iterations == 50
+    assert dev.tracera_log_level == "INFO"
+
+    # Production profile → tighter limits, WARNING logging.
+    monkeypatch.setenv("TRACERA_PROFILE", "production")
+    reset_settings()
+    prod = get_settings()
+    assert prod.tracera_log_level == "WARNING"
+    assert prod.tracera_max_iterations == 30
+    assert prod.tracera_command_timeout == 15
+
+    # Explicit env override still beats the production profile default.
+    monkeypatch.setenv("TRACERA_PROFILE", "production")
+    monkeypatch.setenv("TRACERA_MAX_ITERATIONS", "77")
+    reset_settings()
+    overridden = get_settings()
+    assert overridden.tracera_max_iterations == 77
+    assert overridden.tracera_log_level == "WARNING"
 
 
 def test_provider_api_key_mapping(monkeypatch):

@@ -54,6 +54,7 @@ from tracera.agent.react_loop import AgentEvent, AgentEventType, ReActAgent
 from tracera.agent.memory import AgentMemory
 from tracera.agent.planner import TaskDecomposer
 from tracera.conversation.state import ConversationState
+from tracera.observability import get_telemetry
 
 #: Attached text files larger than this (bytes) are not injected into context.
 _ATTACH_TEXT_MAX_BYTES = 200_000
@@ -67,6 +68,7 @@ _HELP_TEXT = """\
 [bold]/status[/]        Show system status
 [bold]/memory[/]        Show memory contents
 [bold]/model[/] [name]   Switch model
+[bold]/models[/]        List all provider/model options
 [bold]/plan[/] [task]    Decompose a task into steps
 [bold]/code[/] [task]    Run a coding task (same as plain input)
 [bold]/search[/] <q>     Search the code index (hybrid)
@@ -77,8 +79,12 @@ _HELP_TEXT = """\
 [bold]/tools[/]          List available tools
 [bold]/mcp[/]            Show MCP status & config
 [bold]/cost[/]           Show session token/cost estimate
+[bold]/observability[/]  Show live telemetry (LLM/tool/retrieval/cost)
 [bold]/inspect[/]        Repository inspection (files, symbols, git)
 [bold]/deps[/] <symbol>   Show a symbol's dependency chain
+[bold]/dashboard[/]      Show system overview panel
+[bold]/memgraph[/]       Show the memory knowledge graph
+[bold]/files[/]          Show recently touched files
 [bold]/phases[/]         Show the phase map + verified checklist
 [bold]/phases done <n>[/]  Mark a phase as verified (persisted)
 [bold]/reset[/]          Reset conversation state
@@ -271,6 +277,7 @@ class TraceraTUI(App):
         self._running_worker: Any = None
         self._hovered_scrollable: ScrollableContainer | None = None
         self._plan_row: CollapsibleRow | None = None
+        self._recent_files: list[tuple[str, str]] = []
 
     # ── Layout ────────────────────────────────────────────────────────────────
 
@@ -280,42 +287,6 @@ class TraceraTUI(App):
         yield self._build_header()
         # The single main panel — conversation stream, status line, input.
         yield AgentPanel(id="agent-panel-widget")
-
-    def on_mount(self) -> None:
-        """Initialize feature status indicators when app mounts."""
-        panel = self._panel()
-        
-        # Enable all available core features
-        panel.set_feature_status("memory", True)      # Memory layer always available
-        panel.set_feature_status("sandbox", True)     # Sandbox execution available
-        
-        # Activate retrieval/rag/index if pipeline exists
-        if self.retrieval_pipeline is not None:
-            panel.set_feature_status("retrieval", True)
-            panel.set_feature_status("rag", True)
-            panel.set_feature_status("index", True)
-        else:
-            # Keep them disabled if no retrieval pipeline
-            panel.set_feature_status("retrieval", False)
-            panel.set_feature_status("rag", False)
-            panel.set_feature_status("index", False)
-            
-        # MCP (Model Context Protocol) - enable if available in environment
-        try:
-            import mcp
-            panel.set_feature_status("mcp", True)
-        except ImportError:
-            panel.set_feature_status("mcp", False)
-            
-        # Initialize status with workspace info
-        self._status_line().update_stats(
-            state="idle",
-            session=self.workspace_path.name[:8],
-            model=self.agent.provider.default_model or "model"
-        )
-        
-        # Update header with git status
-        self._update_header_git()
 
     def _build_header(self) -> Horizontal:
         from rich.text import Text
@@ -450,7 +421,9 @@ class TraceraTUI(App):
                 self.agent.model = new_model
                 panel.add_assistant_message(f"Model switched to: [bold cyan]{new_model}[/]")
             else:
-                panel.add_error("Usage: /model <model-name>")
+                self._show_models()
+        elif cmd == "/models":
+            self._show_models()
         elif cmd in ("/code", "/ask"):
             task = text[len(cmd):].strip()
             if task:
@@ -492,6 +465,14 @@ class TraceraTUI(App):
                 panel.add_error("Usage: /deps <symbol>")
         elif cmd == "/phases":
             self._show_phases(text)
+        elif cmd == "/observability":
+            self._show_observability(panel)
+        elif cmd == "/dashboard":
+            self._show_dashboard()
+        elif cmd == "/memgraph":
+            self._show_memory_graph()
+        elif cmd == "/files":
+            self._show_file_context()
         else:
             panel.add_error(f"Unknown command: {cmd}. Type /help for available commands.")
 
@@ -535,6 +516,117 @@ class TraceraTUI(App):
             f"  Est. cost:   [bold green]${cost_in + cost_out:.4f}[/]\n"
             f"[dim](estimate @ $0.30/$1.20 per 1M tokens)[/]"
         )
+
+    def _show_models(self) -> None:
+        """List every provider/model discovered at runtime, with availability."""
+        panel = self._panel()
+        try:
+            from tracera.config.settings import get_settings
+            from tracera.providers import list_available_providers
+            entries = list_available_providers(get_settings())
+            active_name = getattr(self.agent.provider, "name", None)
+            lines = ["[bold]Models[/] (from your config, nothing hardcoded)\n"]
+            for info in entries:
+                name = info["name"]
+                model = info["model"] or "—"
+                if info["available"]:
+                    marker = "✓" if name == active_name else "·"
+                    lines.append(f"  [bold green]{marker}[/] [bold]{name}[/]  [dim]{model}[/]")
+                else:
+                    env = info.get("key_env") or "API_KEY"
+                    lines.append(f"  [dim]✗[/] [dim]{name}[/]  [dim]{model}  [!] missing {env}[/]")
+            lines.append("\n[dim]switch with /model <id> or ctrl+p[/]")
+            panel.add_assistant_message("\n".join(lines))
+        except Exception as e:
+            panel.add_error(f"Cannot list models: {e}")
+
+    def _show_observability(self, panel: AgentPanel) -> None:
+        """Phase 60 — live telemetry as an expandable row."""
+        try:
+            from tracera.observability import get_telemetry
+            snap = get_telemetry().snapshot()
+            llm = snap["llm"]
+            tools = snap["tools"]
+            retrieval = snap["retrieval"]
+            agent = snap["agent"]
+            cost = snap["cost"]
+
+            lines = [
+                "[bold]LLM[/]",
+                f"  calls: {llm['calls']} · errors: {llm['errors']} "
+                f"· {llm['total_tokens']:,} tok · avg {llm['avg_latency_ms']}ms",
+                "",
+                "[bold]Tools[/]  (total {})".format(tools["calls"]),
+            ]
+            lines += [
+                f"  {name}: {count}" for name, count in list(tools["per_tool"].items())[:12]
+            ]
+            lines.append("")
+            lines.append("[bold]Retrieval[/]")
+            lines += [f"  {k}: {v}" for k, v in retrieval["by_kind"].items()]
+            lines.append("")
+            lines.append(
+                f"[bold]Agent[/]  {agent['iterations']} iterations · {agent['errors']} errors"
+            )
+            lines.append(
+                f"[bold]Cost[/]  [green]${cost['estimate_usd']:.4f}[/] "
+                f"({snap['elapsed_seconds']}s elapsed)"
+            )
+            panel.add_info_row(
+                f"Observability: {llm['calls']} LLM · {tools['calls']} tools",
+                "\n".join(lines),
+            )
+        except Exception as e:
+            panel.add_error(f"Observability failed: {e}")
+
+    def _show_dashboard(self) -> None:
+        """/dashboard — system overview as an inline widget block."""
+        panel = self._panel()
+        provider = self.agent.provider
+        from tracera.tui.widgets.dashboard import DashboardWidget
+        widget = DashboardWidget(
+            provider=getattr(provider, "name", "—"),
+            model=provider.default_model or "—",
+            workspace=str(self.workspace_path),
+            memory_count=self.memory.count,
+            tool_count=len(self.agent.registry.tools),
+        )
+        widget.set_feature_status("retrieval", self.retrieval_pipeline is not None)
+        widget.set_feature_status("rag", self.retrieval_pipeline is not None)
+        widget.set_feature_status("index", self.retrieval_pipeline is not None)
+        try:
+            import mcp  # noqa: F401
+            widget.set_feature_status("mcp", True)
+        except ImportError:
+            widget.set_feature_status("mcp", False)
+        panel._append(widget)
+
+    def _show_memory_graph(self) -> None:
+        """/memgraph — knowledge graph visualization."""
+        panel = self._panel()
+        triple_store = getattr(self.agent, "_triple_store", None)
+        from tracera.tui.widgets.memory_viz import MemoryGraphWidget
+        widget = MemoryGraphWidget()
+        if triple_store is not None and triple_store.triple_count:
+            central = triple_store.get_central_concepts(10)
+            type_counts: dict[str, int] = {}
+            for t in triple_store.all_triples:
+                pred = t.predicate
+                type_counts[pred] = type_counts.get(pred, 0) + 1
+            widget.update_graph(
+                central_concepts=central,
+                type_counts=type_counts,
+            )
+        panel._append(widget)
+
+    def _show_file_context(self) -> None:
+        """/files — recently touched files panel."""
+        panel = self._panel()
+        from tracera.tui.widgets.file_context import FileContextPanel
+        widget = FileContextPanel()
+        for path, action in getattr(self, "_recent_files", []):
+            widget.add_file(path, action=action)
+        panel._append(widget)
 
     @work(exclusive=False)
     async def _run_search(self, query: str) -> None:
@@ -822,7 +914,7 @@ class TraceraTUI(App):
                 status = phase.status if phase else "unknown"
                 panel.add_error(
                     f"Phase {number} is not testable (status: {status}). "
-                    "Only implemented phases (1–40, 42–59) can be verified."
+                    "Only implemented phases (1–41, 42–61) can be verified."
                 )
                 return
             if sub == "done":
@@ -868,11 +960,12 @@ class TraceraTUI(App):
             ("Graph & code-search tools (25–28)", (25, 28)),
             ("Context & repo-aware agent (29–31)", (29, 31)),
             ("Testing & autonomy (32–38)", (32, 38)),
-            ("MCP server & client (39–40)", (39, 40)),
+            ("MCP server & client (39–41)", (39, 41)),
             ("Multi-agent delegation (42–44)", (42, 44)),
             ("Evaluation (45–50)", (45, 50)),
             ("Security (51–55)", (51, 55)),
             ("Terminal UI (56–59)", (56, 59)),
+            ("Observability & config (60–61)", (60, 61)),
         ]
 
         for label, (lo, hi) in groups:
@@ -885,7 +978,7 @@ class TraceraTUI(App):
 
         excluded_phases = [p for p in PHASES if p.status == STATUS_EXCLUDED]
         if excluded_phases:
-            lines.append("[bold]Excluded — not implemented (41, 60–66)[/]")
+            lines.append("[bold]Excluded — not implemented (62–66)[/]")
             lines.extend(_row(p) for p in excluded_phases)
             lines.append("")
 
@@ -918,6 +1011,26 @@ class TraceraTUI(App):
         if name == "git":
             return "Git"
         return None
+
+    def _track_touched_file(self, name: str, args: dict) -> None:
+        """Record files the agent read/wrote/edited so /files can show them."""
+        action_map = {
+            "read_file": "read",
+            "list_dir": "search",
+            "write_file": "write",
+            "edit_file": "edit",
+        }
+        action = action_map.get(name)
+        if not action:
+            return
+        path = args.get("path")
+        if not path:
+            return
+        seen = {p for p, _ in self._recent_files}
+        if str(path) in seen:
+            return
+        self._recent_files.insert(0, (str(path), action))
+        del self._recent_files[8:]
 
     @staticmethod
     def _count_tests_passed(output: str | None) -> str | None:
@@ -1106,6 +1219,8 @@ class TraceraTUI(App):
                             before = await self._read_file_snapshot(str(args["path"]))
                             if before is not None:
                                 row.set_snapshot(str(args["path"]), before)
+                        # Track recently touched files for /files.
+                        self._track_touched_file(name, args)
                         turn_trace.append(("tool", f"{name} {args_str}"))
 
                     case AgentEventType.TOOL_END:
@@ -1200,6 +1315,9 @@ class TraceraTUI(App):
                             tool_calls=total_tool_calls,
                             tokens=total_tokens,
                             elapsed_ms=total_latency,
+                            # Phase 60: live session cost + retrieval hits.
+                            cost_estimate=get_telemetry().snapshot()["cost"]["estimate_usd"],
+                            retrieval_hits=get_telemetry().snapshot()["retrieval"]["calls"],
                         )
 
                     case AgentEventType.ERROR:
@@ -1418,19 +1536,55 @@ class TraceraTUI(App):
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     def on_mount(self) -> None:
+        """Initialize feature status, attach external MCP tools, and welcome."""
+        panel = self._panel()
+
+        # Enable all available core features
+        panel.set_feature_status("memory", True)      # Memory layer always available
+        panel.set_feature_status("sandbox", True)     # Sandbox execution available
+
+        # Activate retrieval/rag/index if pipeline exists
+        if self.retrieval_pipeline is not None:
+            panel.set_feature_status("retrieval", True)
+            panel.set_feature_status("rag", True)
+            panel.set_feature_status("index", True)
+        else:
+            panel.set_feature_status("retrieval", False)
+            panel.set_feature_status("rag", False)
+            panel.set_feature_status("index", False)
+
+        # MCP (Model Context Protocol) - enable if the SDK is importable
+        try:
+            import mcp  # noqa: F401
+            panel.set_feature_status("mcp", True)
+            self.run_worker(self._attach_mcp_worker())
+        except ImportError:
+            panel.set_feature_status("mcp", False)
+
+        self._update_header_git()
+
         status = self._status_line()
         status.update_stats(
             state="idle",
             session=self._conversation.id[:8],
             model=self.agent.provider.default_model,
         )
-        # Show the whole UI immediately — the banner already sits in scrollback
-        # above us (printed once by the CLI). No splash, no clears.
         try:
             self.query_one("#agent-input", Input).focus()
         except Exception:
             pass
         self.run_worker(self._type_welcome())
+
+    async def _attach_mcp_worker(self) -> None:
+        """Phase 41 — merge external MCP tools into the runtime registry."""
+        try:
+            from tracera.config.settings import get_settings
+            from tracera.main import _attach_external_mcp
+            await _attach_external_mcp(
+                self.agent, get_settings(), self.workspace_path
+            )
+        except Exception:
+            pass
 
     async def _type_welcome(self) -> None:
         try:

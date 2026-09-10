@@ -278,11 +278,30 @@ class Settings(BaseSettings):
 _settings: Settings | None = None
 
 
+def _apply_profile_defaults(settings: Settings) -> Settings:
+    """
+    Phase 61 — apply the active profile's defaults to the settings object.
+
+    Profile defaults act as the *base* configuration; any value already
+    provided explicitly (init kwargs, environment variable, or ``.env``) wins
+    because those fields are present in ``model_fields_set``.
+    """
+    from tracera.config.profiles import get_profile_defaults
+
+    defaults = get_profile_defaults(settings.tracera_profile)
+    for key, value in defaults.items():
+        if key in settings.model_fields_set:
+            # Explicitly set — never override the user's choice.
+            continue
+        setattr(settings, key, value)
+    return settings
+
+
 def get_settings() -> Settings:
     """Return the cached Settings singleton, loading from .env on first call."""
     global _settings
     if _settings is None:
-        _settings = Settings()  # type: ignore[call-arg]
+        _settings = _apply_profile_defaults(Settings())  # type: ignore[call-arg]
     return _settings
 
 

@@ -37,7 +37,10 @@
 | 29–31 | Context assembly, context compression, repository-aware agent |
 | 32–34 | Test discovery, safe test execution, failure analysis |
 | 35–38 | Retrieval-driven debugging, autonomous fix loop, self-review, regression protection |
-| 39–41 | MCP server (7 capabilities as MCP tools), MCP client, unified tool registry |
+| 39–40 | MCP server (7 capabilities as MCP tools), MCP client (connect to external MCP servers) |
+| 41 | MCP manager + unified tool registry (external MCP tools merged into the runtime agent) |
+| 60 | Observability — live LLM/tool/retrieval telemetry, token & cost tracking |
+| 61 | Configuration profiles — `TRACERA_PROFILE` now changes effective defaults |
 | TUI | Futuristic Textual terminal UI with full scrolling (PgUp/PgDn + mouse) |
 
 ---
@@ -103,7 +106,8 @@ Any MCP client (Claude Desktop, Cursor, custom agents) can now call these tools.
 The retrieval pipeline is loaded lazily only when a code index exists.
 
 **As an MCP client** — connect to external MCP servers and merge their tools
-into the unified registry alongside native tools:
+into the unified registry alongside native tools (this now also happens
+automatically at agent runtime when `.tracera/mcp_servers.json` exists):
 
 ```json
 // mcp_servers.json
@@ -239,7 +243,8 @@ banner at the top of its screen.
 - **Boxes size to their content** — when idle, only the ready message and
   the status bar take up space; no fixed-height empty containers.
 - **Commands:** `/code` `/search` `/debug` `/index` `/test` `/review`
-  `/tools` `/mcp` `/cost` `/inspect` `/deps` `/plan` `/memory` `/model` …
+  `/tools` `/mcp` `/cost` `/inspect` `/deps` `/plan` `/memory` `/model`
+  `/models` `/observability` `/dashboard` `/memgraph` `/files` `/phases` …
   (`ctrl+t` toggles tool-call arguments on the rows).
 - **57 · Rich execution display:** live phases (`Searching…`, `Running tests…`,
   `✓ N passed`) stream inline.
@@ -278,6 +283,21 @@ cp .env.example .env
 
 Minimum required: one LLM provider key (e.g. `OPENAI_API_KEY`).
 
+**Profiles** (`TRACERA_PROFILE=local|development|production|evaluation`) now
+change the effective defaults — e.g. `production` tightens iteration limits and
+logging, `local` defaults to Ollama. Explicit env vars always win.
+
+## Observability (Phase 60)
+
+```bash
+# Live in-process telemetry (LLM/tool/retrieval counts, tokens, latency, cost)
+tracera observability
+```
+
+The same tracker powers the TUI's `/observability` command and the live cost +
+retrieval-hit read-out on the status line after each run. No external APM
+dependency — it is a process-wide accumulator in `tracera/observability/`.
+
 ## Tech Stack
 
 | Layer | Technology |
@@ -303,6 +323,7 @@ tracera/
 ├── config/        # Pydantic Settings + profiles
 ├── logging/       # Rich-powered structured logging
 ├── errors/        # Typed exception hierarchy
+├── observability/ # Phase 60 in-process telemetry tracker
 ├── workspace/     # Sandboxed filesystem operations
 ├── git/           # Git repository operations
 ├── providers/     # LLM provider adapters
@@ -311,6 +332,9 @@ tracera/
 ├── agent/         # ReAct loop + planner + memory
 └── tui/           # Textual TUI application
 ```
+
+See [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) for the
+complete implemented-vs-missing feature audit.
 
 ## License
 

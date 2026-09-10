@@ -226,6 +226,39 @@ def _build_agent(settings=None, workspace_path: Path | None = None, retrieval_pi
     return agent, workspace, provider
 
 
+async def _attach_external_mcp(agent, settings, workspace_path) -> int:
+    """
+    Phase 41 — connect external MCP servers (from `.tracera/mcp_servers.json`)
+    and merge their tools into the agent's runtime registry, side-by-side with
+    native tools. The manager is stored on the agent so connections stay alive
+    for the whole session. Returns the number of tools merged (0 when no
+    config file exists or every server failed to connect).
+    """
+    from tracera.mcp.manager import MCPManager
+
+    config_path = Path(workspace_path) / ".tracera" / "mcp_servers.json"
+    if not config_path.exists():
+        config_path = settings.tracera_data_dir / "mcp_servers.json"
+    if not config_path.exists():
+        return 0
+
+    try:
+        manager = MCPManager.from_file(config_path)
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[dim yellow]⚠ MCP config invalid ({e}) — skipping[/]")
+        return 0
+
+    agent._mcp_manager = manager  # type: ignore[attr-defined]
+    try:
+        added = await manager.attach_live(agent.registry)
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[dim yellow]⚠ MCP attach failed ({e})[/]")
+        return 0
+    if added:
+        console.print(f"[green]✓[/] {added} external MCP tool(s) merged into runtime registry")
+    return added
+
+
 def _write_memory(memory, kind: str, content: str) -> None:
     """
     Phase 10 — persist agent outcomes into memory.
@@ -467,6 +500,7 @@ def ask(
     from tracera.agent.react_loop import AgentEventType
 
     async def _run():
+        await _attach_external_mcp(agent, settings, workspace_path)
         console.print(f"\n[bold cyan]Task:[/] {task}\n")
         async for event in await agent.run(task):
             match event.type:
@@ -561,6 +595,73 @@ def status(
 
 
 
+
+
+# ── observability ─────────────────────────────────────────────────────────────
+
+@app.command()
+def observability(
+    reset: Annotated[
+        bool, typer.Option("--reset", help="Reset the in-process telemetry counters."),
+    ] = False,
+) -> None:
+    """
+    Show live telemetry (Phase 60).
+
+    Displays LLM / tool / retrieval call counts, token usage, latency, and an
+    estimated cost from the in-process observability tracker. In the TUI this
+    same data powers the status line and the /observability command; from the
+    CLI it reflects the current process.
+    """
+    from tracera.observability import get_telemetry, reset_telemetry
+
+    if reset:
+        reset_telemetry()
+        console.print("[green]✓[/] Telemetry reset.")
+        return
+
+    snap = get_telemetry().snapshot()
+
+    table = Table(title="TRACERA Observability", border_style="cyan", show_header=True)
+    table.add_column("Category", style="cyan bold")
+    table.add_column("Metric", style="white")
+    table.add_column("Value", justify="right", style="bold")
+
+    llm = snap["llm"]
+    tools = snap["tools"]
+    retrieval = snap["retrieval"]
+    agent = snap["agent"]
+    cost = snap["cost"]
+
+    table.add_row("LLM", "Calls", str(llm["calls"]))
+    table.add_row("LLM", "Errors", str(llm["errors"]))
+    table.add_row("LLM", "Total tokens", f"{llm['total_tokens']:,}")
+    table.add_row("LLM", "Avg latency", f"{llm['avg_latency_ms']}ms")
+
+    table.add_row("Tools", "Calls", str(tools["calls"]))
+    table.add_row("Tools", "Failures", str(tools["failures"]))
+    for name, count in list(tools["per_tool"].items())[:10]:
+        table.add_row("Tools", f"  {name}", str(count))
+
+    table.add_row("Retrieval", "Calls", str(retrieval["calls"]))
+    for kind, count in retrieval["by_kind"].items():
+        table.add_row("Retrieval", f"  {kind}", str(count))
+
+    table.add_row("Agent", "Iterations", str(agent["iterations"]))
+    table.add_row("Agent", "Errors", str(agent["errors"]))
+
+    table.add_row(
+        "Cost",
+        "Estimated",
+        f"[bold green]${cost['estimate_usd']:.4f}[/]",
+    )
+    table.add_row("Session", "Elapsed", f"{snap['elapsed_seconds']}s")
+
+    console.print(table)
+    console.print(
+        "[dim](estimate @ $%s/$%s per 1M tokens)[/]"
+        % (cost["input_cost_per_1m"], cost["output_cost_per_1m"])
+    )
 
 
 # ── memory ────────────────────────────────────────────────────────────────────
@@ -866,8 +967,26 @@ def memory_consolidate(
 
     if dry_run:
         console.print("[yellow]Dry run - showing potential merges[/]")
-        # TODO: implement dry run preview
-        console.print("[dim]Not yet implemented[/]")
+        with console.status("[bold yellow]Previewing...[/]"):
+            preview = store.preview_consolidation(
+                entity_id=entity, similarity_threshold=threshold
+            )
+        candidates = preview["candidates"]
+        console.print(
+            f"[dim]Scanned {preview['scanned']} memories — "
+            f"{len(candidates)} candidate merge(s) above threshold {threshold}.[/]\n"
+        )
+        if not candidates:
+            console.print("[dim]No near-duplicate memories found.[/]")
+            return
+        table = Table(border_style="yellow", show_header=True)
+        table.add_column("Similarity", justify="right")
+        table.add_column("Keeper", style="green")
+        table.add_column("Merges into keeper", style="dim")
+        for c in candidates:
+            table.add_row(str(c["similarity"]), c["keeper_text"], c["merge_text"])
+        console.print(table)
+        console.print("\n[dim]Re-run without --dry-run to apply these merges.[/]")
         return
 
     console.print(f"[bold cyan]Running consolidation for {entity or 'all entities'}[/]")
