@@ -32,6 +32,7 @@ SLASH_COMMANDS: dict[str, str] = {
     "inspect": "Repository inspection (files, symbols, git)",
     "deps": "Symbol dependency chain: /deps <symbol>",
     "dashboard": "System overview panel",
+    "theme": "Cycle accent theme (claude → crush → nord)",
     "files": "Recently touched files",
     "phases": "Phase map + verified checklist",
     "reset": "Reset conversation state",
@@ -59,10 +60,41 @@ COMMAND_ORDER: list[str] = [
     "inspect",
     "deps",
     "dashboard",
+    "theme",
     "files",
     "observability",
     "phases",
     "reset",
 ]
 
-__all__ = ["SLASH_COMMANDS", "COMMAND_ORDER"]
+# ── Unified tool aliases — every registered tool reachable as a slash ─────────
+#
+# ``SLASH_TOOLS`` lives in ``slash_actions`` so the app can dispatch aliases;
+# here we merge the same map into the autocomplete/help source of truth. A new
+# alias added there shows up in the TUI with no further change.
+
+SLASH_TOOLS: dict[str, str] = {}
+try:
+    from tracera.tui.widgets.slash_actions import SLASH_TOOLS as _SLASH_TOOLS
+
+    SLASH_TOOLS = dict(_SLASH_TOOLS)
+except Exception:  # pragma: no cover - registry must never break the TUI
+    pass
+
+_reserved = set(SLASH_COMMANDS)
+for _alias, _tool in SLASH_TOOLS.items():
+    if _alias in _reserved:
+        continue
+    SLASH_COMMANDS[_alias] = f"Tool: {_tool}"
+    if _alias not in COMMAND_ORDER:
+        COMMAND_ORDER.append(_alias)
+
+for _name, _desc in (
+    ("features", "List every feature as a slash command"),
+    ("tool", "Run any tool: /tool <name> [key=value ...]"),
+):
+    SLASH_COMMANDS.setdefault(_name, _desc)
+    if _name not in COMMAND_ORDER:
+        COMMAND_ORDER.append(_name)
+
+__all__ = ["SLASH_COMMANDS", "COMMAND_ORDER", "SLASH_TOOLS"]

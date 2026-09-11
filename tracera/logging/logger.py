@@ -113,34 +113,161 @@ def get_console() -> Console:
     return _console
 
 
-def banner_text() -> str:
-    """The TRACERA premium ASCII art banner, as Rich markup."""
+# ── Pixel-wordmark banner ───────────────────────────────────────────────────
+
+#: Lowercase "tracera" in a chunky 5-row pixel font (4 columns per glyph).
+#: No border, no box — the word IS the hero.
+_PIXEL_FONT: dict[str, list[str]] = {
+    "t": ["████", "  █ ", "  █ ", "  █ ", "  ██"],
+    "r": ["████", "█   ", "█   ", "█   ", "█   "],
+    "a": ["████", "   █", "████", "█  █", "████"],
+    "c": ["████", "█   ", "█   ", "█   ", "████"],
+    "e": ["████", "█  █", "████", "█   ", "████"],
+}
+_PIXEL_WORD = "tracera"
+_PIXEL_ROWS: list[str] = [
+    "".join(_PIXEL_FONT[ch][row] + (" " if i < len(_PIXEL_WORD) - 1 else "")
+           for i, ch in enumerate(_PIXEL_WORD))
+    for row in range(5)
+]
+
+#: Left-to-right gradient applied per letter (accent blue → prompt purple).
+_WORD_COLORS = [
+    "#6cb6ff", "#7db9ff", "#8fc0ff", "#a3c9ff", "#b8ccff", "#c5b0ff", "#d2a8ff",
+]
+_GHOST = "#232330"  # unlit pixels during materialization
+_SWEEP = "#ffffff"   # scanline highlight
+
+
+def _word_frame_markup(lit: set[tuple[int, int]] | None = None,
+                       sweep_col: int | None = None) -> str:
+    """Rich-markup frame of the pixel word.
+
+    ``lit=None`` → every pixel on (final state). Otherwise only pixels in the
+    set are lit and the rest render as dim ghost pixels (loading effect).
+    ``sweep_col`` highlights one pixel column in white (scanline sweep).
+    """
+    lines: list[str] = []
+    for r, row in enumerate(_PIXEL_ROWS):
+        parts: list[str] = ["  "]  # small left margin
+        col = 0
+        last = len(_PIXEL_WORD) - 1
+        for i, ch in enumerate(_PIXEL_WORD):
+            color = _WORD_COLORS[i % len(_WORD_COLORS)]
+            for pc in _PIXEL_FONT[ch][r]:
+                if pc == " ":
+                    parts.append(" ")
+                else:
+                    on = lit is None or (r, col) in lit
+                    if sweep_col is not None and col == sweep_col and on:
+                        parts.append(f"[bold {_SWEEP}]█[/]")
+                    elif on:
+                        parts.append(f"[{color}]█[/]")
+                    else:
+                        parts.append(f"[{_GHOST}]{pc}[/]")
+                col += 1
+            if i < last:
+                parts.append(" ")  # inter-letter gap
+        lines.append("".join(parts))
+    return "\n".join(lines)
+
+
+def _word_pixel_positions() -> list[tuple[int, int]]:
+    """All (row, col) pixel coordinates in the word, row-major."""
+    positions: list[tuple[int, int]] = []
+    for r, row in enumerate(_PIXEL_ROWS):
+        for c, ch in enumerate(row):
+            if ch == "█":
+                positions.append((r, c))
+    return positions
+
+
+def _materialize_frames(steps: int = 12) -> list[str]:
+    """Progressive pixel-materialization frames (deterministic seed)."""
+    import random
+    rng = random.Random(0x7ACEA)  # fixed → same assemble order every run
+    order = _word_pixel_positions()
+    rng.shuffle(order)
+    frames: list[str] = []
+    per_step = max(1, len(order) // steps)
+    lit: set[tuple[int, int]] = set()
+    for i in range(0, len(order), per_step):
+        lit.update(order[i:i + per_step])
+        frames.append(_word_frame_markup(lit=lit))
+    frames.append(_word_frame_markup())  # all pixels on
+    return frames
+
+
+def _sweep_frames(bands: int = 7) -> list[str]:
+    """Bright scanline sweeping across the finished wordmark."""
+    word_width = len(_PIXEL_ROWS[0])
+    frames: list[str] = []
+    for k in range(bands):
+        col = int(k * (word_width - 1) / max(1, bands - 1))
+        frames.append(_word_frame_markup(sweep_col=col))
+    return frames
+
+
+def _tagline_block() -> str:
+    """Tagline + capability strips under the wordmark (no border)."""
     return (
         "\n"
-        "[bold #6cb6ff]"
-        "  ╔═══════════════════════════════════════════════════════════════════╗\n"
-        "  ║                                                                   ║\n"
-        "  ║    ████████╗██████╗  █████╗  ██████╗███████╗██████╗  █████╗       ║\n"
-        "  ║    ╚══██╔══╝██╔══██╗██╔══██╗██╔════╝██╔════╝██╔══██╗██╔══██╗      ║\n"
-        "  ║       ██║   ██████╔╝███████║██║     █████╗  ██████╔╝███████║      ║\n"
-        "  ║       ██║   ██╔══██╗██╔══██║██║     ██╔══╝  ██╔══██╗██╔══██║      ║\n"
-        "  ║       ██║   ██║  ██║██║  ██║╚██████╗███████╗██║  ██║██║  ██║      ║\n"
-        "  ║       ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝      ║\n"
-        "  ║                                                                   ║\n"
-        "  ╠═══════════════════════════════════════════════════════════════════╣[/]\n"
-        "[bold #d2a8ff]  ║   ◆ Agentic Code Intelligence & Autonomous                    ║[/]\n"
-        "[bold #e0e0ff]  ║   ◆ Autonomous Coding Engine                                  ║[/]\n"
-        "[bold #6cb6ff]  ╠═══════════════════════════════════════════════════════════════════╣[/]\n"
-        "[dim #6cb6ff]  ║   v2.0[/]  [dim #9a9aa3]│[/]  [bold #4ac26b]●[/] [bold #e0e0ff]40+ Tools[/]  [dim #9a9aa3]│[/]  [bold #d2a8ff]◆[/] [bold #e0e0ff]Memory[/]  [dim #9a9aa3]│[/]  [bold #6cb6ff]◉[/] [bold #e0e0ff]RAG[/]         ║\n"
-        "[dim #9a9aa3]  ║   ────────────────────────────────────────────────────────────   ║[/]\n"
-        "[dim #55555e]  ║   PREMIUM[/]  [dim #9a9aa3]│[/]  [dim #9a9aa3]Phase 1-59 Complete[/]  [dim #9a9aa3]│[/]  [dim #55555e]Ready[/]              ║\n"
-        "[bold #6cb6ff]  ╚═══════════════════════════════════════════════════════════════════╝[/]\n"
-        "\n"
+        "[bold #d2a8ff]  ◆ Agentic Code Intelligence & Autonomous Coding Engine[/]\n"
+        "[dim #6cb6ff]  v2.0[/]  [dim #9a9aa3]│[/]  [bold #4ac26b]●[/] [bold #e0e0ff]40+ Tools[/]  "
+        "[dim #9a9aa3]│[/]  [bold #d2a8ff]◆[/] [bold #e0e0ff]Memory[/]  [dim #9a9aa3]│[/]  "
+        "[bold #6cb6ff]◉[/] [bold #e0e0ff]RAG[/]  [dim #9a9aa3]│[/]  [dim #55555e]Ready[/]\n"
     )
 
 
+def banner_text() -> str:
+    """The final static banner frame — pixel "tracera" wordmark, no border.
+
+    This is what the TUI reproduces as its first frame; the animated
+    materialization lives in :func:`animate_banner`.
+    """
+    return "\n" + _word_frame_markup() + "\n" + _tagline_block()
+
+
+def animate_banner(console: Console | None = None, *, duration: float = 1.1) -> None:
+    """Play the pixel loader: scattered pixels assemble into the wordmark,
+    a scanline sweeps across, then the frame settles.
+
+    Uses Rich ``Live`` with ``transient=True`` so the animation erases itself
+    and only the final static banner (printed by the caller) remains.
+    Non-TTY consoles skip straight to the static frame.
+    """
+    from rich.live import Live
+    from rich.text import Text
+    import time
+
+    console = console or _console
+    if not console.is_terminal:
+        return
+    try:
+        mat_frames = _materialize_frames()
+        sweep = _sweep_frames()
+        mat_delay = max(0.02, (duration * 0.7) / max(1, len(mat_frames)))
+        sweep_delay = max(0.02, (duration * 0.3) / max(1, len(sweep)))
+        with Live(
+            Text.from_markup(_word_frame_markup(lit=set())),
+            console=console,
+            refresh_per_second=30,
+            transient=True,
+        ) as live:
+            for frame in mat_frames:
+                live.update(Text.from_markup(frame))
+                time.sleep(mat_delay)
+            for frame in sweep:
+                live.update(Text.from_markup(frame))
+                time.sleep(sweep_delay)
+    except Exception:
+        # Animation is cosmetic — any failure just means no animation.
+        return
+
+
 def print_banner() -> str:
-    """Print the TRACERA ASCII art banner to the console; returns the text."""
+    """Play the pixel loader, then print the final banner; returns its text."""
+    animate_banner()
     _console.print(banner_text(), highlight=False)
     return banner_text()
 

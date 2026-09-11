@@ -11,10 +11,16 @@ Design language:
 */
 
 /* ── Global ─────────────────────────────────────────────────────────────── */
+/*
+ * Colors come from theme presets injected by TraceraTUI.get_css_variables()
+ * (see tracera/tui/theme.py): $t-accent $t-secondary $t-success $t-error $t-warning
+ * $t-meta $t-muted $t-faint $t-text $t-surface $t-border $t-scroll.
+ * /theme cycles presets live — no hex literals below on purpose.
+ */
 
 Screen {
     background: transparent;
-    color: #ebebf0;
+    color: $t-text;
 }
 
 /* ── Header ─────────────────────────────────────────────────────────────── */
@@ -48,7 +54,7 @@ Screen {
     width: 1fr;
     height: 1fr;
     layout: vertical;
-    border: round #2d2d3d;
+    border: round $t-border;
     padding: 0 1;
 }
 
@@ -58,10 +64,9 @@ Screen {
     width: 1fr;
     height: 1fr;
     padding: 1 0;
-    border-bottom: solid #252535;
+    border-bottom: solid $t-border;
     scrollbar-size: 1 1;
-    scrollbar-color: #da8548 #18181f;
-    scrollbar-background: #18181f;
+    scrollbar-color: $t-accent transparent;
 }
 
 /* ── Message bubbles ────────────────────────────────────────────────────── */
@@ -72,40 +77,40 @@ MessageWidget {
     margin: 1 0;
 }
 
-/* User turn — warm orange border, Claude Code style */
+/* User turn — accent border, Claude Code style */
 MessageWidget.msg-user {
-    border: round #da8548;
-    border-title-color: #da8548;
-    color: #ebebf0;
+    border: round $t-accent;
+    border-title-color: $t-accent;
+    color: $t-text;
     padding: 0 1;
 }
 
-/* Assistant turn — cool blue border */
+/* Assistant turn — secondary border */
 MessageWidget.msg-assistant {
-    border: round #3a5a8a;
-    border-title-color: #6cb6ff;
-    color: #ebebf0;
+    border: round $t-border;
+    border-title-color: $t-secondary;
+    color: $t-text;
     padding: 0 1;
 }
 
 MessageWidget.msg-error {
-    border: round #f47067;
-    color: #ffb4ad;
+    border: round $t-error;
+    color: $t-error;
     padding: 0 1;
 }
 
 MessageWidget.msg-tool {
-    color: #4ac26b;
+    color: $t-success;
 }
 
 MessageWidget.msg-meta {
-    color: #6a6a80;
+    color: $t-muted;
     text-style: dim;
 }
 
 /* Markdown-rendered assistant messages */
 MessageWidget.msg-markdown {
-    border: round #3a5a8a;
+    border: round $t-border;
     padding: 0 1;
 }
 
@@ -116,7 +121,7 @@ MessageWidget.msg-markdown {
     height: auto;
     margin: 1 0 0 0;
     padding: 0 1;
-    color: #da8548;
+    color: $t-accent;
 }
 
 /* ── Phase rows ─────────────────────────────────────────────────────────── */
@@ -138,15 +143,15 @@ ToolRow {
 }
 
 ToolRow:hover {
-    background: #1e1e2a;
+    background: $t-surface;
 }
 
 CollapsibleRow #info-row-toggle:hover {
-    background: #1e1e2a;
+    background: $t-surface;
 }
 
 ThinkingDisclosure #reasoning-toggle:hover {
-    background: #1e1e2a;
+    background: $t-surface;
 }
 
 /* ── Collapsible info rows ──────────────────────────────────────────────── */
@@ -159,7 +164,7 @@ CollapsibleRow {
     width: 1fr;
     margin: 0 0 0 0;
     padding: 0 1;
-    color: #d2a8ff;
+    color: $t-meta;
     text-style: bold;
     pointer: pointer;
 }
@@ -168,12 +173,12 @@ CollapsibleRow {
     width: 1fr;
     height: auto;
     margin: 0 0 1 0;
-    border: round #2d2d3d;
+    border: round $t-border;
     padding: 0 1;
 }
 
 .info-row-content {
-    color: #c0c0d8;
+    color: $t-text;
 }
 
 /* ── Thinking disclosure ────────────────────────────────────────────────── */
@@ -186,7 +191,7 @@ ThinkingDisclosure {
     width: 1fr;
     margin: 0;
     padding: 0 1;
-    color: #6a6a80;
+    color: $t-muted;
     text-style: italic;
     pointer: pointer;
 }
@@ -203,17 +208,17 @@ ThinkingDisclosure {
     padding: 0 1;
 }
 
-.reasoning-done  { color: #4ac26b; }
-.reasoning-error { color: #f47067; }
-.reasoning-think { color: #6a6a80; }
-.reasoning-tool  { color: #c0c0d8; }
+.reasoning-done  { color: $t-success; }
+.reasoning-error { color: $t-error; }
+.reasoning-think { color: $t-muted; }
+.reasoning-tool  { color: $t-text; }
 
 /* ── Status line ────────────────────────────────────────────────────────── */
 
 #status-line {
     width: 1fr;
     height: 2;
-    color: #6a6a80;
+    color: $t-muted;
     padding: 0 1;
 }
 
@@ -227,8 +232,8 @@ ThinkingDisclosure {
     align-vertical: middle;
     margin: 1 0 0 0;
     padding: 0 2;
-    border: round #da8548;
-    color: #da8548;
+    border: round $t-accent;
+    color: $t-accent;
 }
 
 #loader-icon {
@@ -236,7 +241,7 @@ ThinkingDisclosure {
     height: 1;
     content-align: center middle;
     margin-right: 1;
-    color: #da8548;
+    color: $t-accent;
     text-style: bold;
 }
 
@@ -244,7 +249,7 @@ ThinkingDisclosure {
     width: 1fr;
     height: 1;
     content-align: left middle;
-    color: #da8548;
+    color: $t-accent;
     text-style: bold;
 }
 
@@ -253,7 +258,7 @@ ThinkingDisclosure {
     height: 1;
     content-align: center middle;
     margin-left: 1;
-    color: #f47067;
+    color: $t-error;
     text-style: bold;
     pointer: pointer;
 }
@@ -279,8 +284,8 @@ AttachmentChip {
     height: auto;
     margin: 0 1 0 0;
     padding: 0 1;
-    border: round #3a3a4a;
-    color: #ebebf0;
+    border: round $t-faint;
+    color: $t-text;
     pointer: pointer;
 }
 
@@ -291,9 +296,9 @@ AttachmentChip {
     height: auto;
     margin: 1 0 0 0;
     padding: 0 1;
-    border: round #2d2d3d;
-    background: #18181f;
-    color: #ebebf0;
+    border: round $t-border;
+    background: $t-surface;
+    color: $t-text;
 }
 
 #suggestion-list.has-content {
@@ -309,15 +314,15 @@ AttachmentChip {
     align-vertical: top;
     margin: 1 0 0 0;
     padding: 1 1;
-    border: round #3a3a4a;
+    border: round $t-faint;
 }
 
 #agent-input-bar:focus-within {
-    border: round #da8548;
+    border: round $t-accent;
 }
 
 #agent-input-bar:focus-within #agent-prompt-icon {
-    color: #da8548;
+    color: $t-accent;
     text-style: bold;
 }
 
@@ -326,7 +331,7 @@ AttachmentChip {
     height: 1;
     content-align: center middle;
     margin-right: 1;
-    color: #6a6a80;
+    color: $t-muted;
     text-style: bold;
     pointer: pointer;
 }
@@ -336,7 +341,7 @@ AttachmentChip {
     height: 1;
     content-align: center middle;
     margin-right: 1;
-    color: #da8548;
+    color: $t-accent;
     text-style: bold;
 }
 
@@ -348,7 +353,7 @@ AttachmentChip {
     background: transparent;
     border: none;
     padding: 0;
-    color: #ebebf0;
+    color: $t-text;
 }
 
 #agent-input:focus {
@@ -357,8 +362,8 @@ AttachmentChip {
 }
 
 #agent-input .text-area--cursor {
-    background: #da8548;
-    color: #18181f;
+    background: $t-accent;
+    color: $t-text;
 }
 
 #input-hints {
@@ -366,13 +371,13 @@ AttachmentChip {
     height: 1;
     content-align: center middle;
     margin: 0 0 1 0;
-    color: #3a3a4a;
+    color: $t-faint;
     text-style: dim;
 }
 
 /* Placeholder styling for the multiline editor */
 #agent-input .text-area--placeholder {
-    color: #4a4a5a;
+    color: $t-muted;
     text-style: italic;
 }
 
@@ -383,14 +388,14 @@ AttachmentChip {
     height: 24;
     layout: vertical;
     align: center middle;
-    border: round #3a5a8a;
+    border: round $t-secondary;
     padding: 1 1;
 }
 
 #picker-title {
     width: 1fr;
     height: auto;
-    color: #6cb6ff;
+    color: $t-secondary;
     text-style: bold;
     margin-bottom: 1;
 }
@@ -398,16 +403,16 @@ AttachmentChip {
 #picker-tree {
     width: 1fr;
     height: 1fr;
-    color: #ebebf0;
+    color: $t-text;
     scrollbar-size: 1 1;
-    scrollbar-color: #da8548 #18181f;
+    scrollbar-color: $t-accent transparent;
 }
 
 #picker-hint {
     width: 1fr;
     height: 1;
     content-align: center middle;
-    color: #3a3a4a;
+    color: $t-faint;
     text-style: dim;
     margin-top: 1;
 }
@@ -419,14 +424,14 @@ AttachmentChip {
     height: auto;
     layout: vertical;
     align: center middle;
-    border: round #da8548;
+    border: round $t-accent;
     padding: 1 1;
 }
 
 #provider-title {
     width: 1fr;
     height: auto;
-    color: #da8548;
+    color: $t-accent;
     text-style: bold;
     margin-bottom: 1;
 }
@@ -434,7 +439,7 @@ AttachmentChip {
 #provider-list {
     width: 1fr;
     height: auto;
-    color: #ebebf0;
+    color: $t-text;
     border: none;
 }
 
@@ -448,18 +453,18 @@ AttachmentChip {
 }
 
 #provider-list > ListItem:hover {
-    background: #252535;
+    background: $t-surface;
 }
 
 #provider-list > ListItem.provider-active {
-    background: #252535;
+    background: $t-surface;
 }
 
 #provider-hint {
     width: 1fr;
     height: 1;
     content-align: center middle;
-    color: #3a3a4a;
+    color: $t-faint;
     text-style: dim;
     margin-top: 1;
 }
@@ -471,13 +476,13 @@ AttachmentChip {
     height: auto;
     margin: 1 0;
     padding: 1;
-    border: round #2d2d3d;
+    border: round $t-border;
 }
 
-#dash-header   { width: 1fr; height: auto; color: #da8548; text-style: bold; margin-bottom: 1; }
-#dash-system   { width: 1fr; height: auto; color: #ebebf0; margin-bottom: 1; }
-#dash-features { width: 1fr; height: auto; color: #6a6a80; margin-bottom: 1; }
-#dash-actions  { width: 1fr; height: auto; color: #6a6a80; }
+#dash-header   { width: 1fr; height: auto; color: $t-accent; text-style: bold; margin-bottom: 1; }
+#dash-system   { width: 1fr; height: auto; color: $t-text; margin-bottom: 1; }
+#dash-features { width: 1fr; height: auto; color: $t-muted; margin-bottom: 1; }
+#dash-actions  { width: 1fr; height: auto; color: $t-muted; }
 
 /* ── File context panel ─────────────────────────────────────────────────── */
 
@@ -486,11 +491,11 @@ AttachmentChip {
     height: auto;
     margin: 1 0;
     padding: 1;
-    border: round #2d2d3d;
+    border: round $t-border;
 }
 
-#file-context-header { width: 1fr; height: auto; color: #6cb6ff; text-style: bold; margin-bottom: 1; }
-#file-context-list   { width: 1fr; height: auto; color: #ebebf0; }
+#file-context-header { width: 1fr; height: auto; color: $t-secondary; text-style: bold; margin-bottom: 1; }
+#file-context-list   { width: 1fr; height: auto; color: $t-text; }
 
 /* ── Memory graph widget ────────────────────────────────────────────────── */
 
@@ -499,14 +504,14 @@ AttachmentChip {
     height: auto;
     margin: 1 0;
     padding: 1;
-    border: round #2d2d3d;
+    border: round $t-border;
 }
 
-#memory-graph-header  { width: 1fr; height: auto; color: #d2a8ff; text-style: bold; margin-bottom: 1; }
-#memory-graph-content { width: 1fr; height: auto; color: #ebebf0; }
+#memory-graph-header  { width: 1fr; height: auto; color: $t-meta; text-style: bold; margin-bottom: 1; }
+#memory-graph-content { width: 1fr; height: auto; color: $t-text; }
 
 /* ── Git status helpers ─────────────────────────────────────────────────── */
 
-.git-status { color: #d2a8ff; text-style: bold; }
-.git-dirty  { color: #ffd700; }
-.git-clean  { color: #4ac26b; }
+.git-status { color: $t-meta; text-style: bold; }
+.git-dirty  { color: $t-warning; }
+.git-clean  { color: $t-success; }

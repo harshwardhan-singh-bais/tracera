@@ -30,32 +30,41 @@ import re
 from pathlib import Path
 from typing import Any
 
+from rich.markup import escape
 from textual import events, on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, ScrollableContainer
-from textual.screen import Screen
-from textual.widgets import DirectoryTree, Input, ListItem, ListView, Static
 from textual.command import Hit, Provider
+from textual.containers import Horizontal, ScrollableContainer, Vertical
+from textual.screen import Screen
+from textual.widgets import DirectoryTree, ListItem, ListView, Static
 
+from tracera.agent.memory import AgentMemory
+from tracera.agent.planner import TaskDecomposer
+from tracera.agent.react_loop import AgentEventType, ReActAgent
+from tracera.conversation.state import ConversationState
+from tracera.observability import get_telemetry
+from tracera.tui import theme as tui_theme
 from tracera.tui.diffutil import DIFFABLE_TOOLS, MAX_DIFF_BYTES, compute_diff, is_image
+from tracera.tui.splash import SplashScreen
 from tracera.tui.widgets.agent_panel import (
+    _PHASE_LABELS,
     AgentPanel,
     CollapsibleRow,
     InlineStatus,
     LoaderPill,
-    _PHASE_LABELS,
     format_args,
 )
 from tracera.tui.widgets.command_input import CommandInput
 from tracera.tui.widgets.dashboard import DashboardWidget
 from tracera.tui.widgets.file_context import FileContextPanel
 from tracera.tui.widgets.memory_viz import MemoryGraphWidget
-from tracera.agent.react_loop import AgentEvent, AgentEventType, ReActAgent
-from tracera.agent.memory import AgentMemory
-from tracera.agent.planner import TaskDecomposer
-from tracera.conversation.state import ConversationState
-from tracera.observability import get_telemetry
+from tracera.tui.widgets.slash_actions import (
+    SLASH_TOOLS,
+    coerce_args,
+    parse_tool_invocation,
+    single_arg_kwargs,
+)
 
 #: Attached text files larger than this (bytes) are not injected into context.
 _ATTACH_TEXT_MAX_BYTES = 200_000
@@ -84,10 +93,13 @@ _HELP_TEXT = """\
 [bold]/inspect[/]        Repository inspection (files, symbols, git)
 [bold]/deps[/] <symbol>   Show a symbol's dependency chain
 [bold]/dashboard[/]      Show system overview panel
+[bold]/theme[/]         Cycle accent theme (claude · crush · nord)
 [bold]/memgraph[/]       Show the memory knowledge graph
 [bold]/files[/]          Show recently touched files
 [bold]/phases[/]         Show the phase map + verified checklist
 [bold]/phases done <n>[/]  Mark a phase as verified (persisted)
+[bold]/features[/]       List every feature as a slash command
+[bold]/tool[/] [name args]  Run any registry tool directly
 [bold]/reset[/]          Reset conversation state
 
 [bold cyan]Keys[/]
@@ -172,6 +184,9 @@ class ProviderSwitcher(Screen):
 
     def on_mount(self) -> None:
         from rich.text import Text
+
+        from tracera.tui.theme import get_theme as _gt
+        th = _gt()
         lst = self.query_one("#provider-list", ListView)
         active_index = 0
         for i, info in enumerate(self._entries):
@@ -183,15 +198,18 @@ class ProviderSwitcher(Screen):
                 active_index = i
 
             row = Text()
-            row.append(" ✓ " if is_active else "   ", style="bold #4ac26b")
+            row.append(" ✓ " if is_active else "   ", style=f"bold #{th.success}")
             row.append(
                 name,
-                style="bold #dcdcf5" if available else "dim #9a9aa3",
+                style=f"bold #{th.text}" if available else f"dim #{th.muted}",
             )
-            row.append(f"   {model}", style="dim #6cb6ff" if available else "dim #55555e")
+            row.append(
+                f"   {model}",
+                style=f"dim #{th.secondary}" if available else f"dim #{th.faint}",
+            )
             if not available:
                 env = str(info.get("key_env") or "API_KEY").upper()
-                row.append(f"   [!] missing {env}", style="bold #d4a72c")
+                row.append(f"   [!] missing {env}", style=f"bold #{th.warning}")
             item = ListItem(Static(row), disabled=not available)
             if is_active:
                 item.add_class("provider-active")
@@ -219,6 +237,7 @@ class TraceraCommands(Provider):
 
     _COMMANDS = [
         ("Switch provider/model", "action_switch_provider", "Open the provider/model selector (ctrl+p)"),
+        ("Cycle theme", "action_cycle_theme", "Cycle accent theme presets (/theme)"),
         ("Toggle verbose rows", "action_toggle_verbose", "Show/hide tool call arguments"),
         ("Clear conversation", "action_clear_conversation", "Reset the chat"),
         ("Show memory", "action_show_memory", "List persistent memory entries"),
@@ -242,6 +261,10 @@ class TraceraTUI(App):
     CSS_PATH = "styles/tracera.tcss"
 
     COMMANDS = {TraceraCommands}
+
+    def get_css_variables(self) -> dict[str, str]:
+        """Inject the active theme preset into the stylesheet as CSS vars."""
+        return {**super().get_css_variables(), **tui_theme.get_theme().css_variables()}
 
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit", priority=True),
@@ -279,6 +302,12 @@ class TraceraTUI(App):
         self._hovered_scrollable: ScrollableContainer | None = None
         self._plan_row: CollapsibleRow | None = None
         self._recent_files: list[tuple[str, str]] = []
+        # Restore the persisted theme preset (process-wide Rich colors too).
+        try:
+            from tracera.config.settings import get_settings
+            tui_theme.set_theme(tui_theme.load_saved_theme(get_settings().tracera_data_dir))
+        except Exception:
+            tui_theme.set_theme(tui_theme.DEFAULT_THEME)
 
     # ── Layout ────────────────────────────────────────────────────────────────
 
@@ -291,20 +320,23 @@ class TraceraTUI(App):
 
     def _build_header(self) -> Horizontal:
         from rich.text import Text
+
+        from tracera.tui.theme import get_theme as _gt
+        th = _gt()
         model = self.agent.provider.default_model or "model"
         left = Text()
-        left.append(" ◆ ", style="bold #da8548")
-        left.append("TRACERA", style="bold #ebebf0")
-        left.append("  your terminal coding agent", style="dim #6a6a80")
+        left.append(" ◆ ", style=f"bold #{th.accent}")
+        left.append("TRACERA", style=f"bold #{th.text}")
+        left.append("  your terminal coding agent", style=f"dim #{th.muted}")
         left.append("  ", style="dim")
-        left.append(str(self.workspace_path), style="dim #4a4a5a")
+        left.append(str(self.workspace_path), style=f"dim #{th.faint}")
         right = Text()
         git_info = self._get_git_status()
         if git_info:
-            right.append(f"{git_info}  ", style="bold #d2a8ff")
-        right.append("● ", style="bold #4ac26b")
-        right.append(model, style="bold #ebebf0")
-        right.append("  /help", style="dim #3a3a4a")
+            right.append(f"{git_info}  ", style=f"bold #{th.meta}")
+        right.append("● ", style=f"bold #{th.success}")
+        right.append(model, style=f"bold #{th.text}")
+        right.append("  /help", style=f"dim #{th.faint}")
         return Horizontal(
             Static(left, id="header-left"),
             Static(right, id="header-right"),
@@ -327,13 +359,16 @@ class TraceraTUI(App):
         """Update header with git status."""
         try:
             from rich.text import Text
+
+            from tracera.tui.theme import get_theme as _gt
+            th = _gt()
             git_info = self._get_git_status()
             right = Text()
-            right.append("● ", style="bold #4ac26b")
+            right.append("● ", style=f"bold #{th.success}")
             if git_info:
-                right.append(f"{git_info}  ", style="dim #d2a8ff")
-            right.append(self.agent.provider.default_model or "model", style="bold #ebebf0")
-            right.append("  /help", style="dim #3a3a4a")
+                right.append(f"{git_info}  ", style=f"dim #{th.meta}")
+            right.append(self.agent.provider.default_model or "model", style=f"bold #{th.text}")
+            right.append("  /help", style=f"dim #{th.faint}")
             self.query_one("#header-right", Static).update(right)
         except Exception:
             pass
@@ -403,7 +438,7 @@ class TraceraTUI(App):
         cmd = text.split()[0].lower()
 
         if cmd == "/help":
-            panel.add_assistant_message(_HELP_TEXT)
+            panel.add_assistant_message(_HELP_TEXT, trusted=True)
         elif cmd == "/clear":
             self.action_clear_conversation()
         elif cmd == "/status":
@@ -412,7 +447,7 @@ class TraceraTUI(App):
             self.action_show_memory()
         elif cmd == "/reset":
             self._conversation = ConversationState()
-            panel.add_assistant_message("[dim]Conversation reset.[/]")
+            panel.add_assistant_message("[dim]Conversation reset.[/]", trusted=True)
         elif cmd == "/plan":
             task = text[6:].strip()
             if task:
@@ -424,7 +459,10 @@ class TraceraTUI(App):
             if len(parts) > 1:
                 new_model = parts[1]
                 self.agent.model = new_model
-                panel.add_assistant_message(f"Model switched to: [bold cyan]{new_model}[/]")
+                panel.add_assistant_message(
+                    f"[bold]Model switched to:[/] [bold cyan]{escape(new_model)}[/]",
+                    trusted=True,
+                )
             else:
                 self._show_models()
         elif cmd == "/models":
@@ -435,7 +473,7 @@ class TraceraTUI(App):
                 panel.add_user_message(task)
                 self._start_agent_task(task)
             else:
-                panel.add_error(f"Usage: {cmd} <task description>")
+                panel.add_error(f"Usage: {escape(cmd)} <task description>")
         elif cmd == "/search":
             query = text[len(cmd):].strip()
             if query:
@@ -472,14 +510,50 @@ class TraceraTUI(App):
             self._show_phases(text)
         elif cmd == "/observability":
             self._show_observability(panel)
+        elif cmd == "/theme":
+            self._cycle_theme()
         elif cmd == "/dashboard":
             self._show_dashboard()
         elif cmd == "/memgraph":
             self._show_memory_graph()
         elif cmd == "/files":
             self._show_file_context()
+        elif cmd == "/features":
+            self._show_features(panel)
+        elif cmd == "/tool":
+            spec = text[len(cmd):].strip()
+            if spec:
+                self._run_tool_command(spec)
+            else:
+                panel.add_error("Usage: /tool <name> [key=value ...]")
+        elif cmd[1:] in SLASH_TOOLS:
+            self._run_tool_alias(SLASH_TOOLS[cmd[1:]], text[len(cmd):].strip())
         else:
-            panel.add_error(f"Unknown command: {cmd}. Type /help for available commands.")
+            panel.add_error(
+                f"Unknown command: {escape(cmd)}. Type /help for available commands."
+            )
+
+    # ── Theme switching ─────────────────────────────────────────────────────
+
+    def _cycle_theme(self) -> None:
+        """/theme — cycle accent presets live and persist the choice."""
+        new_theme = tui_theme.next_theme()
+        try:
+            from tracera.config.settings import get_settings
+            tui_theme.save_theme(get_settings().tracera_data_dir, new_theme.name)
+        except Exception:
+            pass
+        # Refresh CSS-variable-driven colors immediately.
+        self.refresh_css()
+        # Rich-Text-rendering widgets read the preset each render; force a
+        # repaint of the stream rows so inline colors match the new preset.
+        for row in self._panel().query("ToolRow, PhaseRow, InlineStatus"):
+            row.refresh()
+        self._update_header_git()
+        self._panel().add_meta(
+            f"Theme switched to [bold]{new_theme.label}[/] "
+            f"— persisted. (Cycle again with /theme)"
+        )
 
     # ── REPL command implementations ─────────────────────────────────────────
 
@@ -488,14 +562,16 @@ class TraceraTUI(App):
         if not names:
             panel.add_error("No tools registered.")
             return
-        lines = "\n".join(f"  [dim]▪[/] {n}" for n in sorted(names))
-        panel.add_assistant_message(f"[bold]Available tools ({len(names)})[/]\n{lines}")
+        lines = "\n".join(f"  [dim]▪[/] {escape(n)}" for n in sorted(names))
+        panel.add_assistant_message(
+            f"[bold]Available tools ({len(names)})[/]\n{lines}", trusted=True
+        )
 
     def _show_mcp(self, panel: AgentPanel) -> None:
         config_path = Path(self.workspace_path) / ".tracera" / "mcp_servers.json"
         lines = ["[bold]MCP[/]"]
         if config_path.exists():
-            lines.append(f"  config: [cyan]{config_path}[/]")
+            lines.append(f"  config: [cyan]{escape(str(config_path))}[/]")
         else:
             lines.append(
                 "  [dim]No mcp_servers.json yet — see MCP_CONNECTIONS.md for "
@@ -505,7 +581,7 @@ class TraceraTUI(App):
             "  [dim]Use `tracera mcp serve` (server) or "
             "`tracera mcp connect <file>` (client).[/]"
         )
-        panel.add_assistant_message("\n".join(lines))
+        panel.add_assistant_message("\n".join(lines), trusted=True)
 
     def _show_cost(self, panel: AgentPanel) -> None:
         stats = self._conversation.stats
@@ -519,7 +595,8 @@ class TraceraTUI(App):
             f"  Tokens out:  [cyan]{tokens_out:,}[/]\n"
             f"  Total:       [bold]{tokens_in + tokens_out:,}[/]\n"
             f"  Est. cost:   [bold green]${cost_in + cost_out:.4f}[/]\n"
-            f"[dim](estimate @ $0.30/$1.20 per 1M tokens)[/]"
+            f"[dim](estimate @ $0.30/$1.20 per 1M tokens)[/]",
+            trusted=True,
         )
 
     def _show_models(self) -> None:
@@ -536,14 +613,19 @@ class TraceraTUI(App):
                 model = info["model"] or "—"
                 if info["available"]:
                     marker = "✓" if name == active_name else "·"
-                    lines.append(f"  [bold green]{marker}[/] [bold]{name}[/]  [dim]{model}[/]")
+                    lines.append(
+                        f"  [bold green]{marker}[/] [bold]{escape(name)}[/]  [dim]{escape(model)}[/]"
+                    )
                 else:
                     env = info.get("key_env") or "API_KEY"
-                    lines.append(f"  [dim]✗[/] [dim]{name}[/]  [dim]{model}  [!] missing {env}[/]")
+                    lines.append(
+                        f"  [dim]✗[/] [dim]{escape(name)}[/]  [dim]{escape(model)}  "
+                        f"\\[!] missing {escape(env)}[/]"
+                    )
             lines.append("\n[dim]switch with /model <id> or ctrl+p[/]")
-            panel.add_assistant_message("\n".join(lines))
+            panel.add_assistant_message("\n".join(lines), trusted=True)
         except Exception as e:
-            panel.add_error(f"Cannot list models: {e}")
+            panel.add_error(f"Cannot list models: {escape(str(e))}")
 
     def _show_observability(self, panel: AgentPanel) -> None:
         """Phase 60 — live telemetry as an expandable row."""
@@ -556,6 +638,13 @@ class TraceraTUI(App):
             agent = snap["agent"]
             cost = snap["cost"]
 
+            lines = [
+                "[bold]LLM[/]",
+                f"  calls: {llm['calls']} · errors: {llm['errors']} "
+                f"· {llm['total_tokens']:,} tok · avg {llm['avg_latency_ms']}ms",
+                "",
+                "[bold]Tools[/]  (total {})".format(tools["calls"]),
+            ]
             lines = [
                 "[bold]LLM[/]",
                 f"  calls: {llm['calls']} · errors: {llm['errors']} "
@@ -580,15 +669,15 @@ class TraceraTUI(App):
             panel.add_info_row(
                 f"Observability: {llm['calls']} LLM · {tools['calls']} tools",
                 "\n".join(lines),
+                trusted=True,
             )
         except Exception as e:
-            panel.add_error(f"Observability failed: {e}")
+            panel.add_error(f"Observability failed: {escape(str(e))}")
 
     def _show_dashboard(self) -> None:
         """/dashboard — system overview as an inline widget block."""
         panel = self._panel()
         provider = self.agent.provider
-        from tracera.tui.widgets.dashboard import DashboardWidget
         widget = DashboardWidget(
             provider=getattr(provider, "name", "—"),
             model=provider.default_model or "—",
@@ -610,7 +699,6 @@ class TraceraTUI(App):
         """/memgraph — knowledge graph visualization."""
         panel = self._panel()
         triple_store = getattr(self.agent, "_triple_store", None)
-        from tracera.tui.widgets.memory_viz import MemoryGraphWidget
         widget = MemoryGraphWidget()
         if triple_store is not None and triple_store.triple_count:
             central = triple_store.get_central_concepts(10)
@@ -627,11 +715,79 @@ class TraceraTUI(App):
     def _show_file_context(self) -> None:
         """/files — recently touched files panel."""
         panel = self._panel()
-        from tracera.tui.widgets.file_context import FileContextPanel
         widget = FileContextPanel()
         for path, action in getattr(self, "_recent_files", []):
             widget.add_file(path, action=action)
         panel._append(widget)
+
+    # ── Unified slash surface (every tool/feature is a slash command) ────────
+
+    def _show_features(self, panel: AgentPanel) -> None:
+        """/features — list every capability as a slash command."""
+        from tracera.tui.widgets.slash_actions import FEATURE_GROUPS
+        lines = ["[bold]Features[/] — every capability is a slash command\n"]
+        for group, items in FEATURE_GROUPS.items():
+            lines.append(f"[bold cyan]{group}[/]")
+            lines.extend(f"  [bold]{usage}[/]  [dim]{desc}[/]" for usage, desc in items)
+            lines.append("")
+        lines.append(
+            "[dim]/tool <name> [key=value ...] runs any registry tool directly. "
+            "Type / for autocomplete.[/]"
+        )
+        panel.add_assistant_message("\n".join(lines), trusted=True)
+
+    @work(exclusive=False)
+    async def _run_tool_command(self, spec: str) -> None:
+        """/tool <name> [key=value ...] — run any registered tool inline."""
+        panel = self._panel()
+        try:
+            name, raw_args = parse_tool_invocation(spec)
+        except ValueError as e:
+            panel.add_error(str(e))
+            return
+        if not self.agent.registry.has(name):
+            panel.add_error(f"Unknown tool: {escape(name)}. Try /tools or /features.")
+            return
+        tool = self.agent.registry.get(name)
+        try:
+            args = coerce_args(tool, raw_args)
+        except ValueError as e:
+            panel.add_error(f"Bad arguments for {escape(name)}: {escape(str(e))}")
+            return
+        await self._execute_tool_inline(name, args)
+
+    def _run_tool_alias(self, tool_name: str, arg: str) -> None:
+        """Dispatch a short slash alias (e.g. /blast foo) to its tool."""
+        panel = self._panel()
+        if not self.agent.registry.has(tool_name):
+            panel.add_error(
+                f"Tool '{escape(tool_name)}' not available — run /index first."
+            )
+            return
+        tool = self.agent.registry.get(tool_name)
+        self._run_tool_with_args(tool_name, single_arg_kwargs(tool, arg))
+
+    @work(exclusive=False)
+    async def _run_tool_with_args(self, name: str, args: dict) -> None:
+        await self._execute_tool_inline(name, args)
+
+    async def _execute_tool_inline(self, name: str, args: dict) -> None:
+        panel = self._panel()
+        status = self._status_line()
+        status.update_stats(state="running")
+        panel.add_meta(f"→ [bold]{escape(name)}[/] {escape(format_args(args))}")
+        try:
+            result = await self.agent.registry.execute(name, "tui-cmd", args)
+            body = result.output if result.success else (result.error or result.output)
+            panel.add_info_row(
+                f"{escape(name)} {'✓' if result.success else '✗'} "
+                f"({result.duration_ms:.0f}ms)",
+                body,
+            )
+        except Exception as e:
+            panel.add_error(f"{escape(name)} failed: {escape(str(e))}")
+        finally:
+            status.update_stats(state="idle")
 
     @work(exclusive=False)
     async def _run_search(self, query: str) -> None:
@@ -646,25 +802,29 @@ class TraceraTUI(App):
             symbol_retriever = self.retrieval_pipeline[1]
             hits = symbol_retriever.search(query, k=8)
             if not hits:
-                panel.add_info_row(f"Search: {query}", "[dim]No results.[/]")
+                panel.add_info_row(f"Search: {escape(query)}", "[dim]No results.[/]")
                 return
             lines = []
             for i, hit in enumerate(hits[:8], 1):
                 path = hit.get("file_path") or hit.get("id") or "?"
                 symbol = hit.get("symbol") or ""
                 score = hit.get("_relevance_score") or hit.get("_rrf_score") or ""
-                line = f"  {i}. [bold]{path}[/]"
+                line = f"  {i}. [bold]{escape(str(path))}[/]"
                 if symbol:
-                    line += f" [dim]({symbol})[/]"
+                    line += f" [dim]({escape(str(symbol))})[/]"
                 if score:
                     line += f" [dim]· {float(score):.3f}[/]"
                 lines.append(line)
                 content = (hit.get("content") or "").strip().splitlines()
                 if content:
-                    lines.append("     [dim]" + content[0][:80] + "[/]")
-            panel.add_info_row(f"Search: {query} ({len(hits)} hits)", "\n".join(lines))
+                    lines.append("     [dim]" + escape(content[0][:80]) + "[/]")
+            panel.add_info_row(
+                f"Search: {escape(query)} ({len(hits)} hits)",
+                "\n".join(lines),
+                trusted=True,
+            )
         except Exception as e:
-            panel.add_error(f"Search failed: {e}")
+            panel.add_error(f"Search failed: {escape(str(e))}")
         finally:
             status.update_stats(state="idle")
 
@@ -716,7 +876,7 @@ class TraceraTUI(App):
                 "\n".join(lines),
             )
         except Exception as e:
-            panel.add_error(f"Debug failed: {e}")
+            panel.add_error(f"Debug failed: {escape(str(e))}")
         finally:
             status.update_stats(state="idle")
 
@@ -725,7 +885,9 @@ class TraceraTUI(App):
         """/index — run the Phase 16-24 indexing pipeline."""
         panel = self._panel()
         status = self._status_line()
-        panel.add_assistant_message("[dim]Indexing workspace… this may take a while.[/]")
+        panel.add_assistant_message(
+            "[dim]Indexing workspace… this may take a while.[/]", trusted=True
+        )
         status.update_stats(state="running")
         try:
             from tracera.config.settings import get_settings
@@ -739,10 +901,11 @@ class TraceraTUI(App):
                 f"[bold green]✓ Index complete[/]\n"
                 f"  new: {stats.get('new', 0)} · modified: {stats.get('modified', 0)} · "
                 f"deleted: {stats.get('deleted', 0)} · skipped: {stats.get('skipped', 0)}\n"
-                f"  chunks: {stats.get('chunks_indexed', 0)}"
+                f"  chunks: {stats.get('chunks_indexed', 0)}",
+                trusted=True,
             )
         except Exception as e:
-            panel.add_error(f"Indexing failed: {e}")
+            panel.add_error(f"Indexing failed: {escape(str(e))}")
         finally:
             status.update_stats(state="idle")
 
@@ -753,19 +916,25 @@ class TraceraTUI(App):
         status = self._status_line()
         status.update_stats(state="running")
         try:
-            from tracera.tools.test_runner import TestRunner
             import sys
+
+            from tracera.tools.test_runner import TestRunner
             runner = TestRunner(self.workspace_path, python=sys.executable)
             report = await asyncio.to_thread(runner.run)
             lines = [report.summary, ""]
             for f in report.failures[:10]:
                 location = f"{f.file_path}:{f.line_number}" if f.file_path else f.test_name
-                lines.append(f"  [red]✗[/] {location}: {f.error_type}: {f.error_message[:120]}")
+                lines.append(
+                    f"  [red]✗[/] {escape(location)}: {escape(f.error_type)}: "
+                    f"{escape(f.error_message[:120])}"
+                )
             if not report.failures and not report.success and report.raw_output:
                 lines.append(report.raw_output[:800])
-            panel.add_assistant_message("\n".join(lines) or "[dim]No tests detected.[/]")
+            panel.add_assistant_message(
+                "\n".join(lines) or "[dim]No tests detected.[/]", trusted=True
+            )
         except Exception as e:
-            panel.add_error(f"Test run failed: {e}")
+            panel.add_error(f"Test run failed: {escape(str(e))}")
         finally:
             status.update_stats(state="idle")
 
@@ -822,7 +991,7 @@ class TraceraTUI(App):
             "[bold]Code index:[/] "
             + ("[green]indexed[/]" if manifest.exists() else "[yellow]not indexed[/]")
         )
-        panel.add_info_row(f"Repository: {root.name or root}", "\n".join(lines))
+        panel.add_info_row(f"Repository: {escape(root.name or str(root))}", "\n".join(lines))
 
     def _run_deps(self, symbol: str) -> None:
         """/deps — symbol dependency chain as a collapsible row."""
@@ -830,21 +999,21 @@ class TraceraTUI(App):
         from tracera.config.settings import get_settings
         graph_path = get_settings().index_dir / "symbol_graph.json"
         if not graph_path.exists():
-            panel.add_info_row(f"Dependencies: {symbol}", "[dim]No symbol graph — run /index.[/]")
+            panel.add_info_row(f"Dependencies: {escape(symbol)}", "[dim]No symbol graph — run /index.[/]")
             return
         try:
             from tracera.graph.symbol_graph import SymbolGraph
             graph = SymbolGraph.load(graph_path)
             neighbors = graph.neighbors_of(symbol)
             if not neighbors:
-                panel.add_info_row(f"Dependencies: {symbol}", "[dim]No dependencies found.[/]")
+                panel.add_info_row(f"Dependencies: {escape(symbol)}", "[dim]No dependencies found.[/]")
                 return
             lines = "\n".join(f"  [dim]•[/] {n}" for n in neighbors[:25])
             panel.add_info_row(
-                f"Dependencies: {symbol} ({len(neighbors)})", lines
+                f"Dependencies: {escape(symbol)} ({len(neighbors)})", lines
             )
         except Exception as e:
-            panel.add_info_row(f"Dependencies: {symbol}", f"[dim]Failed: {e}[/]")
+            panel.add_info_row(f"Dependencies: {escape(symbol)}", f"[dim]Failed: {escape(str(e))}[/]")
 
     # ── Phase map (roadmap coverage + verified checklist) ─────────────────────
 
@@ -874,7 +1043,7 @@ class TraceraTUI(App):
                 encoding="utf-8",
             )
         except Exception as e:
-            self._panel().add_error(f"Could not save phase progress: {e}")
+            self._panel().add_error(f"Could not save phase progress: {escape(str(e))}")
 
     def _show_phases(self, text: str) -> None:
         """
@@ -904,7 +1073,8 @@ class TraceraTUI(App):
             self._save_verified_phases(set())
             panel.add_assistant_message(
                 "[bold green]✓[/] Phase verification progress cleared. "
-                "Follow [cyan]tests/PROBLEM_STATEMENT.md[/] to re-verify."
+                "Follow [cyan]tests/PROBLEM_STATEMENT.md[/] to re-verify.",
+                trusted=True,
             )
             return
 
@@ -929,7 +1099,8 @@ class TraceraTUI(App):
             self._save_verified_phases(verified)
             action = "verified" if sub == "done" else "unmarked"
             panel.add_assistant_message(
-                f"[bold green]✓[/] Phase {number} {action} — {phase.title}"
+                f"[bold green]✓[/] Phase {number} {action} — {escape(phase.title)}",
+                trusted=True,
             )
             return
 
@@ -997,7 +1168,7 @@ class TraceraTUI(App):
             "[dim]Tick phases off as you verify them: /phases done <n> · "
             "the scenario lives in tests/PROBLEM_STATEMENT.md[/]"
         )
-        panel.add_assistant_message("\n".join(lines))
+        panel.add_assistant_message("\n".join(lines), trusted=True)
 
     # ── Rich execution display (Phase 57) ─────────────────────────────────────
 
@@ -1054,13 +1225,14 @@ class TraceraTUI(App):
         stats = self._conversation.stats
         panel.add_assistant_message(
             f"[bold cyan]System Status[/]\n\n"
-            f"Provider:    [bold]{provider.name}[/]\n"
-            f"Model:       [bold]{provider.default_model}[/]\n"
-            f"Workspace:   [bold]{self.workspace_path}[/]\n"
+            f"Provider:    [bold]{escape(provider.name)}[/]\n"
+            f"Model:       [bold]{escape(provider.default_model)}[/]\n"
+            f"Workspace:   [bold]{escape(str(self.workspace_path))}[/]\n"
             f"Messages:    [bold cyan]{stats.total_messages}[/]\n"
             f"Tool calls:  [bold green]{stats.tool_calls}[/]\n"
             f"Tokens:      [bold cyan]{stats.total_tokens:,}[/]\n"
-            f"Memory:      [bold orchid]{self.memory.count}[/] entries\n"
+            f"Memory:      [bold orchid]{self.memory.count}[/] entries\n",
+            trusted=True,
         )
 
     # ── Agent execution ───────────────────────────────────────────────────────
@@ -1121,18 +1293,18 @@ class TraceraTUI(App):
             root = Path(self.workspace_path).resolve()
             resolved = path.resolve()
             if not str(resolved).startswith(str(root)) or not resolved.is_file():
-                self._panel().add_error(f"Not a workspace file: {path}")
+                self._panel().add_error(f"Not a workspace file: {escape(str(path))}")
                 return
         except Exception as e:
-            self._panel().add_error(f"Cannot attach {path}: {e}")
+            self._panel().add_error(f"Cannot attach {escape(str(path))}: {escape(str(e))}")
             return
         vision = bool(getattr(self.agent.provider, "supports_vision", False))
         warning = is_image(str(resolved)) and not vision
         self._panel().add_attachment(str(resolved), warning=warning)
         if warning:
             self._panel().add_meta(
-                f"[dim]⚠ {path.name} is an image — the active model "
-                f"({self.agent.provider.default_model or '?'}) can't view images, "
+                f"[dim]⚠ {escape(path.name)} is an image — the active model "
+                f"({escape(self.agent.provider.default_model or '?')}) can't view images, "
                 f"only its path will reach the agent.[/]"
             )
 
@@ -1311,7 +1483,7 @@ class TraceraTUI(App):
                         panel.add_meta(
                             f"⏱ {total_iterations} iter · ⚙ {total_tool_calls} tools · "
                             f"{total_tokens:,} tok · {total_latency:.0f}ms · "
-                            f"model {actual_model}"
+                            f"model {escape(str(actual_model))}"
                         )
                         status.update_stats(
                             state="done",
@@ -1335,7 +1507,7 @@ class TraceraTUI(App):
                             status.update_stats(state="idle")
 
         except Exception as e:
-            panel.add_error(f"Agent error: {e}")
+            panel.add_error(f"Agent error: {escape(str(e))}")
             status.update_stats(state="error")
         finally:
             # Back to the input the instant the run ends (or is cancelled).
@@ -1354,13 +1526,16 @@ class TraceraTUI(App):
             decomposer = TaskDecomposer(self.agent.provider)
             plan = await decomposer.decompose(task)
             body = plan.to_markdown()
-            panel.add_info_row(f"Plan: {len(plan.items)} steps", body, prefix="▸")
+            panel.add_info_row(
+                f"Plan: {len(plan.items)} steps", body, prefix="▸", trusted=True
+            )
             panel.add_assistant_message(
                 f"[bold]Plan ready[/]: {len(plan.items)} steps — click the "
-                f"[bold]▸ Plan[/] row above to expand it."
+                f"[bold]▸ Plan[/] row above to expand it.",
+                trusted=True,
             )
         except Exception as e:
-            panel.add_error(f"Planning failed: {e}")
+            panel.add_error(f"Planning failed: {escape(str(e))}")
         finally:
             status.update_stats(state="idle")
 
@@ -1437,7 +1612,7 @@ class TraceraTUI(App):
         panel.add_info_row("Enhanced Memory", content)
 
     def action_show_help(self) -> None:
-        self._panel().add_assistant_message(_HELP_TEXT)
+        self._panel().add_assistant_message(_HELP_TEXT, trusted=True)
 
     def action_toggle_verbose(self) -> None:
         """ctrl+t — toggle showing tool-call arguments in the stream rows."""
@@ -1450,10 +1625,15 @@ class TraceraTUI(App):
         self._panel().add_assistant_message(
             "[dim]Verbose tool rows "
             + ("[green]on[/]" if panel.verbose else "[red]off[/]")
-            + " — new rows show/hide their arguments.[/]"
+            + " — new rows show/hide their arguments.[/]",
+            trusted=True,
         )
 
     # ── Provider / model switching ────────────────────────────────────────────
+
+    def action_cycle_theme(self) -> None:
+        """Command-palette entry for /theme."""
+        self._cycle_theme()
 
     def action_switch_provider(self) -> None:
         """Open the provider/model selector (ctrl+p)."""
@@ -1470,7 +1650,7 @@ class TraceraTUI(App):
                 callback=self._on_provider_picked,
             )
         except Exception as e:
-            self._panel().add_error(f"Cannot open provider switcher: {e}")
+            self._panel().add_error(f"Cannot open provider switcher: {escape(str(e))}")
 
     def _on_provider_picked(self, result: Any) -> None:
         if not result:
@@ -1496,7 +1676,7 @@ class TraceraTUI(App):
                 name=name, model=model, settings=get_settings()
             )
         except Exception as e:
-            self._panel().add_error(f"Provider {name} unavailable: {e}")
+            self._panel().add_error(f"Provider {escape(name)} unavailable: {escape(str(e))}")
             return
 
         self.agent.provider = new_provider
@@ -1514,16 +1694,19 @@ class TraceraTUI(App):
         self._update_header_model(model)
         self._status_line().update_stats(state="idle", model=model)
         self._panel().add_meta(
-            f"→ [bold cyan]Provider switched:[/] {old_name} ({old_model}) "
-            f"→ [bold cyan]{name}[/] ({model})"
+            f"→ [bold cyan]Provider switched:[/] {escape(old_name)} ({escape(old_model)}) "
+            f"→ [bold cyan]{escape(name)}[/] ({escape(model)})"
         )
 
     def _update_header_model(self, model: str) -> None:
         from rich.text import Text
+
+        from tracera.tui.theme import get_theme as _gt
+        th = _gt()
         right = Text()
-        right.append("● ", style="bold #4ac26b")
-        right.append(model, style="bold #ebebf0")
-        right.append("  /help", style="dim #3a3a4a")
+        right.append("● ", style=f"bold #{th.success}")
+        right.append(model, style=f"bold #{th.text}")
+        right.append("  /help", style=f"dim #{th.faint}")
         try:
             self.query_one("#header-right", Static).update(right)
         except Exception:
@@ -1579,6 +1762,10 @@ class TraceraTUI(App):
         except Exception:
             pass
         self.run_worker(self._type_welcome())
+        # Splash: decrypt/materialize boot animation above the main layout.
+        # Any keypress skips it; TRACERA_NO_ANIMATION / NO_COLOR / headless
+        # runs skip automatically; it pops back to this screen when done.
+        self.push_screen(SplashScreen())
 
     async def _attach_mcp_worker(self) -> None:
         """Phase 41 — merge external MCP tools into the runtime registry."""
@@ -1596,11 +1783,11 @@ class TraceraTUI(App):
             panel = self._panel()
             if self._banner:
                 panel.add_banner(self._banner)
-                panel.add_meta(f"workspace {self.workspace_path}")
+                panel.add_meta(f"workspace {escape(str(self.workspace_path))}")
             await panel.type_message(
                 "Ready. What would you like to work on?\n"
                 "Tool calls, file edits, and command output stream inline as I work. "
-                "Type [bold]/help[/] for all commands.\n"
+                "Type /help for all commands.\n"
             )
         except Exception:
             pass

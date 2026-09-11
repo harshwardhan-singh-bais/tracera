@@ -214,6 +214,37 @@ def _build_agent(settings=None, workspace_path: Path | None = None, retrieval_pi
         MemoryWorkerStatusTool(memory_layer),
     ])
 
+    # Register session/context tools (always available, degrade gracefully)
+    from tracera.tools.session_tools import (
+        AssembleTaskContextTool,
+        PlanTurnTool,
+        GetRankedContextTool,
+        GetSessionStatsTool,
+        GetRepoMapTool,
+    )
+    registry.register_many([
+        AssembleTaskContextTool(retrieval_pipeline=retrieval_pipeline),
+        PlanTurnTool(retrieval_pipeline=retrieval_pipeline),
+        GetRankedContextTool(retrieval_pipeline=retrieval_pipeline),
+        GetSessionStatsTool(session_manager=session_manager),
+        GetRepoMapTool(retrieval_pipeline=retrieval_pipeline, workspace=workspace),
+    ])
+
+    # Register test/run tools (always available)
+    from tracera.tools.test_runner import TestRunner
+    from tracera.workspace.sandbox import WorkspaceSandbox
+    registry.register_many([
+        _make_run_tests_tool(workspace),
+        _make_inspect_repository_tool(workspace),
+    ])
+
+    # Register additional memory tools for MCP parity
+    registry.register_many([
+        _SearchMemoryTool(memory_store=enhanced_memory),
+        _GetMemoryGraphTool(triple_store=triple_store, memory_store=enhanced_memory),
+        _GetServerStatusTool(),
+    ])
+
     # Register jCodeMunch-inspired structural analysis tools (Phase 51+)
     from tracera.tools.registry import extend_registry_with_ast_tools
     extend_registry_with_ast_tools(
@@ -224,6 +255,225 @@ def _build_agent(settings=None, workspace_path: Path | None = None, retrieval_pi
     )
 
     return agent, workspace, provider
+
+
+def _make_run_tests_tool(workspace):
+    from tracera.tools.base import Tool, ToolResult
+    from tracera.tools.test_runner import TestRunner
+    import sys
+
+    class RunTestsTool(Tool):
+        name = "run_tests"
+        description = "Run the project's test suite. Auto-detects pytest/unittest/npm/cargo."
+        parameters = {
+            "type": "object",
+            "properties": {
+                "framework": {"type": "string", "enum": ["pytest", "unittest", "npm", "cargo"]},
+                "test_paths": {"type": "array", "items": {"type": "string"}},
+            },
+        }
+
+        def __init__(self, ws):
+            self._ws = ws
+
+        @property
+        def parameters_schema(self):
+            return self.parameters
+
+        async def execute(self, framework=None, test_paths=None):
+            try:
+                runner = TestRunner(self._ws.root, python=sys.executable)
+                report = await asyncio.to_thread(runner.run, framework=framework, test_paths=test_paths)
+                lines = [report.summary, ""]
+                for f in report.failures[:20]:
+                    loc = f"{f.file_path}:{f.line_number}" if f.file_path else f.test_name
+                    lines.append(f"- {loc}: {f.error_type}: {f.error_message[:200]}")
+                if not report.failures and not report.success and report.raw_output:
+                    lines.append(report.raw_output[:1500])
+                return ToolResult.ok(self.name, "", "\n".join(lines))
+            except Exception as e:
+                return ToolResult.fail(self.name, "", str(e))
+
+    return RunTestsTool(workspace)
+
+
+def _make_inspect_repository_tool(workspace):
+    from tracera.tools.base import Tool, ToolResult
+
+    class InspectRepositoryTool(Tool):
+        name = "inspect_repository"
+        description = "Return an overview of the repository: structure, languages, git state, index freshness."
+        parameters = {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Optional path to inspect (defaults to workspace root)."},
+            },
+        }
+
+        def __init__(self, ws):
+            self._ws = ws
+
+        @property
+        def parameters_schema(self):
+            return self.parameters
+
+        async def execute(self, path=None):
+            try:
+                from tracera.git.operations import GitRepo
+                from tracera.config.settings import get_settings
+                import pathlib
+                root = pathlib.Path(path).resolve() if path else self._ws.root
+                lines = [f"## Repository: {root}\n"]
+                try:
+                    entries = await self._ws.list_directory(".", max_depth=1)
+                    dirs, files = [], []
+                    for e in entries:
+                        if len(e.relative.parts) == 1:
+                            (dirs if e.is_dir else files).append(str(e.relative))
+                    if dirs:
+                        lines.append(f"Dirs: {', '.join(sorted(dirs)[:20])}")
+                    if files:
+                        lines.append(f"Files: {', '.join(sorted(files)[:20])}")
+                    lines.append("")
+                except Exception as e:
+                    lines.append(f"Structure unavailable: {e}")
+                try:
+                    repo = GitRepo(root)
+                    status = repo.status()
+                    lines.append(f"Git: branch `{status.branch}` — {'dirty' if status.is_dirty else 'clean'}")
+                    for c in repo.log(max_count=3):
+                        lines.append(f"  • {c.hexsha[:7]} {c.summary[:60]}")
+                except Exception:
+                    lines.append("Git: not a repository")
+                settings = get_settings()
+                manifest = settings.index_dir / "index_manifest.json"
+                lines.append("Code index: " + ("indexed" if manifest.exists() else "not indexed — run /index"))
+                return ToolResult.ok(self.name, "", "\n".join(lines))
+            except Exception as e:
+                return ToolResult.fail(self.name, "", str(e))
+
+    return InspectRepositoryTool(workspace)
+
+
+class _SearchMemoryTool(Tool):
+    """Search enhanced memory store."""
+    name = "search_memory"
+    description = "Search the enhanced memory store with TF-IDF ranking."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "What to search for."},
+            "k": {"type": "integer", "description": "Number of results (default 10).", "default": 10},
+            "memory_type": {"type": "string", "description": "Optional filter (fact, rule, preference, etc.)."},
+        },
+        "required": ["query"],
+    }
+
+    def __init__(self, memory_store=None):
+        self._memory = memory_store
+
+    @property
+    def parameters_schema(self):
+        return self.parameters
+
+    async def execute(self, query: str, k: int = 10, memory_type: str | None = None):
+        try:
+            if not self._memory:
+                return ToolResult.ok(self.name, "", "No memory store available.")
+            from tracera.memory.taxonomy import MemoryType
+            mt = None
+            if memory_type:
+                try:
+                    mt = MemoryType(memory_type)
+                except ValueError:
+                    return ToolResult.fail(self.name, "", f"Unknown memory type '{memory_type}'.")
+            results = self._memory.recall(query, k=k, memory_type=mt)
+            if not results:
+                return ToolResult.ok(self.name, "", "No matching memories found.")
+            sep = chr(10)
+            lines = [f"## Memory Search: '{query}'" + sep]
+            for mem in results:
+                icon_map = {"fact": "📌", "rule": "📏", "relationship": "🔗",
+                            "skill": "🛠️", "preference": "⭐", "event": "📋"}
+                icon = icon_map.get(mem.memory_type.value, "•")
+                conf = f" ({mem.confidence:.0%})" if mem.confidence < 0.9 else ""
+                lines.append(f"- {icon} [{mem.memory_type.value}] {mem.content}{conf}")
+            return ToolResult.ok(self.name, "", sep.join(lines))
+        except Exception as e:
+            return ToolResult.fail(self.name, "", str(e))
+
+
+class _GetMemoryGraphTool(Tool):
+    """Get knowledge graph of semantic relationships."""
+    name = "get_memory_graph"
+    description = "Get the knowledge graph of semantic relationships."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "concept": {"type": "string", "description": "Optional concept to focus on."},
+            "max_depth": {"type": "integer", "description": "Traversal depth (default 2).", "default": 2},
+        },
+        "required": [],
+    }
+
+    def __init__(self, triple_store=None, memory_store=None):
+        self._triple_store = triple_store
+        self._memory = memory_store
+
+    @property
+    def parameters_schema(self):
+        return self.parameters
+
+    async def execute(self, concept: str = "", max_depth: int = 2):
+        try:
+            if not self._triple_store or not self._memory:
+                return ToolResult.ok(self.name, "", "No memory store available.")
+            sep = chr(10)
+            if concept:
+                triples = self._triple_store.get_neighbors(concept, max_depth=max_depth)
+                if not triples:
+                    return ToolResult.ok(self.name, "", f"No relationships found for '{concept}'.")
+                lines = [f"## Knowledge Graph: '{concept}'" + sep]
+                for t in triples:
+                    lines.append(f"- {t.subject} → {t.predicate} → {t.object}")
+                return ToolResult.ok(self.name, "", sep.join(lines))
+            else:
+                stats = self._memory.stats()
+                triple_count = self._triple_store.triple_count
+                lines = ["## Knowledge Graph Summary" + sep, f"**Memories:** {stats['total']} total"]
+                if stats.get("by_type"):
+                    for mt, count in stats["by_type"].items():
+                        lines.append(f"  - {mt}: {count}")
+                lines.append(sep + f"**Triples:** {triple_count}")
+                if triple_count > 0:
+                    lines.append(sep + "**Recent relationships:**")
+                    for t in list(self._triple_store.all_triples)[:10]:
+                        lines.append(f"- {t.subject} → {t.predicate} → {t.object}")
+                return ToolResult.ok(self.name, "", sep.join(lines))
+        except Exception as e:
+            return ToolResult.fail(self.name, "", str(e))
+
+
+class _GetServerStatusTool(Tool):
+    """Get server status and diagnostics."""
+    name = "get_server_status"
+    description = "Get server status, version information, and diagnostic details."
+    parameters = {"type": "object", "properties": {}, "required": []}
+
+    def __init__(self):
+        pass
+
+    @property
+    def parameters_schema(self):
+        return self.parameters
+
+    async def execute(self):
+        try:
+            import json
+            status = {"server": "TRACERA", "version": "0.1.0", "workspace": "active", "tools_available": "full", "memory": "enabled"}
+            return ToolResult.ok(self.name, "", json.dumps(status, indent=2))
+        except Exception as e:
+            return ToolResult.fail(self.name, "", str(e))
 
 
 async def _attach_external_mcp(agent, settings, workspace_path) -> int:

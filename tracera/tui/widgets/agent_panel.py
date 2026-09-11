@@ -27,8 +27,23 @@ removable chips above the pill.
 from __future__ import annotations
 
 import time
+from functools import lru_cache
 from pathlib import Path
 
+from pygments.lexers import get_lexer_for_filename
+from pygments.token import (
+    Comment,
+    Generic,
+    Keyword,
+    Name,
+    Number,
+    Operator,
+    String,
+    Token,
+)
+from pygments.util import ClassNotFound
+from rich.markup import escape
+from rich.style import Style
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.message import Message
@@ -38,6 +53,7 @@ from textual.containers import Horizontal, Vertical, ScrollableContainer
 from rich.text import Text
 
 from tracera.tui.diffutil import is_image
+from tracera.tui.theme import get_theme
 from tracera.tui.widgets.command_input import CommandInput
 from tracera.tui.widgets.command_registry import SLASH_COMMANDS
 
@@ -55,6 +71,11 @@ _SPINNERS = {
 
 # Default to thinking spinner for backward compatibility
 _SPINNER = _SPINNERS["thinking"]
+
+
+def _t(key: str) -> str:
+    """Active theme color as an inline-Rich hex string ('#da8548')."""
+    return f"#{getattr(get_theme(), key)}"
 
 
 def format_args(args: dict) -> str:
@@ -75,33 +96,50 @@ class MessageWidget(Static):
 
     User and assistant turns get a rounded border with the role as the
     border title (┌─ YOU ─ / ┌─ TRACERA ─); tool/meta lines stay borderless.
-    Content is rendered as Rich markup (Static) and colored per role by CSS.
+
+    Content is **escaped by default**: model output, tool output, and file
+    content routinely contain ``[``/``]`` (``data[0]``, ``List[int]``,
+    markdown links, code snippets) which Rich markup would eat or crash on.
+    Pass ``trusted=True`` only for strings this codebase itself authored as
+    Rich markup (banners, command output tables…).
     """
 
     _BORDER_TITLES = {"user": " > ", "assistant": " ◆ TRACERA "}
     _PREFIXES = {"tool": "⚙  ", "error": "✗  "}
 
-    def __init__(self, role: str, content: str, **kwargs):
+    def __init__(self, role: str, content: str, *, trusted: bool = False, **kwargs):
         self.role = role
         self.msg_content = content
-        display = f"{self._PREFIXES.get(role, '')}{content}"
+        self.trusted = trusted
+        display = self._compose_display(content)
         super().__init__(display, markup=True, classes=f"msg-{role}", **kwargs)
         title = self._BORDER_TITLES.get(role)
         if title:
             self.border_title = title
 
+    def _compose_display(self, content: str) -> str:
+        """Prefix + (escape unless trusted) — the single render path.
+
+        NOTE: deliberately NOT named ``_render`` — that name is a Textual
+        ``Static`` hook invoked by the compositor with its own signature.
+        """
+        prefix = self._PREFIXES.get(self.role, "")
+        body = content if self.trusted else escape(content)
+        return f"{prefix}{body}"
+
     def set_content(self, content: str) -> None:
         """Replace the message content (used by streaming)."""
         self.msg_content = content
-        self.update(f"{self._PREFIXES.get(self.role, '')}{content}")
+        self.update(self._compose_display(content))
 
     def set_markdown(self, content: str) -> None:
         """Replace the message content with a Markdown renderable.
 
         Used once the stream completes so the final assistant turn is rendered
         as full Markdown (headers, code blocks with syntax highlighting, lists,
-        tables, blockquotes) instead of raw markup. Falls back to plain markup
-        if Markdown rendering fails for any reason.
+        tables, blockquotes) instead of raw markup. Falls back to escaped plain
+        markup if Markdown rendering fails for any reason. Markdown source is
+        never treated as Rich markup, so brackets survive verbatim.
         """
         self.msg_content = content
         try:
@@ -116,7 +154,7 @@ class MessageWidget(Static):
             )
             self.update(md)
         except Exception:
-            self.update(content)
+            self.update(escape(content))
 
 
 _GLYPH = {
@@ -136,30 +174,40 @@ class ThinkingDisclosure(Widget):
         self.expanded = False
 
     def compose(self) -> ComposeResult:
-        yield Static(f"▸ Thinking… ({len(self._entries)})", id="reasoning-toggle")
+        yield Static(self._trusted_label(), id="reasoning-toggle")
         with Vertical(id="reasoning-body"):
             for kind, text in self._entries:
                 glyph = _GLYPH.get(kind, "·")
                 yield Static(
-                    f"{glyph} {text}",
+                    f"{glyph} {escape(text)}",
                     classes=f"reasoning-line reasoning-{kind}",
                 )
 
     def on_mount(self) -> None:
         self.query_one("#reasoning-body", Vertical).display = False
+        self._refresh_toggle()
 
     def on_click(self, event) -> None:
         if getattr(event.widget, "id", None) == "reasoning-toggle":
             self.toggle()
 
+    def _trusted_label(self) -> Text:
+        """Render the toggle label as styled Text (no markup parsing)."""
+        t = Text()
+        glyph = "▾" if self.expanded else "▸"
+        t.append(f" {glyph} Thinking… ({len(self._entries)})", style=f"dim italic {_t('muted')}")
+        return t
+
+    def _refresh_toggle(self) -> None:
+        try:
+            self.query_one("#reasoning-toggle", Static).update(self._trusted_label())
+        except Exception:
+            pass
+
     def toggle(self) -> None:
         self.expanded = not self.expanded
-        toggle = self.query_one("#reasoning-toggle", Static)
+        self._refresh_toggle()
         body = self.query_one("#reasoning-body", Vertical)
-        if self.expanded:
-            toggle.update(f"▾ Thinking… ({len(self._entries)})")
-        else:
-            toggle.update(f"▸ Thinking… ({len(self._entries)})")
         body.display = self.expanded
 
 
@@ -172,15 +220,16 @@ class PhaseRow(Static):
         ◇ Planning     ← superseded by the next phase (dim)
     """
 
-    # Map phases to appropriate spinners - all consistent blue theme
+    # Map phases to appropriate spinners — color resolved per render so the
+    # theme preset applies live.
     _PHASE_CONFIG = {
-        "planning": ("thinking", "#6cb6ff"),  # Circle rotation - planning
-        "thinking": ("pulse", "#6cb6ff"),     # Pulsing - thinking
-        "searching": ("running", "#6cb6ff"),  # Classic - searching
-        "indexing": ("loading", "#6cb6ff"),   # Progress wave - indexing
-        "running": ("blocks", "#6cb6ff"),     # Filling block - executing
-        "generating": ("wave", "#6cb6ff"),    # Vertical wave - generating
-        "writing": ("arrows", "#6cb6ff"),     # Spinning arrows - writing
+        "planning": "thinking",   # Circle rotation - planning
+        "thinking": "pulse",      # Pulsing - thinking
+        "searching": "running",   # Classic - searching
+        "indexing": "loading",    # Progress wave - indexing
+        "running": "blocks",      # Filling block - executing
+        "generating": "wave",     # Vertical wave - generating
+        "writing": "arrows",      # Spinning arrows - writing
     }
 
     def __init__(self, label: str, phase_type: str = "thinking", **kwargs) -> None:
@@ -189,8 +238,7 @@ class PhaseRow(Static):
         self.phase_type = phase_type.lower()
         self._frame = 0
         self._spinning = True
-        # Get appropriate spinner and color for this phase
-        spinner_key, self._color = self._PHASE_CONFIG.get(self.phase_type, ("thinking", "#6cb6ff"))
+        spinner_key = self._PHASE_CONFIG.get(self.phase_type, "thinking")
         self._spinner = _SPINNERS[spinner_key]
 
     def on_mount(self) -> None:
@@ -211,27 +259,108 @@ class PhaseRow(Static):
     def render(self) -> Text:
         text = Text()
         if self._spinning:
+            color = _t("secondary")
             text.append(
                 f" {self._spinner[self._frame % len(self._spinner)]} ",
-                style=f"bold {self._color}",
+                style=f"bold {color}",
             )
-            text.append(self.phase_label, style=f"bold {self._color}")
+            text.append(self.phase_label, style=f"bold {color}")
         else:
-            text.append(" ◇ ", style="dim #9a9aa3")
-            text.append(self.phase_label, style="dim #9a9aa3")
+            text.append(" ◇ ", style=f"dim {_t('muted')}")
+            text.append(self.phase_label, style=f"dim {_t('muted')}")
         return text
 
 
 # ── Inline tool rows ─────────────────────────────────────────────────────────
 
-_DIFF_STYLES = {
-    "add": "#4ac26b",
-    "del": "#f47067",
-    "ctx": "#9a9aa3",
-    "hunk": "#d2a8ff",
-    "ellipsis": "#55555e",
-}
 _DIFF_PREFIX = {"add": "+", "del": "-", "hunk": "  ", "ctx": "  ", "ellipsis": "  "}
+
+
+def _diff_tint_bg(kind: str) -> str | None:
+    """Background wash for a diff kind, from the active theme preset."""
+    theme = get_theme()
+    return {
+        "add": theme.diff_add_bg,
+        "del": theme.diff_del_bg,
+        "hunk": theme.diff_hunk_bg,
+    }.get(kind)
+
+
+def _diff_flat_style(kind: str) -> str:
+    """Fallback flat line color for a diff kind, from the active theme."""
+    theme = get_theme()
+    return {
+        "add": f"#{theme.success}",
+        "del": f"#{theme.error}",
+        "hunk": f"#{theme.meta}",
+        "ellipsis": f"#{theme.faint}",
+    }.get(kind, f"dim #{theme.muted}")
+
+
+#: Token colors for syntax-highlighted diffs (pygments Token types).
+#: A deliberately small, calm palette — full monokai-per-token would be noise.
+_PYGMENTS_STYLES = {
+    Comment: "italic #6a7a8a",
+    Keyword: "bold #d2a8ff",
+    Keyword.Type: "#6cb6ff",
+    String: "#7ee787",
+    Number: "#ffd700",
+    Name.Function: "bold #6cb6ff",
+    Name.Class: "bold #ffd700",
+    Name.Decorator: "#ff9f43",
+    Name.Builtin: "#6cb6ff",
+    Name.Exception: "bold #f47067",
+    Operator: "#ff9f43",
+    Generic.Deleted: "#f47067",
+    Generic.Inserted: "#4ac26b",
+}
+
+
+@lru_cache(maxsize=32)
+def _lexer_for(path: str | None):
+    """Pygments lexer for a file path, or None when unknown."""
+    if not path:
+        return None
+    try:
+        return get_lexer_for_filename(path)
+    except ClassNotFound:
+        return None
+
+
+def _highlight_diff_line(line: str, kind: str, path: str | None) -> Text:
+    """One diff line: syntax-highlight tokens + add/del tint underneath.
+
+    Tokens are colored by pygments; the add/del coloring becomes a subtle
+    background wash so removed/added code is still readable *as code*.
+    Falls back to the flat red/green/… line style when no lexer matches or
+    pygments errors for any reason.
+    """
+    prefix = _DIFF_PREFIX.get(kind, "  ")
+    if len(line) > 140:
+        line = line[:137] + "…"
+    flat_style = _diff_flat_style(kind)
+    lexer = _lexer_for(path)
+    if lexer is None:
+        return Text(f"   {prefix} {line}", style=flat_style)
+    tint_bg = _diff_tint_bg(kind)
+    tint = Style(bgcolor=tint_bg) if tint_bg else None
+    try:
+        result = Text()
+        result.append(f"   {prefix} ", style="dim")
+        for tok_type, tok_value in lexer.get_tokens(line):
+            if not tok_value or tok_value == "\n":
+                continue
+            color = _PYGMENTS_STYLES.get(tok_type)
+            if color is not None:
+                style = Style.parse(color)
+            else:
+                style = Style.parse(flat_style) if isinstance(flat_style, str) else flat_style
+            if tint is not None:
+                style = tint + style
+            result.append(tok_value, style)
+        return result
+    except Exception:
+        return Text(f"   {prefix} {line}", style=flat_style)
 
 
 class ToolRow(Static):
@@ -249,31 +378,31 @@ class ToolRow(Static):
             + new line
     """
 
-    # Tool category colors for timeline visualization
+    # Tool category → semantic color key in the active Theme preset.
     _TOOL_CATEGORIES = {
-        # Search/analysis tools - blue
-        "search_code": "#6cb6ff",
-        "find_symbol": "#6cb6ff",
-        "find_definition": "#6cb6ff",
-        "grep": "#6cb6ff",
-        "get_context": "#6cb6ff",
-        "get_dependencies": "#6cb6ff",
-        "find_references": "#6cb6ff",
-        # Read tools - yellow
-        "read_file": "#ffd700",
-        "list_dir": "#ffd700",
-        # Write/edit tools - green
-        "write_file": "#4ac26b",
-        "edit_file": "#4ac26b",
-        "delete_file": "#4ac26b",
-        # Command tools - purple
-        "run_command": "#d2a8ff",
-        # Git tools - orange
-        "git": "#ff9f43",
-        # Memory tools - pink
-        "memory": "#ff6b6b",
-        # Test tools - cyan
-        "test": "#00d2d3",
+        # Search/analysis tools
+        "search_code": "secondary",
+        "find_symbol": "secondary",
+        "find_definition": "secondary",
+        "grep": "secondary",
+        "get_context": "secondary",
+        "get_dependencies": "secondary",
+        "find_references": "secondary",
+        # Read tools
+        "read_file": "warning",
+        "list_dir": "warning",
+        # Write/edit tools
+        "write_file": "success",
+        "edit_file": "success",
+        "delete_file": "success",
+        # Command tools
+        "run_command": "meta",
+        # Git tools
+        "git": "accent",
+        # Memory tools
+        "memory": "error",
+        # Test tools
+        "test": "secondary",
     }
 
     def __init__(
@@ -307,8 +436,8 @@ class ToolRow(Static):
         self.expanded = False
 
     def _get_tool_color(self) -> str:
-        """Get color based on tool category."""
-        return self._TOOL_CATEGORIES.get(self.tool_name, "#dcdcf5")
+        """Get the theme color key for this tool's category."""
+        return _t(self._TOOL_CATEGORIES.get(self.tool_name, "text"))
 
     # ── Lifecycle ────────────────────────────────────────────────────────────
 
@@ -365,54 +494,52 @@ class ToolRow(Static):
             text.append(f" {self._spinner[self._frame]} ", style=f"bold {tool_color}")
             text.append(self.tool_name, style=f"bold {tool_color}")
             if self.verbose and self.args_str:
-                text.append(f"  {self.args_str}", style="dim #8a8a96")
+                text.append(f"  {self.args_str}", style=f"dim {_t('muted')}")
             return text
 
         icon = "✓" if self.success else "✗"
-        icon_style = "bold #4ac26b" if self.success else "bold #f47067"
+        icon_style = f"bold {_t('success')}" if self.success else f"bold {_t('error')}"
         text.append(f" {icon} ", style=icon_style)
         text.append(self.tool_name, style=f"bold {tool_color}")
 
         if self.diff_path and self.success:
             # Code-gen summary: 📝 path  +N -M
-            text.append(f"  📝 {self.diff_path}", style="bold #d2a8ff")
+            text.append(f"  📝 {self.diff_path}", style=f"bold {_t('meta')}")
             if self._diff_added or self._diff_removed:
-                text.append(f"  +{self._diff_added}", style="bold #4ac26b")
-                text.append(f" -{self._diff_removed}", style="bold #f47067")
+                text.append(f"  +{self._diff_added}", style=f"bold {_t('success')}")
+                text.append(f" -{self._diff_removed}", style=f"bold {_t('error')}")
             elif self.verbose and self.args_str:
-                text.append(f"  {self.args_str}", style="dim #8a8a96")
+                text.append(f"  {self.args_str}", style=f"dim {_t('muted')}")
         elif self.verbose and self.args_str:
-            text.append(f"  {self.args_str}", style="dim #8a8a96")
+            text.append(f"  {self.args_str}", style=f"dim {_t('muted')}")
 
         if self.duration_ms is not None:
             # Color-coded duration bar
             if self.duration_ms < 100:
-                dur_color = "#4ac26b"  # Fast - green
+                dur_color = _t("success")  # Fast - green
             elif self.duration_ms < 500:
-                dur_color = "#ffd700"  # Medium - yellow
+                dur_color = _t("warning")  # Medium - yellow
             else:
-                dur_color = "#f47067"  # Slow - red
+                dur_color = _t("error")  # Slow - red
             text.append(f"  {self.duration_ms:.0f}ms", style=f"dim {dur_color}")
 
         if not self.success and self.output:
             preview = self.output.strip().splitlines()
             first = preview[0][:90] if preview else ""
             if first:
-                text.append(f"\n   └ {first}", style="dim #f47067")
+                text.append(f"\n   └ {first}", style=f"dim {_t('error')}")
 
         if self.expanded and self._diff_lines:
             text.append(self._render_diff())
         return text
 
     def _render_diff(self) -> Text:
+        """Expandable inline diff with per-token syntax highlighting."""
         d = Text("\n")
-        d.append(f"   ▾ {len(self._diff_lines)} lines", style="dim #9a9aa3")
+        d.append(f"   ▾ {len(self._diff_lines)} lines", style=f"dim {_t('muted')}")
         for kind, line in self._diff_lines:
-            style = _DIFF_STYLES.get(kind, "dim #9a9aa3")
-            prefix = _DIFF_PREFIX.get(kind, "  ")
-            if len(line) > 140:
-                line = line[:137] + "…"
-            d.append(f"\n   {prefix} {line}", style=style)
+            d.append_text(Text("\n"))
+            d.append_text(_highlight_diff_line(line, kind, self.diff_path))
         return d
 
 
@@ -433,23 +560,39 @@ class CollapsibleRow(Widget):
         body: str = "",
         *,
         prefix: str = "→",
+        trusted: bool = False,
         **kwargs,
     ) -> None:
+        """``trusted=True`` renders title/body as Rich markup verbatim.
+
+        Callers that compose Rich markup themselves (search results,
+        observability tables…) opt in; anything derived from model/tool/user
+        output goes through ``escape`` by default.
+        """
         super().__init__(**kwargs)
         self._title = title
         self._body = body
         self._prefix = prefix
+        self.trusted = trusted
         self.expanded = False
+
+    def _label(self) -> str:
+        title = self._title if self.trusted else escape(self._title)
+        return f" {self._prefix} {title}"
+
+    def _content(self) -> str:
+        body = self._body or "[dim](empty)[/]"
+        return body if self.trusted else escape(body)
 
     def compose(self) -> ComposeResult:
         yield Static(
-            f" {self._prefix} {self._title}",
+            self._label(),
             id="info-row-toggle",
             markup=True,
         )
         with Vertical(id="info-row-body"):
             yield Static(
-                self._body or "[dim](empty)[/]",
+                self._content(),
                 markup=True,
                 classes="info-row-content",
             )
@@ -464,30 +607,24 @@ class CollapsibleRow(Widget):
     def set_title(self, title: str) -> None:
         self._title = title
         try:
-            self.query_one("#info-row-toggle", Static).update(
-                f" {self._prefix} {title}"
-            )
+            self.query_one("#info-row-toggle", Static).update(self._label())
         except Exception:
             pass
 
     def set_body(self, body: str) -> None:
         self._body = body
         try:
-            self.query_one(".info-row-content", Static).update(body)
+            self.query_one(".info-row-content", Static).update(self._content())
         except Exception:
             pass
 
     def toggle(self) -> None:
         self.expanded = not self.expanded
         body = self.query_one("#info-row-body", Vertical)
-        if self.expanded:
-            self.query_one("#info-row-toggle", Static).update(
-                f" ▾ {self._title}"
-            )
-        else:
-            self.query_one("#info-row-toggle", Static).update(
-                f" {self._prefix} {self._title}"
-            )
+        label = f" ▾ {self._title}" if self.expanded else self._label()
+        if not self.trusted and self.expanded:
+            label = f" ▾ {escape(self._title)}"
+        self.query_one("#info-row-toggle", Static).update(label)
         body.display = self.expanded
 
 
@@ -510,11 +647,11 @@ class AttachmentChip(Static):
         name = Path(self.path).name or self.path
         icon = "img" if is_image(self.path) else "file"
         t = Text()
-        t.append(f" {icon}:", style="dim #da8548")
-        t.append(name, style="bold #ebebf0")
+        t.append(f" {icon}:", style=f"dim {_t('accent')}")
+        t.append(name, style=f"bold {_t('text')}")
         if self.warning:
-            t.append(" !", style="bold #ffd700")
-        t.append("  ×", style="dim #f47067")
+            t.append(" !", style=f"bold {_t('warning')}")
+        t.append("  ×", style=f"dim {_t('error')}")
         return t
 
     def on_click(self, event) -> None:
@@ -542,16 +679,17 @@ class LoaderPill(Widget):
     class StopRequested(Message):
         pass
 
-    # Phase configurations for the loader pill — Claude orange accent
+    # Phase configurations for the loader pill — color resolved live from
+    # the active theme (accent for working phases, success for done).
     _LOADER_PHASES = {
-        "planning":   ("◐", "#da8548", "Planning…"),
-        "thinking":   ("◉", "#da8548", "Thinking…"),
-        "searching":  ("⠋", "#da8548", "Searching…"),
-        "indexing":   ("▰▱▱▱▱", "#da8548", "Indexing…"),
-        "running":    ("█", "#da8548", "Running…"),
-        "generating": ("⎽", "#da8548", "Generating…"),
-        "writing":    ("→", "#da8548", "Writing…"),
-        "done":       ("✓", "#4ac26b", "Done"),
+        "planning":   ("◐", "accent", "Planning…"),
+        "thinking":   ("◉", "accent", "Thinking…"),
+        "searching":  ("⠋", "accent", "Searching…"),
+        "indexing":   ("▰▱▱▱▱", "accent", "Indexing…"),
+        "running":    ("█", "accent", "Running…"),
+        "generating": ("⎽", "accent", "Generating…"),
+        "writing":    ("→", "accent", "Writing…"),
+        "done":       ("✓", "success", "Done"),
     }
 
     def __init__(self, **kwargs) -> None:
@@ -602,12 +740,12 @@ class LoaderPill(Widget):
 # ── Inline status line (thin, above the input) ───────────────────────────────
 
 _STATE_GLYPHS = {
-    "idle":     ("○", "#3a3a4a"),
-    "active":   ("●", "#4ac26b"),
-    "thinking": ("◉", "#da8548"),
-    "running":  ("◉", "#da8548"),
-    "done":     ("●", "#4ac26b"),
-    "error":    ("●", "#f47067"),
+    "idle":     ("○", "faint"),
+    "active":   ("●", "success"),
+    "thinking": ("◉", "accent"),
+    "running":  ("◉", "accent"),
+    "done":     ("●", "success"),
+    "error":    ("●", "error"),
 }
 
 
@@ -619,14 +757,14 @@ class InlineStatus(Static):
         [◉ MEM] [◉ RET] [◎ RAG] [◉ MCP]  Features: Memory, Retrieval, RAG, MCP
     """
 
-    # Feature status indicators
+    # Feature status indicators → theme color keys
     _FEATURES = {
-        "memory":    ("mem",  "#da8548"),
-        "retrieval": ("ret",  "#da8548"),
-        "rag":       ("rag",  "#da8548"),
-        "mcp":       ("mcp",  "#da8548"),
-        "index":     ("idx",  "#da8548"),
-        "sandbox":   ("sbx",  "#da8548"),
+        "memory":    ("mem",  "accent"),
+        "retrieval": ("ret",  "accent"),
+        "rag":       ("rag",  "accent"),
+        "mcp":       ("mcp",  "accent"),
+        "index":     ("idx",  "accent"),
+        "sandbox":   ("sbx",  "accent"),
     }
 
     def __init__(self, **kwargs) -> None:
@@ -724,16 +862,18 @@ class InlineStatus(Static):
         """Render compact feature pills."""
         feat_text = Text()
         feat_text.append("  ", style="dim")
-        for feat, (label, color) in self._FEATURES.items():
+
+        for feat, (label, color_key) in self._FEATURES.items():
             active = self._feature_status[feat]
             if active:
-                feat_text.append(f" {label} ", style=f"bold {color}")
+                feat_text.append(f" {label} ", style=f"bold {_t(color_key)}")
             else:
-                feat_text.append(f" {label} ", style="dim #2d2d3d")
+                feat_text.append(f" {label} ", style=f"dim #{get_theme().border}")
         return feat_text
 
     def _refresh(self) -> None:
-        glyph, color = _STATE_GLYPHS.get(self._state, ("○", "#3a3a4a"))
+        glyph, color_key = _STATE_GLYPHS.get(self._state, ("○", "faint"))
+        color = _t(color_key)
         if self._state in ("thinking", "running"):
             glyph = self._state_spinners[self._frame % len(self._state_spinners)]
 
@@ -744,14 +884,14 @@ class InlineStatus(Static):
         text.append(self._state.upper(), style=f"bold {color}")
 
         # Session / model
-        text.append(f"  {self._session[:8]}", style="dim #4a4a5a")
-        text.append(f"  {self._model[:18]}", style="dim #6a6a80")
+        text.append(f"  {self._session[:8]}", style=f"dim #{get_theme().faint}")
+        text.append(f"  {self._model[:18]}", style=f"dim {_t('muted')}")
 
         # Tool / iter counts — only show when non-zero
         if self._tool_calls:
-            text.append(f"  ⚙ {self._tool_calls}", style="dim #6a6a80")
+            text.append(f"  ⚙ {self._tool_calls}", style=f"dim {_t('muted')}")
         if self._iterations:
-            text.append(f"  ↻ {self._iterations}", style="dim #6a6a80")
+            text.append(f"  ↻ {self._iterations}", style=f"dim {_t('muted')}")
 
         # Token count + context meter
         text.append_text(self._render_token_bar())
@@ -760,16 +900,16 @@ class InlineStatus(Static):
         memory_hits = getattr(self, "_memory_hits", 0)
         retrieval_hits = getattr(self, "_retrieval_hits", 0)
         if memory_hits:
-            text.append(f"  mem {memory_hits}", style="dim #ff6b6b")
+            text.append(f"  mem {memory_hits}", style=f"dim {_t('error')}")
         if retrieval_hits:
-            text.append(f"  ret {retrieval_hits}", style="dim #6cb6ff")
+            text.append(f"  ret {retrieval_hits}", style=f"dim {_t('secondary')}")
 
         # Optional extras
         if getattr(self, "_cost_estimate", 0) > 0:
-            text.append(f"  ${self._cost_estimate:.3f}", style="dim #ffd700")
+            text.append(f"  ${self._cost_estimate:.3f}", style=f"dim {_t('warning')}")
 
         # Elapsed
-        text.append(f"  {self._elapsed_text()}", style="dim #4a4a5a")
+        text.append(f"  {self._elapsed_text()}", style=f"dim #{get_theme().faint}")
 
         # Feature pills — second line
         text.append("\n")
@@ -788,11 +928,11 @@ class InlineStatus(Static):
 
         # Choose color based on usage
         if ratio < 0.5:
-            bar_color = "#4ac26b"  # Green
+            bar_color = _t("success")  # Green
         elif ratio < 0.8:
-            bar_color = "#ffd700"  # Yellow
+            bar_color = _t("warning")  # Yellow
         else:
-            bar_color = "#f47067"  # Red
+            bar_color = _t("error")  # Red
 
         # Five-segment meter
         filled = int(round(ratio * 5))
@@ -809,7 +949,7 @@ class InlineStatus(Static):
         text.append(f" · {meter}", style=f"dim {bar_color}")
         text.append(f" {tok_str} tok", style=f"dim {bar_color}")
         if ratio > 0:
-            text.append(f" {ratio:.0%}", style="dim #4a4a5a")
+            text.append(f" {ratio:.0%}", style=f"dim #{get_theme().faint}")
 
         return text
 
@@ -895,9 +1035,10 @@ class AgentPanel(Widget):
             widget.remove_class("has-content")
             return
         lines = []
+        accent = _t("accent")
         for name in event.matches[:6]:
             desc = SLASH_COMMANDS.get(name, "")
-            lines.append(f"  [bold #da8548]/{name}[/]  [dim #6a6a80]{desc}[/]")
+            lines.append(f"  [bold {accent}]/{name}[/]  [dim]{desc}[/]")
         widget.update("\n".join(lines))
         widget.add_class("has-content")
 
@@ -935,20 +1076,41 @@ class AgentPanel(Widget):
     # ── Messages ─────────────────────────────────────────────────────────────
 
     def add_user_message(self, text: str) -> None:
+        """User text is escaped — it may contain brackets, code, anything."""
         self._append(MessageWidget("user", text))
 
-    def add_assistant_message(self, text: str) -> None:
-        self._append(MessageWidget("assistant", text))
+    def add_assistant_message(self, text: str, *, trusted: bool = False) -> None:
+        """Assistant bubble.
 
-    def add_error(self, text: str) -> None:
-        self._append(MessageWidget("error", text))
+        Default (``trusted=False``): text is escaped and rendered as Markdown
+        when complete — safe for model output containing brackets.
+        ``trusted=True``: text is Rich markup authored by this app (help,
+        status tables…) and rendered verbatim — dynamic content inside it
+        must be pre-escaped by the caller.
+        """
+        widget = MessageWidget("assistant", text, trusted=trusted)
+        self._append(widget)
+        if trusted:
+            # Keep it a markup Static — do NOT convert to Markdown, which
+            # would strip the tags and reflow the layout.
+            widget.update(text)
+        else:
+            widget.set_markdown(text)
+
+    def add_error(self, text: str, *, trusted: bool = False) -> None:
+        self._append(MessageWidget("error", text, trusted=trusted))
 
     def add_banner(self, text: str) -> None:
-        """Render the CLI banner at the top of the app's first frame."""
+        """Render the CLI banner (trusted Rich markup from tracera.logging)."""
         self._append(Static(text, markup=True, classes="banner-block"))
 
     def add_meta(self, text: str) -> None:
-        self._append(MessageWidget("meta", text))
+        """Meta lines are authored by this app — trusted Rich markup.
+
+        Dynamic content interpolated into meta strings must be pre-escaped
+        by the caller (paths, model names…).
+        """
+        self._append(MessageWidget("meta", text, trusted=True))
 
     def add_thinking_disclosure(self, entries: list[tuple[str, str]]) -> None:
         if not entries:
@@ -956,12 +1118,16 @@ class AgentPanel(Widget):
         self._append(ThinkingDisclosure(entries))
 
     async def type_message(self, text: str) -> None:
-        """Type a message into the conversation character-by-character."""
+        """Type a message into the conversation character-by-character.
+
+        Typed text is plain (trusted=False) — pass escaped/Markup-free strings
+        only, or pre-render the styled parts via add_assistant_message.
+        """
         import asyncio
         stream = self._stream()
         widget = MessageWidget("assistant", "")
         stream.mount(widget)
-        for ch in text:
+        for ch in text:  # set_content escapes untrusted content — pass raw
             widget.set_content(widget.msg_content + ch)
             self._scroll_bottom_if_pinned(stream)
             await asyncio.sleep(0.012)
@@ -978,9 +1144,16 @@ class AgentPanel(Widget):
         self._scroll_bottom_if_pinned(stream)
 
     def stream_end(self, full_text: str | None = None) -> None:
+        """Finish the streamed turn — upgrade it to full Markdown rendering.
+
+        The live stream renders escaped plain text (cheap, safe on every
+        delta); once the response is complete the same widget re-renders as
+        rich.markdown.Markdown: headers, lists, tables, highlighted code
+        fences. Bracketed text like ``data[0]`` survives both phases.
+        """
         if self._stream_widget is not None:
             if full_text is not None:
-                self._stream_widget.set_content(full_text)
+                self._stream_widget.set_markdown(full_text)
             self._stream_widget = None
         elif full_text:
             self.add_assistant_message(full_text)
@@ -1048,8 +1221,10 @@ class AgentPanel(Widget):
         body: str = "",
         *,
         prefix: str = "→",
+        trusted: bool = False,
     ) -> CollapsibleRow:
-        row = CollapsibleRow(title, body, prefix=prefix)
+        """Collapsible row — pass ``trusted=True`` for app-authored markup."""
+        row = CollapsibleRow(title, body, prefix=prefix, trusted=trusted)
         self._append(row)
         return row
 

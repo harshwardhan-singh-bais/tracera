@@ -12,6 +12,7 @@ from tracera.logging.logger import (
     log_tool,
     banner_text,
     print_banner,
+    animate_banner,
     setup_logging,
 )
 
@@ -21,6 +22,7 @@ __all__ = [
     "get_console",
     "banner_text",
     "print_banner",
+    "animate_banner",
     "log_tool",
     "log_agent",
     "log_llm",
