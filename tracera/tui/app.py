@@ -47,6 +47,7 @@ from tracera.tui.widgets.agent_panel import (
     _PHASE_LABELS,
     format_args,
 )
+from tracera.tui.widgets.command_input import CommandInput
 from tracera.tui.widgets.dashboard import DashboardWidget
 from tracera.tui.widgets.file_context import FileContextPanel
 from tracera.tui.widgets.memory_viz import MemoryGraphWidget
@@ -292,14 +293,18 @@ class TraceraTUI(App):
         from rich.text import Text
         model = self.agent.provider.default_model or "model"
         left = Text()
-        left.append(" ■ ", style="bold #6cb6ff")
-        left.append("TRACERA", style="bold")
-        left.append("   your terminal coding agent", style="dim #6f6f78")
-        left.append(f"   {self.workspace_path}", style="dim #55555e")
+        left.append(" ◆ ", style="bold #da8548")
+        left.append("TRACERA", style="bold #ebebf0")
+        left.append("  your terminal coding agent", style="dim #6a6a80")
+        left.append("  ", style="dim")
+        left.append(str(self.workspace_path), style="dim #4a4a5a")
         right = Text()
-        right.append("● Active", style="bold #4ac26b")
-        right.append(f"  {model}", style="bold")
-        right.append("   /help", style="dim #6f6f78")
+        git_info = self._get_git_status()
+        if git_info:
+            right.append(f"{git_info}  ", style="bold #d2a8ff")
+        right.append("● ", style="bold #4ac26b")
+        right.append(model, style="bold #ebebf0")
+        right.append("  /help", style="dim #3a3a4a")
         return Horizontal(
             Static(left, id="header-left"),
             Static(right, id="header-right"),
@@ -324,11 +329,11 @@ class TraceraTUI(App):
             from rich.text import Text
             git_info = self._get_git_status()
             right = Text()
-            right.append("● Active", style="bold #4ac26b")
+            right.append("● ", style="bold #4ac26b")
             if git_info:
-                right.append(f"  {git_info}", style="bold #d2a8ff")
-            right.append(f"  {self.agent.provider.default_model or 'model'}", style="bold")
-            right.append("   /help", style="dim #6f6f78")
+                right.append(f"{git_info}  ", style="dim #d2a8ff")
+            right.append(self.agent.provider.default_model or "model", style="bold #ebebf0")
+            right.append("  /help", style="dim #3a3a4a")
             self.query_one("#header-right", Static).update(right)
         except Exception:
             pass
@@ -1368,7 +1373,7 @@ class TraceraTUI(App):
 
     def action_focus_input(self) -> None:
         try:
-            self.query_one("#agent-input", Input).focus()
+            self.query_one("#agent-input", CommandInput).focus()
         except Exception:
             pass
 
@@ -1516,9 +1521,9 @@ class TraceraTUI(App):
     def _update_header_model(self, model: str) -> None:
         from rich.text import Text
         right = Text()
-        right.append("● Active", style="bold #4ac26b")
-        right.append(f"  {model}", style="bold")
-        right.append("   /help", style="dim #6f6f78")
+        right.append("● ", style="bold #4ac26b")
+        right.append(model, style="bold #ebebf0")
+        right.append("  /help", style="dim #3a3a4a")
         try:
             self.query_one("#header-right", Static).update(right)
         except Exception:
@@ -1570,7 +1575,7 @@ class TraceraTUI(App):
             model=self.agent.provider.default_model,
         )
         try:
-            self.query_one("#agent-input", Input).focus()
+            self.query_one("#agent-input", CommandInput).focus()
         except Exception:
             pass
         self.run_worker(self._type_welcome())
@@ -1589,15 +1594,13 @@ class TraceraTUI(App):
     async def _type_welcome(self) -> None:
         try:
             panel = self._panel()
-            # First frame: reproduce the CLI banner at the top of the app's own
-            # screen, then the welcome message below it.
             if self._banner:
                 panel.add_banner(self._banner)
-                panel.add_meta(f"booted from {self.workspace_path}")
+                panel.add_meta(f"workspace {self.workspace_path}")
             await panel.type_message(
-                "I'm ready to help with your coding tasks.\n"
-                "Everything I do streams inline — tool calls, file reads, "
-                "command runs. Type /help for commands.\n"
+                "Ready. What would you like to work on?\n"
+                "Tool calls, file edits, and command output stream inline as I work. "
+                "Type [bold]/help[/] for all commands.\n"
             )
         except Exception:
             pass

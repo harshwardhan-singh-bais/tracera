@@ -1,27 +1,29 @@
 /*
-TRACERA — single-stream terminal-agent TUI (Claude Code style).
+TRACERA — Claude Code premium TUI.
 
-Panels are transparent: colored rounded borders + colored text only, never
-a filled background, so the user's terminal theme shows through.
-Color coding per row:
-  cyan    = agent branding / in-flight
-  green   = success
-  red     = failure / errors
-  purple  = user echo / collapsible rows / file-change summaries
-  dim     = in-progress / metadata
+Design language:
+  • Transparent background — terminal theme shows through everywhere
+  • Accent: #da8548 (Claude orange) for branding, prompts, active states
+  • Muted blue-grey (#6cb6ff) for tool/info rows
+  • Green (#4ac26b) success · Red (#f47067) error · Purple (#d2a8ff) meta
+  • All borders: round, never filled boxes
+  • Compact, information-dense — no wasted vertical space
 */
+
+/* ── Global ─────────────────────────────────────────────────────────────── */
 
 Screen {
     background: transparent;
-    color: #e0e0ff;
+    color: #ebebf0;
 }
 
-/* ── Header (thin) ──────────────────────────────────────────────────────── */
+/* ── Header ─────────────────────────────────────────────────────────────── */
 
 #app-header {
     width: 1fr;
     height: 1;
     padding: 0 2;
+    background: transparent;
 }
 
 #header-left {
@@ -34,7 +36,7 @@ Screen {
     content-align: right middle;
 }
 
-/* ── The single main panel ──────────────────────────────────────────────── */
+/* ── Main panel shell ───────────────────────────────────────────────────── */
 
 #agent-panel-widget {
     width: 1fr;
@@ -46,21 +48,23 @@ Screen {
     width: 1fr;
     height: 1fr;
     layout: vertical;
-    border: round #3a3a4a;
+    border: round #2d2d3d;
     padding: 0 1;
 }
 
-/* Stream — the only scrolling region, auto-scrolls to the latest row. */
+/* ── Conversation stream ────────────────────────────────────────────────── */
+
 #stream {
     width: 1fr;
     height: 1fr;
     padding: 1 0;
-    border-bottom: solid #2a2a38;
+    border-bottom: solid #252535;
     scrollbar-size: 1 1;
-    scrollbar-color: #6cb6ff #1a1a24;
+    scrollbar-color: #da8548 #18181f;
+    scrollbar-background: #18181f;
 }
 
-/* ── Message bubbles — sized to content, no fixed-height boxes ──────────── */
+/* ── Message bubbles ────────────────────────────────────────────────────── */
 
 MessageWidget {
     width: 1fr;
@@ -68,15 +72,19 @@ MessageWidget {
     margin: 1 0;
 }
 
+/* User turn — warm orange border, Claude Code style */
 MessageWidget.msg-user {
-    border: round #7a5aa0;
-    color: #dcdcf5;
+    border: round #da8548;
+    border-title-color: #da8548;
+    color: #ebebf0;
     padding: 0 1;
 }
 
+/* Assistant turn — cool blue border */
 MessageWidget.msg-assistant {
-    border: round #3f6fb0;
-    color: #e0e0ff;
+    border: round #3a5a8a;
+    border-title-color: #6cb6ff;
+    color: #ebebf0;
     padding: 0 1;
 }
 
@@ -87,43 +95,69 @@ MessageWidget.msg-error {
 }
 
 MessageWidget.msg-tool {
-    color: #60c060;
+    color: #4ac26b;
 }
 
 MessageWidget.msg-meta {
-    color: #8080b0;
+    color: #6a6a80;
     text-style: dim;
 }
 
-/* ── Boot banner (reproduced from the CLI's scrollback output) ──────────── */
+/* Markdown-rendered assistant messages */
+MessageWidget.msg-markdown {
+    border: round #3a5a8a;
+    padding: 0 1;
+}
+
+/* ── Boot banner ────────────────────────────────────────────────────────── */
 
 .banner-block {
     width: 1fr;
     height: auto;
     margin: 1 0 0 0;
     padding: 0 1;
-    color: #6cb6ff;
+    color: #da8548;
 }
 
-/* ── Inline tool rows ───────────────────────────────────────────────────── */
-
-ToolRow {
-    width: 1fr;
-    height: auto;
-    padding: 0 1;
-}
+/* ── Phase rows ─────────────────────────────────────────────────────────── */
 
 PhaseRow {
     width: 1fr;
     height: auto;
     padding: 0 1;
+    margin: 0;
 }
 
-/* ── Collapsible info rows (memory / search / repo / plan / debug) ──────── */
+/* ── Tool rows ──────────────────────────────────────────────────────────── */
+
+ToolRow {
+    width: 1fr;
+    height: auto;
+    padding: 0 1;
+    margin: 0;
+}
+
+ToolRow:hover {
+    background: #1e1e2a;
+}
+
+CollapsibleRow #info-row-toggle:hover {
+    background: #1e1e2a;
+}
+
+ThinkingDisclosure #reasoning-toggle:hover {
+    background: #1e1e2a;
+}
+
+/* ── Collapsible info rows ──────────────────────────────────────────────── */
+
+CollapsibleRow {
+    height: auto;
+}
 
 #info-row-toggle {
     width: 1fr;
-    margin: 1 0 0 0;
+    margin: 0 0 0 0;
     padding: 0 1;
     color: #d2a8ff;
     text-style: bold;
@@ -133,27 +167,26 @@ PhaseRow {
 #info-row-body {
     width: 1fr;
     height: auto;
-    margin: 1 0;
-    border: round #3a3a4a;
+    margin: 0 0 1 0;
+    border: round #2d2d3d;
     padding: 0 1;
 }
 
 .info-row-content {
-    color: #c8c8e0;
+    color: #c0c0d8;
 }
 
 /* ── Thinking disclosure ────────────────────────────────────────────────── */
 
-ThinkingDisclosure,
-CollapsibleRow {
+ThinkingDisclosure {
     height: auto;
 }
 
 #reasoning-toggle {
     width: 1fr;
-    margin: 1 0 0 0;
+    margin: 0;
     padding: 0 1;
-    color: #9a9aa3;
+    color: #6a6a80;
     text-style: italic;
     pointer: pointer;
 }
@@ -162,38 +195,29 @@ CollapsibleRow {
     width: 1fr;
     height: auto;
     margin: 0 0 1 0;
+    padding: 0 1;
 }
 
 .reasoning-line {
     width: 1fr;
-    padding: 0 2;
+    padding: 0 1;
 }
 
-.reasoning-done {
-    color: #4ac26b;
-}
+.reasoning-done  { color: #4ac26b; }
+.reasoning-error { color: #f47067; }
+.reasoning-think { color: #6a6a80; }
+.reasoning-tool  { color: #c0c0d8; }
 
-.reasoning-error {
-    color: #f47067;
-}
-
-.reasoning-think {
-    color: #9a9aa3;
-}
-
-.reasoning-tool {
-    color: #dcdcf5;
-}
-
-/* ── Inline status line (thin, above the input, not a box) ──────────────── */
+/* ── Status line ────────────────────────────────────────────────────────── */
 
 #status-line {
     width: 1fr;
-    height: 1;
-    color: #9a9aa3;
+    height: 2;
+    color: #6a6a80;
+    padding: 0 1;
 }
 
-/* ── Loader pill (replaces the input while a request is in flight) ──────── */
+/* ── Loader pill ────────────────────────────────────────────────────────── */
 
 #loader-pill {
     display: none;
@@ -202,9 +226,9 @@ CollapsibleRow {
     layout: horizontal;
     align-vertical: middle;
     margin: 1 0 0 0;
-    padding: 0 1;
-    border: round #6cb6ff;
-    color: #6cb6ff;
+    padding: 0 2;
+    border: round #da8548;
+    color: #da8548;
 }
 
 #loader-icon {
@@ -212,7 +236,7 @@ CollapsibleRow {
     height: 1;
     content-align: center middle;
     margin-right: 1;
-    color: #6cb6ff;
+    color: #da8548;
     text-style: bold;
 }
 
@@ -220,7 +244,7 @@ CollapsibleRow {
     width: 1fr;
     height: 1;
     content-align: left middle;
-    color: #6cb6ff;
+    color: #da8548;
     text-style: bold;
 }
 
@@ -234,7 +258,7 @@ CollapsibleRow {
     pointer: pointer;
 }
 
-/* ── Input pill (rounded, docked at the bottom) ─────────────────────────── */
+/* ── Input area ─────────────────────────────────────────────────────────── */
 
 #agent-input-area {
     width: 1fr;
@@ -242,7 +266,6 @@ CollapsibleRow {
     layout: vertical;
 }
 
-/* Attachment chips — above the pill, hidden until something is attached. */
 #attach-chips {
     display: none;
     width: 1fr;
@@ -256,23 +279,46 @@ AttachmentChip {
     height: auto;
     margin: 0 1 0 0;
     padding: 0 1;
-    border: round #4a4a5a;
-    color: #dcdcf5;
+    border: round #3a3a4a;
+    color: #ebebf0;
     pointer: pointer;
 }
 
-#agent-input-bar {
+/* Suggestion dropdown — live slash-command autocomplete */
+#suggestion-list {
+    display: none;
     width: 1fr;
-    height: 3;
-    layout: horizontal;
-    align-vertical: middle;
+    height: auto;
     margin: 1 0 0 0;
     padding: 0 1;
-    border: round #4a4a5a;
+    border: round #2d2d3d;
+    background: #18181f;
+    color: #ebebf0;
+}
+
+#suggestion-list.has-content {
+    display: block;
+}
+
+/* Input bar — Claude Code orange accent on focus */
+#agent-input-bar {
+    width: 1fr;
+    height: auto;
+    min-height: 3;
+    layout: horizontal;
+    align-vertical: top;
+    margin: 1 0 0 0;
+    padding: 1 1;
+    border: round #3a3a4a;
 }
 
 #agent-input-bar:focus-within {
-    border: round #6cb6ff;
+    border: round #da8548;
+}
+
+#agent-input-bar:focus-within #agent-prompt-icon {
+    color: #da8548;
+    text-style: bold;
 }
 
 #attach-button {
@@ -280,7 +326,7 @@ AttachmentChip {
     height: 1;
     content-align: center middle;
     margin-right: 1;
-    color: #d2a8ff;
+    color: #6a6a80;
     text-style: bold;
     pointer: pointer;
 }
@@ -290,16 +336,19 @@ AttachmentChip {
     height: 1;
     content-align: center middle;
     margin-right: 1;
-    color: #6cb6ff;
+    color: #da8548;
     text-style: bold;
 }
 
 #agent-input {
     width: 1fr;
-    height: 1;
+    height: auto;
+    min-height: 1;
+    max-height: 8;
     background: transparent;
     border: none;
     padding: 0;
+    color: #ebebf0;
 }
 
 #agent-input:focus {
@@ -307,23 +356,34 @@ AttachmentChip {
     border: none;
 }
 
+#agent-input .text-area--cursor {
+    background: #da8548;
+    color: #18181f;
+}
+
 #input-hints {
     width: 1fr;
     height: 1;
     content-align: center middle;
     margin: 0 0 1 0;
-    color: #55555e;
+    color: #3a3a4a;
     text-style: dim;
 }
 
-/* ── Attachment file picker (modal) ─────────────────────────────────────── */
+/* Placeholder styling for the multiline editor */
+#agent-input .text-area--placeholder {
+    color: #4a4a5a;
+    text-style: italic;
+}
+
+/* ── File picker modal ──────────────────────────────────────────────────── */
 
 #picker-panel {
     width: 70;
     height: 24;
     layout: vertical;
     align: center middle;
-    border: round #3f6fb0;
+    border: round #3a5a8a;
     padding: 1 1;
 }
 
@@ -338,35 +398,35 @@ AttachmentChip {
 #picker-tree {
     width: 1fr;
     height: 1fr;
-    color: #dcdcf5;
+    color: #ebebf0;
     scrollbar-size: 1 1;
-    scrollbar-color: #6cb6ff #1a1a24;
+    scrollbar-color: #da8548 #18181f;
 }
 
 #picker-hint {
     width: 1fr;
     height: 1;
     content-align: center middle;
-    color: #55555e;
+    color: #3a3a4a;
     text-style: dim;
     margin-top: 1;
 }
 
-/* ── Provider / model switcher (modal) ───────────────────────────────────── */
+/* ── Provider switcher modal ────────────────────────────────────────────── */
 
 #provider-panel {
     width: 64;
     height: auto;
     layout: vertical;
     align: center middle;
-    border: round #b071e8;
+    border: round #da8548;
     padding: 1 1;
 }
 
 #provider-title {
     width: 1fr;
     height: auto;
-    color: #b071e8;
+    color: #da8548;
     text-style: bold;
     margin-bottom: 1;
 }
@@ -374,7 +434,7 @@ AttachmentChip {
 #provider-list {
     width: 1fr;
     height: auto;
-    color: #dcdcf5;
+    color: #ebebf0;
     border: none;
 }
 
@@ -388,141 +448,65 @@ AttachmentChip {
 }
 
 #provider-list > ListItem:hover {
-    background: #2a2a3d;
+    background: #252535;
 }
 
 #provider-list > ListItem.provider-active {
-    background: #2a2a3d;
+    background: #252535;
 }
 
 #provider-hint {
     width: 1fr;
     height: 1;
     content-align: center middle;
-    color: #55555e;
+    color: #3a3a4a;
     text-style: dim;
     margin-top: 1;
 }
 
-/* ── Dashboard Widget ────────────────────────────────────────────────────── */
+/* ── Dashboard widget ───────────────────────────────────────────────────── */
 
 #dashboard-container {
     width: 1fr;
     height: auto;
     margin: 1 0;
     padding: 1;
-    border: round #3a3a4a;
+    border: round #2d2d3d;
 }
 
-#dash-header {
-    width: 1fr;
-    height: auto;
-    color: #6cb6ff;
-    text-style: bold;
-    margin-bottom: 1;
-}
+#dash-header   { width: 1fr; height: auto; color: #da8548; text-style: bold; margin-bottom: 1; }
+#dash-system   { width: 1fr; height: auto; color: #ebebf0; margin-bottom: 1; }
+#dash-features { width: 1fr; height: auto; color: #6a6a80; margin-bottom: 1; }
+#dash-actions  { width: 1fr; height: auto; color: #6a6a80; }
 
-#dash-system {
-    width: 1fr;
-    height: auto;
-    color: #e0e0ff;
-    margin-bottom: 1;
-}
-
-#dash-features {
-    width: 1fr;
-    height: auto;
-    color: #9a9aa3;
-    margin-bottom: 1;
-}
-
-#dash-actions {
-    width: 1fr;
-    height: auto;
-    color: #9a9aa3;
-}
-
-/* ── File Context Panel ──────────────────────────────────────────────────── */
+/* ── File context panel ─────────────────────────────────────────────────── */
 
 #file-context-container {
     width: 1fr;
     height: auto;
     margin: 1 0;
     padding: 1;
-    border: round #3a3a4a;
+    border: round #2d2d3d;
 }
 
-#file-context-header {
-    width: 1fr;
-    height: auto;
-    color: #6cb6ff;
-    text-style: bold;
-    margin-bottom: 1;
-}
+#file-context-header { width: 1fr; height: auto; color: #6cb6ff; text-style: bold; margin-bottom: 1; }
+#file-context-list   { width: 1fr; height: auto; color: #ebebf0; }
 
-#file-context-list {
-    width: 1fr;
-    height: auto;
-    color: #e0e0ff;
-}
-
-/* ── Memory Graph Widget ─────────────────────────────────────────────────── */
+/* ── Memory graph widget ────────────────────────────────────────────────── */
 
 #memory-graph-container {
     width: 1fr;
     height: auto;
     margin: 1 0;
     padding: 1;
-    border: round #3a3a4a;
+    border: round #2d2d3d;
 }
 
-#memory-graph-header {
-    width: 1fr;
-    height: auto;
-    color: #d2a8ff;
-    text-style: bold;
-    margin-bottom: 1;
-}
+#memory-graph-header  { width: 1fr; height: auto; color: #d2a8ff; text-style: bold; margin-bottom: 1; }
+#memory-graph-content { width: 1fr; height: auto; color: #ebebf0; }
 
-#memory-graph-content {
-    width: 1fr;
-    height: auto;
-    color: #e0e0ff;
-}
+/* ── Git status helpers ─────────────────────────────────────────────────── */
 
-/* ── Tool Timeline Enhancements ──────────────────────────────────────────── */
-
-ToolRow {
-    width: 1fr;
-    height: auto;
-    padding: 0 1;
-    margin: 0 0;
-}
-
-ToolRow:hover {
-    background: #1a1a2420;
-}
-
-/* ── Status Bar Enhancements ─────────────────────────────────────────────── */
-
-#status-line {
-    width: 1fr;
-    height: 2;
-    color: #9a9aa3;
-    padding: 0 1;
-}
-
-/* ── Git Status Indicator ────────────────────────────────────────────────── */
-
-.git-status {
-    color: #d2a8ff;
-    text-style: bold;
-}
-
-.git-dirty {
-    color: #ffd700;
-}
-
-.git-clean {
-    color: #4ac26b;
-}
+.git-status { color: #d2a8ff; text-style: bold; }
+.git-dirty  { color: #ffd700; }
+.git-clean  { color: #4ac26b; }

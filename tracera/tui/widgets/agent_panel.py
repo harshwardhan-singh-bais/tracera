@@ -30,13 +30,16 @@ import time
 from pathlib import Path
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import Static, Input
+from textual.widgets import Static
 from textual.containers import Horizontal, Vertical, ScrollableContainer
 from rich.text import Text
 
 from tracera.tui.diffutil import is_image
+from tracera.tui.widgets.command_input import CommandInput
+from tracera.tui.widgets.command_registry import SLASH_COMMANDS
 
 # Premium multi-style spinner collections for different states
 _SPINNERS = {
@@ -75,7 +78,7 @@ class MessageWidget(Static):
     Content is rendered as Rich markup (Static) and colored per role by CSS.
     """
 
-    _BORDER_TITLES = {"user": " YOU ", "assistant": " TRACERA "}
+    _BORDER_TITLES = {"user": " > ", "assistant": " ◆ TRACERA "}
     _PREFIXES = {"tool": "⚙  ", "error": "✗  "}
 
     def __init__(self, role: str, content: str, **kwargs):
@@ -91,6 +94,29 @@ class MessageWidget(Static):
         """Replace the message content (used by streaming)."""
         self.msg_content = content
         self.update(f"{self._PREFIXES.get(self.role, '')}{content}")
+
+    def set_markdown(self, content: str) -> None:
+        """Replace the message content with a Markdown renderable.
+
+        Used once the stream completes so the final assistant turn is rendered
+        as full Markdown (headers, code blocks with syntax highlighting, lists,
+        tables, blockquotes) instead of raw markup. Falls back to plain markup
+        if Markdown rendering fails for any reason.
+        """
+        self.msg_content = content
+        try:
+            from rich.markdown import Markdown
+
+            self.add_class("msg-markdown")
+            md = Markdown(
+                content,
+                code_theme="monokai",
+                inline_code_lexer="python",
+                inline_code_theme="monokai",
+            )
+            self.update(md)
+        except Exception:
+            self.update(content)
 
 
 _GLYPH = {
@@ -331,38 +357,6 @@ class ToolRow(Static):
             self.expanded = not self.expanded
             self.refresh()
 
-    # ── Rendering ────────────────────────────────────────────────────────────
-
-    def __init__(
-        self,
-        name: str,
-        args_str: str = "",
-        *,
-        verbose: bool = True,
-        spinner_type: str = "running",
-        **kwargs,
-    ) -> None:
-        super().__init__(**kwargs)
-        self.tool_name = name
-        self.args_str = args_str
-        self.verbose = verbose
-        self.success = True
-        self.duration_ms: float | None = None
-        self.output = ""
-        self._frame = 0
-        # NOTE: not named ``_running`` — Textual's MessagePump owns that.
-        self._spinning = False
-        self._spinner_type = spinner_type
-        self._spinner = _SPINNERS[spinner_type]
-        # Diff state — filled by the app when the tool touched a file.
-        self.diff_path: str | None = None
-        self.snapshot: str | None = None
-        self.snapshot_path: str | None = None
-        self._diff_lines: list[tuple[str, str]] = []
-        self._diff_added = 0
-        self._diff_removed = 0
-        self.expanded = False
-
     def render(self) -> Text:
         text = Text()
         tool_color = self._get_tool_color()
@@ -514,13 +508,13 @@ class AttachmentChip(Static):
 
     def render(self) -> Text:
         name = Path(self.path).name or self.path
-        icon = "🖼" if is_image(self.path) else "📄"
+        icon = "img" if is_image(self.path) else "file"
         t = Text()
-        t.append(f" {icon} ", style="#6cb6ff")
-        t.append(name, style="bold #dcdcf5")
+        t.append(f" {icon}:", style="dim #da8548")
+        t.append(name, style="bold #ebebf0")
         if self.warning:
-            t.append(" [!]", style="bold #d4a72c")
-        t.append("  ✕", style="dim #f47067")
+            t.append(" !", style="bold #ffd700")
+        t.append("  ×", style="dim #f47067")
         return t
 
     def on_click(self, event) -> None:
@@ -548,28 +542,28 @@ class LoaderPill(Widget):
     class StopRequested(Message):
         pass
 
-    # Phase configurations for the loader pill - consistent blue theme
+    # Phase configurations for the loader pill — Claude orange accent
     _LOADER_PHASES = {
-        "planning": ("◐", "#6cb6ff", "Planning task..."),
-        "thinking": ("◉", "#6cb6ff", "Processing..."),
-        "searching": ("⠋", "#6cb6ff", "Searching codebase..."),
-        "indexing": ("▰▱▱▱▱", "#6cb6ff", "Building index..."),
-        "running": ("█", "#6cb6ff", "Executing..."),
-        "generating": ("⎽", "#6cb6ff", "Generating response..."),
-        "writing": ("→", "#6cb6ff", "Writing changes..."),
-        "done": ("✓", "#6cb6ff", "Complete!"),
+        "planning":   ("◐", "#da8548", "Planning…"),
+        "thinking":   ("◉", "#da8548", "Thinking…"),
+        "searching":  ("⠋", "#da8548", "Searching…"),
+        "indexing":   ("▰▱▱▱▱", "#da8548", "Indexing…"),
+        "running":    ("█", "#da8548", "Running…"),
+        "generating": ("⎽", "#da8548", "Generating…"),
+        "writing":    ("→", "#da8548", "Writing…"),
+        "done":       ("✓", "#4ac26b", "Done"),
     }
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._phase = "thinking"
         self._frame = 0
-        self._full_spinner = _SPINNERS["pulse"]
+        self._full_spinner = _SPINNERS["thinking"]
 
     def compose(self) -> ComposeResult:
         yield Static("◉", id="loader-icon")
-        yield Static("Processing...", id="loader-label")
-        yield Static(" ● ", id="loader-stop")
+        yield Static("Thinking…", id="loader-label")
+        yield Static(" esc ", id="loader-stop")
 
     def on_mount(self) -> None:
         self.set_interval(0.15, self._tick)
@@ -608,12 +602,12 @@ class LoaderPill(Widget):
 # ── Inline status line (thin, above the input) ───────────────────────────────
 
 _STATE_GLYPHS = {
-    "idle": ("●", "#9a9aa3"),
-    "active": ("●", "#4ac26b"),
-    "thinking": ("⠋", "#d4a72c"),
-    "running": ("⠋", "#6cb6ff"),
-    "done": ("●", "#4ac26b"),
-    "error": ("●", "#f47067"),
+    "idle":     ("○", "#3a3a4a"),
+    "active":   ("●", "#4ac26b"),
+    "thinking": ("◉", "#da8548"),
+    "running":  ("◉", "#da8548"),
+    "done":     ("●", "#4ac26b"),
+    "error":    ("●", "#f47067"),
 }
 
 
@@ -625,14 +619,14 @@ class InlineStatus(Static):
         [◉ MEM] [◉ RET] [◎ RAG] [◉ MCP]  Features: Memory, Retrieval, RAG, MCP
     """
 
-    # Feature status indicators - all consistent blue theme
+    # Feature status indicators
     _FEATURES = {
-        "memory": ("MEMORY", "#6cb6ff"),  # Memory layer
-        "retrieval": ("RETR", "#6cb6ff"),  # Code retrieval
-        "rag": ("RAG", "#6cb6ff"),        # RAG active
-        "mcp": ("MCP", "#6cb6ff"),        # MCP server
-        "index": ("IDX", "#6cb6ff"),      # Code index
-        "sandbox": ("SBX", "#6cb6ff"),    # Sandbox
+        "memory":    ("mem",  "#da8548"),
+        "retrieval": ("ret",  "#da8548"),
+        "rag":       ("rag",  "#da8548"),
+        "mcp":       ("mcp",  "#da8548"),
+        "index":     ("idx",  "#da8548"),
+        "sandbox":   ("sbx",  "#da8548"),
     }
 
     def __init__(self, **kwargs) -> None:
@@ -657,6 +651,10 @@ class InlineStatus(Static):
         }
         # Premium spinners for active states
         self._state_spinners = _SPINNERS["pulse"]
+        # Session metrics (kept across incremental update_stats calls)
+        self._memory_hits = 0
+        self._retrieval_hits = 0
+        self._cost_estimate = 0.0
 
     def set_feature_status(self, feature: str, active: bool) -> None:
         """Update feature active status."""
@@ -705,10 +703,14 @@ class InlineStatus(Static):
             self._tokens = tokens
         if elapsed_ms is not None:
             self._elapsed_ms = elapsed_ms
-        # Store additional metrics
-        self._memory_hits = memory_hits or 0
-        self._retrieval_hits = retrieval_hits or 0
-        self._cost_estimate = cost_estimate or 0.0
+        # Store additional metrics — None leaves the previous value intact so
+        # incremental updates (state-only, tokens-only …) never wipe stats.
+        if memory_hits is not None:
+            self._memory_hits = memory_hits
+        if retrieval_hits is not None:
+            self._retrieval_hits = retrieval_hits
+        if cost_estimate is not None:
+            self._cost_estimate = cost_estimate
         self._refresh()
 
     def _elapsed_text(self) -> str:
@@ -719,63 +721,71 @@ class InlineStatus(Static):
         return f"{total // 60}:{total % 60:02d}"
 
     def _render_features(self) -> Text:
-        """Render feature status indicators."""
+        """Render compact feature pills."""
         feat_text = Text()
-        feat_text.append("  [", style="dim #55555e")
+        feat_text.append("  ", style="dim")
         for feat, (label, color) in self._FEATURES.items():
             active = self._feature_status[feat]
-            icon = "◉" if active else "◎"
-            feat_text.append(f"{icon} {label}", style=f"{'bold' if active else 'dim'} {color}")
-            if feat != list(self._FEATURES.keys())[-1]:
-                feat_text.append(" ", style="dim #55555e")
-        feat_text.append("]", style="dim #55555e")
+            if active:
+                feat_text.append(f" {label} ", style=f"bold {color}")
+            else:
+                feat_text.append(f" {label} ", style="dim #2d2d3d")
         return feat_text
 
     def _refresh(self) -> None:
-        glyph, color = _STATE_GLYPHS.get(self._state, ("●", "#9a9aa3"))
+        glyph, color = _STATE_GLYPHS.get(self._state, ("○", "#3a3a4a"))
         if self._state in ("thinking", "running"):
             glyph = self._state_spinners[self._frame % len(self._state_spinners)]
-        
+
         text = Text()
-        # Main status
+
+        # Glyph + state label
         text.append(f" {glyph} ", style=f"bold {color}")
         text.append(self._state.upper(), style=f"bold {color}")
-        
-        # Core metrics
-        text.append(f"   session {self._session[:8]}", style="dim #9a9aa3")
-        text.append(f" · {self._model[:14]}", style="dim #9a9aa3")
-        text.append(f" · {self._tool_calls} tools", style="dim #9a9aa3")
-        text.append(f" · {self._iterations} iter", style="dim #9a9aa3")
-        
-        # Token progress bar
+
+        # Session / model
+        text.append(f"  {self._session[:8]}", style="dim #4a4a5a")
+        text.append(f"  {self._model[:18]}", style="dim #6a6a80")
+
+        # Tool / iter counts — only show when non-zero
+        if self._tool_calls:
+            text.append(f"  ⚙ {self._tool_calls}", style="dim #6a6a80")
+        if self._iterations:
+            text.append(f"  ↻ {self._iterations}", style="dim #6a6a80")
+
+        # Token count + context meter
         text.append_text(self._render_token_bar())
-        
-        # Enhanced metrics
-        if hasattr(self, '_memory_hits') and self._memory_hits > 0:
-            text.append(f" · mem:{self._memory_hits}", style="dim #d2a8ff")
-        if hasattr(self, '_retrieval_hits') and self._retrieval_hits > 0:
-            text.append(f" · ret:{self._retrieval_hits}", style="dim #4ac26b")
-        if hasattr(self, '_cost_estimate') and self._cost_estimate > 0:
-            text.append(f" · ${self._cost_estimate:.3f}", style="dim #ffd700")
-        
-        # Elapsed time
-        text.append(f" · {self._elapsed_text()}", style="dim #d2a8ff")
-        
-        # Feature status indicators on new line
+
+        # Memory / retrieval hits — proof the subsystems are alive
+        memory_hits = getattr(self, "_memory_hits", 0)
+        retrieval_hits = getattr(self, "_retrieval_hits", 0)
+        if memory_hits:
+            text.append(f"  mem {memory_hits}", style="dim #ff6b6b")
+        if retrieval_hits:
+            text.append(f"  ret {retrieval_hits}", style="dim #6cb6ff")
+
+        # Optional extras
+        if getattr(self, "_cost_estimate", 0) > 0:
+            text.append(f"  ${self._cost_estimate:.3f}", style="dim #ffd700")
+
+        # Elapsed
+        text.append(f"  {self._elapsed_text()}", style="dim #4a4a5a")
+
+        # Feature pills — second line
         text.append("\n")
         text.append_text(self._render_features())
-        
+
         self.update(text)
 
     def _render_token_bar(self) -> Text:
-        """Render a compact token usage progress bar."""
+        """Compact context-usage meter: `▰▰▱▱▱ 2.4k tok 3%`"""
         text = Text()
-        
-        # Assume 100k token context limit for visualization
-        max_tokens = 100_000
+
+        # Assume 200k token context window for the meter.
+        max_tokens = 200_000
         current = min(self._tokens, max_tokens)
         ratio = current / max_tokens if max_tokens > 0 else 0
-        
+
         # Choose color based on usage
         if ratio < 0.5:
             bar_color = "#4ac26b"  # Green
@@ -783,7 +793,11 @@ class InlineStatus(Static):
             bar_color = "#ffd700"  # Yellow
         else:
             bar_color = "#f47067"  # Red
-        
+
+        # Five-segment meter
+        filled = int(round(ratio * 5))
+        meter = "▰" * filled + "▱" * (5 - filled)
+
         # Format token count
         if self._tokens >= 1_000_000:
             tok_str = f"{self._tokens / 1_000_000:.1f}M"
@@ -791,9 +805,12 @@ class InlineStatus(Static):
             tok_str = f"{self._tokens / 1_000:.1f}k"
         else:
             tok_str = str(self._tokens)
-        
-        text.append(f" · {tok_str} tok", style=f"dim {bar_color}")
-        
+
+        text.append(f" · {meter}", style=f"dim {bar_color}")
+        text.append(f" {tok_str} tok", style=f"dim {bar_color}")
+        if ratio > 0:
+            text.append(f" {ratio:.0%}", style="dim #4a4a5a")
+
         return text
 
 
@@ -831,6 +848,13 @@ class AgentPanel(Widget):
         self._attachments: list[str] = []
         self.verbose = True
 
+    def on_mount(self) -> None:
+        """Configure the multiline editor with the slash-command registry."""
+        try:
+            self.query_one("#agent-input", CommandInput).set_commands(SLASH_COMMANDS)
+        except Exception:
+            pass
+
     def compose(self) -> ComposeResult:
         with Vertical(id="agent-panel"):
             with ScrollableContainer(id="stream"):
@@ -838,25 +862,44 @@ class AgentPanel(Widget):
             yield InlineStatus(id="status-line")
             yield LoaderPill(id="loader-pill")
             with Vertical(id="agent-input-area"):
+                yield Static(id="suggestion-list")
                 with Horizontal(id="attach-chips"):
                     pass
                 with Horizontal(id="agent-input-bar"):
-                    yield Static("＋", id="attach-button")
+                    yield Static("+", id="attach-button")
                     yield Static("❯", id="agent-prompt-icon")
-                    yield Input(
-                        placeholder="Ask TRACERA anything... (/help for commands)",
+                    yield CommandInput(
                         id="agent-input",
+                        placeholder="Ask anything about this codebase…  (/ for commands)",
                     )
             yield Static(
-                "Enter send · /help commands · ctrl+t verbose rows",
+                "enter send · /help commands · ctrl+t verbose · ctrl+p provider · esc cancel",
                 id="input-hints",
             )
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        text = event.value.strip()
+    def on_command_input_submit(self, event: "CommandInput.Submit") -> None:
+        text = event.text.strip()
         if text:
-            self.query_one("#agent-input", Input).value = ""
             self.post_message(self.SubmitTask(text))
+
+    def on_command_input_suggestions_changed(
+        self, event: "CommandInput.SuggestionsChanged"
+    ) -> None:
+        """Render the live slash-command autocomplete list above the prompt."""
+        try:
+            widget = self.query_one("#suggestion-list", Static)
+        except Exception:
+            return
+        if not event.matches:
+            widget.update("")
+            widget.remove_class("has-content")
+            return
+        lines = []
+        for name in event.matches[:6]:
+            desc = SLASH_COMMANDS.get(name, "")
+            lines.append(f"  [bold #da8548]/{name}[/]  [dim #6a6a80]{desc}[/]")
+        widget.update("\n".join(lines))
+        widget.add_class("has-content")
 
     # ── Stream helpers ───────────────────────────────────────────────────────
 
