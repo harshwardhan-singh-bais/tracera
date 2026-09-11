@@ -23,6 +23,10 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+# Module-level import: the tool classes defined below this point subclass Tool
+# (previously a NameError on first import of tracera.main).
+from tracera.tools.base import Tool, ToolResult
+
 app = typer.Typer(
     name="tracera",
     help="TRACERA — Agentic Code Intelligence & Autonomous Coding Engine",

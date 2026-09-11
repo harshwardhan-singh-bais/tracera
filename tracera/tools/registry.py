@@ -144,6 +144,7 @@ TOOL_PROFILES: dict[str, list[str]] = {
         "assemble_code_context",
         "find_references",
         "get_call_hierarchy",
+        "get_class_hierarchy",
         "get_blast_radius",
         "get_changed_symbols",
         "get_index_freshness",
@@ -159,6 +160,7 @@ TOOL_PROFILES: dict[str, list[str]] = {
         "assemble_code_context",
         "find_references",
         "get_call_hierarchy",
+        "get_class_hierarchy",
         "get_dependencies",
         "get_blast_radius",
         "get_changed_symbols",
@@ -233,6 +235,7 @@ def extend_registry_with_retrieval(
         # Standard tools
         FindReferencesTool,
         GetCallHierarchyTool,
+        GetClassHierarchyTool,
         GetBlastRadiusTool,
         GetChangedSymbolsTool,
         GetIndexFreshnessTool,
@@ -263,6 +266,7 @@ def extend_registry_with_retrieval(
         # Standard
         FindReferencesTool(graph_retriever) if graph_retriever else None,
         GetCallHierarchyTool(graph_retriever) if graph_retriever else None,
+        GetClassHierarchyTool(graph_retriever) if graph_retriever else None,
         GetBlastRadiusTool(graph_retriever) if graph_retriever else None,
         GetChangedSymbolsTool(graph_retriever) if graph_retriever else None,
         GetIndexFreshnessTool(retriever) if retriever else None,

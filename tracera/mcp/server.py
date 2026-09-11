@@ -492,7 +492,7 @@ class TraceraMCPServer:
             return None
 
         from tracera.tools.ast_tools import (
-            GetBlastRadiusTool, GetCallHierarchyTool,
+            GetBlastRadiusTool, GetCallHierarchyTool, GetClassHierarchyTool,
             FindDeadCodeTool, GetChangedSymbolsTool, GetHotspotsTool,
             FindReferencesTool, FindImplementationsTool,
             SearchSymbolsTool, GetSymbolSourceTool, GetFileOutlineTool,
@@ -507,6 +507,7 @@ class TraceraMCPServer:
         factory: dict[str, Any] = {
             "get_blast_radius": lambda: GetBlastRadiusTool(pipeline),
             "get_call_hierarchy": lambda: GetCallHierarchyTool(pipeline),
+            "get_class_hierarchy": lambda: GetClassHierarchyTool(pipeline),
             "find_dead_code": lambda: FindDeadCodeTool(pipeline),
             "get_changed_symbols": lambda: GetChangedSymbolsTool(None, pipeline),
             "get_hotspots": lambda: GetHotspotsTool(None, pipeline),

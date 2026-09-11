@@ -10,7 +10,7 @@ from tracera.tools.run_command import RunCommandTool
 
 # Code intelligence tools (Steps 21-41)
 from tracera.tools.ast_tools import (
-    GetBlastRadiusTool, GetCallHierarchyTool,
+    GetBlastRadiusTool, GetCallHierarchyTool, GetClassHierarchyTool,
     FindDeadCodeTool, GetChangedSymbolsTool, GetHotspotsTool,
     FindReferencesTool, FindImplementationsTool,
     SearchSymbolsTool, GetSymbolSourceTool, GetFileOutlineTool,
@@ -27,7 +27,7 @@ __all__ = [
     "ReadFileTool", "WriteFileTool", "EditFileTool",
     "ListDirTool", "GrepTool", "RunCommandTool",
     # Code intelligence
-    "GetBlastRadiusTool", "GetCallHierarchyTool",
+    "GetBlastRadiusTool", "GetCallHierarchyTool", "GetClassHierarchyTool",
     "FindDeadCodeTool", "GetChangedSymbolsTool", "GetHotspotsTool",
     "FindReferencesTool", "FindImplementationsTool",
     "SearchSymbolsTool", "GetSymbolSourceTool", "GetFileOutlineTool",

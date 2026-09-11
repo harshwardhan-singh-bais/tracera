@@ -461,6 +461,96 @@ class FindImplementationsTool(Tool):
         return ToolResult.ok(self.name, "", "\n".join(lines), **metadata)
 
 
+class GetClassHierarchyTool(Tool):
+    """Traverse inheritance chains: base classes, subclasses, and members."""
+    name = "get_class_hierarchy"
+    description = "Traverse the inheritance hierarchy of a class: base classes, subclasses, and contained methods."
+    _params = {
+        "type": "object",
+        "properties": {
+            "class_name": {"type": "string", "description": "Name of the class to inspect."},
+            "depth": {"type": "integer", "description": "Traversal depth (default 2).", "default": 2},
+        },
+        "required": ["class_name"],
+    }
+
+    def __init__(self, retrieval_pipeline=None):
+        self._pipeline = retrieval_pipeline
+
+    @property
+    def parameters_schema(self) -> dict:
+        return self._params
+
+    async def execute(self, class_name: str, depth: int = 2) -> ToolResult:
+        graph = _get_graph(self._pipeline)
+        if graph is None:
+            metadata = build_metadata(None, 0.0)
+            return ToolResult.ok(self.name, "", "Symbol graph not available in the analyzable corpus.", **metadata)
+        node_id = _resolve_symbol(graph, class_name)
+        if not node_id:
+            metadata = build_metadata(graph, 0.95)
+            return ToolResult.ok(self.name, "", f"Class '{class_name}' not found in the indexed/analyzable corpus.", **metadata)
+        node = graph.get_node(node_id)
+        if (node or {}).get("symbol_type") != "class":
+            metadata = build_metadata(graph, 0.7)
+            return ToolResult.ok(self.name, "", f"'{class_name}' resolves to a {(node or {}).get('symbol_type') or 'unknown'}, not a class.", **metadata)
+
+        g = graph._g
+        inherits = "inherits"
+
+        # Edges are stored child → base ("Dog inherits Animal"), so base
+        # classes are reached by following outgoing edges and subclasses by
+        # following incoming edges.
+        def _collect(start: str, *, upward: bool) -> list[str]:
+            found: list[str] = []
+            frontier = [start]
+            for _ in range(max(1, depth)):
+                nxt: list[str] = []
+                for nid in frontier:
+                    edges = g.out_edges(nid, data=True) if upward else g.in_edges(nid, data=True)
+                    for src, dst, data in edges:
+                        if data.get("relation") != inherits:
+                            continue
+                        target = dst if upward else src
+                        if target != start and target not in found:
+                            found.append(target)
+                            nxt.append(target)
+                frontier = nxt
+                if not frontier:
+                    break
+            return found
+
+        bases = _collect(node_id, upward=True)
+        subclasses = _collect(node_id, upward=False)
+        members = graph.get_children(node_id)
+
+        lines = [f"## Class Hierarchy for `{class_name}`\n"]
+        lines.append("### Base classes (inherits from)")
+        if not bases:
+            lines.append("No base classes found in the indexed/analyzable corpus.")
+        for bid in bases[:20]:
+            lines.append(f"- {_node_label(graph, bid)}")
+        lines.append("\n### Subclasses (inherit this)")
+        if not subclasses:
+            lines.append("No subclasses found in the indexed/analyzable corpus.")
+        for sid in subclasses[:20]:
+            lines.append(f"- {_node_label(graph, sid)}")
+        lines.append("\n### Members (methods/properties)")
+        if not members:
+            lines.append("No contained members found in the indexed/analyzable corpus.")
+        for mid in members[:30]:
+            lines.append(f"- {_node_label(graph, mid)}")
+
+        freshness = {}
+        if hasattr(self._pipeline[0], "check_freshness"):
+            freshness = self._pipeline[0].check_freshness()
+        metadata = build_metadata(
+            graph, 0.85, freshness,
+            {"bases": len(bases), "subclasses": len(subclasses), "members": len(members)},
+        )
+        return ToolResult.ok(self.name, "", "\n".join(lines), **metadata)
+
+
 # ── STEP 15: Task-Level Orchestration ────────────────────────────────────────
 
 class PlanCodeTaskTool(Tool):
