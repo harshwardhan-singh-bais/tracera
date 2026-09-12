@@ -52,6 +52,22 @@ Raw evidence: `.tracera/slash_sweep_report.json` (per-command output captured).
 ### 9. `/delegate` sub-agents could mutate the repo — RESOLVED
 - The `git` tool is removed from every sub-agent role set, and `run_command` in sub-agent registries is wrapped with a guard that rejects destructive git mutations (`git commit/push/reset/rebase/checkout/restore/clean/stash/merge/cherry-pick/revert/tag/branch`) with a `PermissionError`. The main agent keeps unrestricted access.
 
+## Found AFTER the sweep: real-TUI dispatch crash (fixed in `ba7b4cd`)
+
+The headless sweep faked Textual's worker layer, which masked two bugs that crashed the **interactive** TUI:
+
+### 10. Every `await self._run_*` dispatch branch raised `TypeError: object Worker can't be used in 'await' expression` (e.g. `/deadcode`)
+- **Root cause:** ~55 `_run_*` handlers were decorated `@work`. Textual `@work` methods return a `Worker`, not a coroutine, so awaiting them crashes. The headless driver's `run_worker` shim returned awaitables, hiding it.
+- **Fix:** removed `@work` from all leaf handlers (only `_run_agent_task` keeps it, for cancel bookkeeping) and awaited every call site.
+
+### 11. `/memgraph` crashed on mount (`'dict' object has no attribute '_append'`)
+- **Root cause:** `MemoryGraphWidget` stored its data in `self._nodes`/`self._edges`, shadowing Textual's internal `Widget._nodes` (a `NodeList` used by the compositor).
+- **Fix:** renamed the widget's data attrs (`_mem_nodes`, `_mem_edges`, `_mem_central`, `_mem_type_counts`).
+
+### Regression guard so this can't hide again
+- `tests/test_slash_runtime_dispatch.py`: (a) static guard — only `_run_agent_task` may carry `@work`; (b) dynamic guard — every registered slash command is dispatched through a **real mounted app** (`app.run_test()` pilot) with LLM fakes.
+- Verified: `scripts/verify_deadcode_real_tui.py` reproduces the user's exact crash path (`/deadcode`, `/hotspots`, `/pagerank`, `/coupling`, `/cycles`) in the real Textual runtime — now clean. Suite: 341/341.
+
 ## Follow-up commit
 
 - `00327a5` — sub-agent sandbox, `/hotspots` opt-in coverage, configurable test timeout, regression tests (`tests/test_sweep_fixes.py`, 8 tests).
@@ -59,7 +75,6 @@ Raw evidence: `.tracera/slash_sweep_report.json` (per-command output captured).
 
 ## Remaining (accepted / cosmetic)
 
-- `RuntimeWarning: coroutine never awaited` noise when `@work` handlers are called synchronously inside the real TUI — pre-existing, harmless.
 - `/search` ranking could be tuned further (works, but relevance ordering is basic).
 - `uv pip` venv drift resolved by the lock pin; nothing pending.
 
