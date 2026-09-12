@@ -110,10 +110,16 @@ class TestRunner:
     def __init__(
         self,
         workspace_root: Path,
-        timeout: int = 120,
+        timeout: int | None = None,
         *,
         python: str = "python",
     ) -> None:
+        if timeout is None:
+            from tracera.config.settings import get_settings
+            try:
+                timeout = get_settings().tracera_test_timeout
+            except Exception:  # settings unavailable in some test contexts
+                timeout = 300
         self._root = workspace_root
         self._timeout = timeout
         self._discovery = TestDiscovery(workspace_root, python=python)

@@ -59,6 +59,9 @@ class Settings(BaseSettings):
         12_000, alias="TRACERA_CONTEXT_BUDGET_TOKENS"
     )
     tracera_command_timeout: int = Field(30, alias="TRACERA_COMMAND_TIMEOUT")
+    # Cap for /test //tests runs. The default 120s is too short for this
+    # repo's own suite (~150s); raise via TRACERA_TEST_TIMEOUT when needed.
+    tracera_test_timeout: int = Field(300, alias="TRACERA_TEST_TIMEOUT")
     tracera_indexing_max_file_size: int = Field(
         2 * 1024 * 1024, alias="TRACERA_INDEXING_MAX_FILE_SIZE"
     )

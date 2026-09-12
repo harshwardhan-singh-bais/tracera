@@ -145,7 +145,8 @@ class GetHotspotsTool(Tool):
         "type": "object",
         "properties": {
             "top_n": {"type": "integer", "default": 10},
-            "formula": {"type": "string", "description": "Configurable score formula (complexity*churn*centrality)"}
+            "formula": {"type": "string", "description": "Configurable score formula (complexity*churn*centrality)"},
+            "with_coverage": {"type": "boolean", "description": "Run pytest --cov to refresh coverage (slow). Default: reuse existing coverage.json if present.", "default": False}
         },
         "required": []
     }
@@ -157,7 +158,7 @@ class GetHotspotsTool(Tool):
     @property
     def parameters_schema(self) -> dict: return self._params
 
-    async def execute(self, top_n: int = 10, formula: str | None = None) -> ToolResult:
+    async def execute(self, top_n: int = 10, formula: str | None = None, with_coverage: bool = False) -> ToolResult:
         graph = _get_graph(self._pipeline)
         workspace_root = str(self._workspace.root) if self._workspace else "."
         # Get git churn
@@ -170,17 +171,22 @@ class GetHotspotsTool(Tool):
             for line in result.stdout.strip().split("\n"):
                 if line.strip(): churn[line.strip()] +=1
         except: pass
-        # Get test coverage if available
+        # Test coverage is opt-in: running `pytest --cov` on every /hotspots
+        # call took ~60s on this repo. Reuse an existing coverage.json when
+        # present; only pay the pytest cost when with_coverage=True.
         coverage: dict[str, float] = {}
-        try:
-            cov_result = subprocess.run(
-                ["pytest", "--cov-report=json", "--cov=."], cwd=workspace_root, capture_output=True, text=True, timeout=60
-            )
-            cov_path = Path(workspace_root) / "coverage.json"
-            if cov_path.exists():
+        cov_path = Path(workspace_root) / "coverage.json"
+        if with_coverage:
+            try:
+                subprocess.run(
+                    ["pytest", "--cov-report=json", "--cov=."], cwd=workspace_root, capture_output=True, text=True, timeout=60
+                )
+            except: pass
+        if cov_path.exists():
+            try:
                 cov_data = json.loads(cov_path.read_text())
                 coverage = {f: d["summary"]["percent_covered"] for f, d in cov_data.get("files", {}).items()}
-        except: pass
+            except: pass
         # Calculate page_rank centrality
         import networkx as nx
         page_rank = nx.pagerank(graph._g) if graph else {}

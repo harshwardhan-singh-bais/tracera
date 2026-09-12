@@ -39,6 +39,28 @@ class SubAgentRole(str, Enum):
     DEBUGGER = "debugger"
 
 
+#: Shell substrings sub-agents may never pass to run_command. The /delegate
+#: path gives agents real tool access; without this guard a coder sub-agent
+#: can (and did, during a sweep run) edit files and `git commit` into the
+#: user's working repo. History rewrite is the only remedy after the fact.
+_FORBIDDEN_COMMAND_SUBSTRINGS = (
+    "git commit", "git push", "git reset", "git rebase", "git checkout",
+    "git restore", "git clean", "git stash", "git merge", "git cherry-pick",
+    "git revert", "git tag", "git branch",
+)
+
+
+def assert_command_allowed(command: str) -> None:
+    """Raise PermissionError if *command* contains a forbidden git mutation."""
+    cmd = (command or "").lower()
+    for fragment in _FORBIDDEN_COMMAND_SUBSTRINGS:
+        if fragment in cmd:
+            raise PermissionError(
+                f"Sub-agents are not allowed to run '{fragment}' "
+                f"(command guard). Command rejected: {command[:120]}"
+            )
+
+
 ROLE_LABELS = {
     SubAgentRole.RESEARCHER: "Researcher",
     SubAgentRole.CODER: "Coder",
@@ -69,10 +91,10 @@ _WRITE_TOOLS = {"write_file", "edit_file", "delete_file"}
 #: tools that actually exist in the registry, so missing tools are ignored.
 ROLE_TOOL_SETS: dict[SubAgentRole, set[str]] = {
     SubAgentRole.RESEARCHER: _READ_TOOLS,
-    SubAgentRole.CODER: _READ_TOOLS | _WRITE_TOOLS | {"git", "run_command"},
-    SubAgentRole.TESTER: _READ_TOOLS | {"git", "run_command"},
-    SubAgentRole.REVIEWER: _READ_TOOLS | {"git"},
-    SubAgentRole.DEBUGGER: _READ_TOOLS | _WRITE_TOOLS | {"git", "run_command"},
+    SubAgentRole.CODER: _READ_TOOLS | _WRITE_TOOLS | {"run_command"},
+    SubAgentRole.TESTER: _READ_TOOLS | {"run_command"},
+    SubAgentRole.REVIEWER: _READ_TOOLS,
+    SubAgentRole.DEBUGGER: _READ_TOOLS | _WRITE_TOOLS | {"run_command"},
 }
 
 
@@ -219,6 +241,26 @@ def build_sub_agent(
     from tracera.agent.react_loop import ReActAgent
 
     filtered = filter_registry(registry, ROLE_TOOL_SETS[role])
+
+    # Guard run_command against destructive git operations by wrapping the
+    # tool's execute. The main agent keeps unrestricted git access — only
+    # sub-agents (which the user does not directly supervise turn-by-turn)
+    # are constrained.
+    run_tool = filtered.get("run_command") if "run_command" in filtered.names else None
+    if run_tool is not None:
+        original_execute = run_tool.execute
+
+        async def guarded_execute(*args, **kwargs):
+            for i, a in enumerate(args):
+                if isinstance(a, str):
+                    assert_command_allowed(a)
+            for v in kwargs.values():
+                if isinstance(v, str):
+                    assert_command_allowed(v)
+            return await original_execute(*args, **kwargs)
+
+        run_tool.execute = guarded_execute  # type: ignore[method-assign]
+
     system_prompt = (
         f"You are the {ROLE_LABELS[role]} sub-agent of the TRACERA system.\n"
         f"{ROLE_SYSTEM_PROMPTS[role]}"
