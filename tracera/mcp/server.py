@@ -515,9 +515,9 @@ class TraceraMCPServer:
             "find_implementations": lambda: FindImplementationsTool(pipeline),
             "search_symbols": lambda: SearchSymbolsTool(pipeline),
             "get_symbol_source": lambda: GetSymbolSourceTool(pipeline),
-            "get_file_outline": lambda: GetFileOutlineTool(pipeline),
-            "get_repo_map": lambda: GetRepoMapTool(pipeline),
-            "assemble_code_context": lambda: AssembleCodeContextTool(None, None),
+            "get_file_outline": lambda: GetFileOutlineTool(graph_retriever),
+            "get_repo_map": lambda: GetRepoMapTool(graph_retriever),
+            "assemble_code_context": lambda: AssembleCodeContextTool(retrieval_pipeline=pipeline),
             "get_dependencies": lambda: GetDependenciesTool(pipeline),
             "get_index_freshness": lambda: GetIndexFreshnessTool(pipeline),
             "calculate_pagerank": lambda: CalculatePageRankTool(pipeline),
@@ -525,8 +525,8 @@ class TraceraMCPServer:
             "get_code_provenance": lambda: GetCodeProvenanceTool(pipeline),
             "assess_change_risk": lambda: AssessChangeRiskTool(pipeline),
             "structural_search": lambda: StructuralSearchTool(pipeline),
-            "get_session_stats": lambda: GetSessionStatsTool(None),
-            "plan_code_task": lambda: PlanCodeTaskTool(),
+            "get_session_stats": lambda: GetSessionStatsTool(retrieval_pipeline=pipeline),
+            "plan_code_task": lambda: PlanCodeTaskTool(pipeline),
         }
         if name in factory:
             self._ast_tools[name] = factory[name]()

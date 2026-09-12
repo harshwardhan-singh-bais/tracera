@@ -27,6 +27,8 @@ from tracera.memory.taxonomy import (
 from tracera.memory.extractor import ConversationExtractor
 from tracera.memory.triples import TripleStore, Triple
 from tracera.memory.recall import ContextRecall
+from tracera.memory.layer import AgentMemory, MemoryLayer, MemoryStore
+from tracera.memory.layer.store import MemoryRecord, ALL_KINDS
 
 __all__ = [
     "SessionManager",
@@ -43,4 +45,9 @@ __all__ = [
     "TripleStore",
     "Triple",
     "ContextRecall",
+    "AgentMemory",
+    "MemoryLayer",
+    "MemoryStore",
+    "MemoryRecord",
+    "ALL_KINDS",
 ]

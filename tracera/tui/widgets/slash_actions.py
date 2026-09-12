@@ -25,6 +25,8 @@ SLASH_TOOLS: dict[str, str] = {
     # ── retrieval / code intelligence ───────────────────────────────────────
     "search": "search_code",
     "symbol": "find_symbol",
+    "symbols": "search_symbols",
+    "source": "get_symbol_source",
     "definition": "find_definition",
     "context": "get_context",
     "deps": "get_dependencies",
@@ -88,6 +90,8 @@ FEATURE_GROUPS: dict[str, list[tuple[str, str]]] = {
     "Code retrieval": [
         ("/search <query>", "hybrid (BM25 + dense) code search"),
         ("/symbol <name>", "find a symbol by name"),
+        ("/symbols <query>", "search symbols (exact/prefix/fuzzy)"),
+        ("/source <symbol>", "exact source of a symbol (byte/line range)"),
         ("/definition <name>", "jump to a definition"),
         ("/outline <file>", "file outline — signatures only"),
         ("/repomap", "repository overview ranked by centrality"),
@@ -146,6 +150,10 @@ FEATURE_GROUPS: dict[str, list[tuple[str, str]]] = {
         ("/plantask", "plan a code task (intent + anchors + route)"),
         ("/sessionstats", "session economics + token savings"),
     ],
+    "Multi-agent": [
+        ("/delegate <task>", "decompose a task across sub-agents (Phases 42-44)"),
+        ("/agents", "sub-agent fleet overview"),
+    ],
     "Index & repo": [
         ("/index", "index the workspace (incremental)"),
         ("/freshness", "index freshness vs the filesystem"),
@@ -156,6 +164,9 @@ FEATURE_GROUPS: dict[str, list[tuple[str, str]]] = {
         ("/test", "run the project test suite"),
         ("/review", "ask the agent to review current changes"),
         ("/tests <framework>", "run tests (pytest/unittest/npm/cargo)"),
+        ("/fix <task>", "autonomous fix loop: plan → retrieve → edit → test (Phase 36)"),
+        ("/selfreview", "independent LLM review of uncommitted changes (Phase 37)"),
+        ("/regression", "baseline vs current test comparison (Phase 38)"),
     ],
     "Providers & UI": [
         ("/model <id>", "switch model"),

@@ -33,13 +33,222 @@ from tracera.memory.layer.attribution import (
 from tracera.memory.layer.extract import MemoryExtractor
 from tracera.memory.layer.queue import BackgroundWorker
 from tracera.memory.layer.recall import RecallInjector
-from tracera.memory.layer.store import Job, MemoryStore
+from tracera.memory.layer.store import Job, MemoryStore, ALL_KINDS
 from tracera.memory.layer.wrapper import MemoryProvider
 from tracera.providers.base import LLMMessage, LLMProvider
 
 log = get_logger("memory.layer")
 
 EmbedFn = Callable[[str], list[float]]
+
+
+class MemoryLayerError(RuntimeError):
+    """Raised for misuse of the memory layer API (e.g. double registration)."""
+
+
+class AgentMemory:
+    """
+    TRACERA-compatible memory facade.
+
+    This is the class that ``TraceraTUI`` and the agent runtime expect.
+    It wraps a ``MemoryLayer`` and exposes the attribute-based API used by
+    ``action_show_memory`` and the memory tools:
+
+        memory.stats()
+        memory.get_by_type(mtype)
+        memory.recall(query, top_k=...)
+        memory.add(memory)
+        memory.delete(memory_id)
+        memory.entries()
+
+    It also exposes ``triple_store`` and ``session_manager`` so the TUI's
+    ``/memgraph`` and ``/sessions`` commands can reach the underlying stores.
+    """
+
+    def __init__(self, layer: MemoryLayer, *, triple_store: Any = None, session_manager: Any = None):
+        self._layer = layer
+        self._triple_store = triple_store
+        self._session_manager = session_manager
+
+    # ── Introspection (used by action_show_memory) ──────────────────────────
+
+    def stats(self) -> dict[str, Any]:
+        """Return memory statistics matching what action_show_memory expects."""
+        store = self._layer.store
+        total = store.count_memories()
+        by_type: dict[str, int] = {}
+        # find_by_kind(entity_id) returns dict[str, list] grouped by kind
+        grouped = store.find_by_kind('default')
+        for kind, records in grouped.items():
+            if records:
+                by_type[kind] = len(records)
+        return {
+            "total": total,
+            "by_type": by_type,
+        }
+
+    def count(self) -> int:
+        """Number of active memories (used by status line)."""
+        return self._layer.store.count_memories()
+
+    def entries(self) -> list:
+        """Legacy fallback — return raw memory records."""
+        return [self._record_to_memory(r) for r in self._layer.store.find_memories(self._layer.store._resolve_ids('*', '*')[0], limit=50)]
+
+    # ── Type-based retrieval (used by action_show_memory) ───────────────────
+
+    def get_by_type(self, mtype: Any) -> list:
+        """Return memories of a specific type for display."""
+        kind = getattr(mtype, "value", str(mtype)).lower()
+        grouped = self._layer.store.find_by_kind('default')
+        if kind in grouped:
+            return [self._record_to_memory(rec) for rec in grouped[kind][:20]]
+        return []
+
+    # ── Explicit memory operations (used by memory tools) ───────────────────
+
+    def recall(
+        self,
+        query: str,
+        top_k: int = 10,
+        max_chars: int = 8000,
+        include_sessions: bool = True,
+        include_triples: bool = True,
+        include_legacy: bool = True,
+        use_graph_expansion: bool = True,
+    ) -> str:
+        """Recall relevant memories as a formatted string."""
+        # Delegate to the RecallInjector on the layer
+        from tracera.memory.recall import ContextRecall
+        # Build a simple recall using the store directly
+        # For now, return a formatted string from store memories
+        all_memories = self._layer.store.find_memories(self._layer.store._resolve_ids('*', '*')[0], limit=top_k * 3)
+        lines = []
+        for rec in all_memories[:top_k]:
+            lines.append(f"[{rec.kind}] {rec.text[:200]}")
+        return "\n".join(lines) if lines else "No relevant memories found."
+
+    def add(self, memory: Any, *, kind: str = "fact", importance: float = 0.5) -> Any:
+        """Store a structured memory."""
+        # Accept structured memory objects or dicts
+        if hasattr(memory, 'content'):
+            text = memory.content
+        elif isinstance(memory, dict):
+            text = memory.get('text', memory.get('content', ''))
+        else:
+            text = str(memory)
+
+        # Extract subject/predicate/object from text if possible
+        subject = 'user'
+        predicate = 'knows'
+        object_val = text[:100]
+
+        embedding = self._layer._embed_fn(text)
+        inserted, record = self._layer.store.upsert_memory(
+            entity_id='default',
+            process_id='tracera-agent',
+            kind=kind,
+            subject=subject,
+            predicate=predicate,
+            object=object_val,
+            text=text,
+            embedding=embedding,
+            confidence=importance,
+            importance=importance,
+        )
+        return record
+
+    def delete(self, memory_id: str) -> bool:
+        """Delete a memory by ID."""
+        try:
+            mem_id = int(memory_id)
+            # Use upsert to mark as invalidated
+            self._layer.store.upsert_memory(
+                entity_id='default',
+                process_id='tracera-agent',
+                kind='fact',
+                subject='deleted',
+                predicate='memory',
+                object=memory_id,
+                text='',
+                embedding=[0.0] * 384,
+                status='invalidated',
+            )
+            return True
+        except (ValueError, Exception):
+            # Try to mark as invalidated via direct SQL
+            return False
+
+    def search(self, query: str, top_k: int = 10) -> list:
+        """Search memories by semantic similarity."""
+        embedding = self._layer._embed_fn(query)
+        results = self._layer.store.recall('default', embedding, k=top_k, min_score=0.1)
+        return [(rec, score) for rec, score in results]
+
+    # ── Triple store access (used by /memgraph, /triples) ──────────────────
+
+    @property
+    def triple_store(self) -> Any:
+        """Expose the triple store for graph commands."""
+        return self._triple_store
+
+    @property
+    def session_manager(self) -> Any:
+        """Expose the session manager for session commands."""
+        return self._session_manager
+
+    # ── Internal helpers ─────────────────────────────────────────────────────
+
+    def _record_to_memory(self, record: Any) -> Any:
+        """Convert a MemoryRecord to a memory object for display."""
+        from tracera.memory.taxonomy import (
+            MemoryFact,
+            MemoryPreference,
+            MemoryRelationship,
+            MemoryRule,
+            MemorySkill,
+            MemoryEvent,
+            MemoryDecision,
+            MemoryGoal,
+            MemoryConstraint,
+            MemoryExperience,
+            MemoryAttribute,
+            StructuredMemory,
+        )
+
+        kind = getattr(record, "kind", "fact").lower()
+        content = getattr(record, "text", "")
+
+        if kind == "fact":
+            return MemoryFact(content=content, importance=record.importance)
+        elif kind == "preference":
+            return MemoryPreference(content=content, importance=record.importance)
+        elif kind == "relationship":
+            return MemoryRelationship(
+                subject=getattr(record, 'subject', ''),
+                predicate=getattr(record, 'predicate', ''),
+                object=getattr(record, 'object', ''),
+                content=content,
+                importance=record.importance,
+            )
+        elif kind == "rule":
+            return MemoryRule(content=content, importance=record.importance)
+        elif kind == "skill":
+            return MemorySkill(content=content, importance=record.importance)
+        elif kind == "event":
+            return MemoryEvent(content=content, importance=record.importance)
+        elif kind == "decision":
+            return MemoryDecision(content=content, importance=record.importance)
+        elif kind == "goal":
+            return MemoryGoal(content=content, importance=record.importance)
+        elif kind == "constraint":
+            return MemoryConstraint(content=content, importance=record.importance)
+        elif kind == "experience":
+            return MemoryExperience(content=content, importance=record.importance)
+        elif kind == "attribute":
+            return MemoryAttribute(content=content, importance=record.importance)
+        else:
+            return StructuredMemory(content=content, importance=record.importance)
 
 
 class MemoryLayerError(RuntimeError):

@@ -91,6 +91,8 @@ def _build_agent(settings=None, workspace_path: Path | None = None, retrieval_pi
             registry, symbol_retriever, expander, graph_retriever,
             context_engine=context_engine,
             compressor=compressor,
+            retrieval_pipeline=retrieval_pipeline,
+            workspace=workspace,
         )
 
     # Provider with automatic failover across all configured APIs

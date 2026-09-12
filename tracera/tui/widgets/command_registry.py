@@ -25,6 +25,9 @@ SLASH_COMMANDS: dict[str, str] = {
     "index": "Index the workspace (incremental)",
     "test": "Run the project's test suite",
     "review": "Ask the agent to review current changes",
+    "fix": "Autonomous fix loop: /fix <failing task> (plan→retrieve→edit→test)",
+    "selfreview": "Independent LLM review of uncommitted changes (Phase 37)",
+    "regression": "Baseline vs current test comparison (Phase 38)",
     "tools": "List available tools",
     "mcp": "Show MCP status & config",
     "cost": "Session token/cost estimate",
@@ -35,6 +38,8 @@ SLASH_COMMANDS: dict[str, str] = {
     "theme": "Cycle accent theme (claude → crush → nord)",
     "files": "Recently touched files",
     "phases": "Phase map + verified checklist",
+    "delegate": "Delegate a task to sub-agents: /delegate <task>",
+    "agents": "Sub-agent fleet overview (Researcher/Coder/Tester/Reviewer/Debugger)",
     "reset": "Reset conversation state",
 }
 
@@ -53,6 +58,9 @@ COMMAND_ORDER: list[str] = [
     "index",
     "test",
     "review",
+    "fix",
+    "selfreview",
+    "regression",
     "tools",
     "mcp",
     "memory",
@@ -64,6 +72,8 @@ COMMAND_ORDER: list[str] = [
     "files",
     "observability",
     "phases",
+    "delegate",
+    "agents",
     "reset",
 ]
 

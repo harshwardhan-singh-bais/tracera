@@ -199,6 +199,8 @@ def extend_registry_with_retrieval(
     compressor: Any | None = None,
     context_recall: Any | None = None,
     tool_profile: str = "standard",
+    retrieval_pipeline: Any | None = None,
+    workspace: Any | None = None,
 ) -> ToolRegistry:
     """
     Phase 21-41 — Extend an existing registry with full code-intelligence tools.
@@ -225,13 +227,13 @@ def extend_registry_with_retrieval(
         FindSymbolTool,
         FindDefinitionTool,
         GetContextTool,
-        GetDependenciesTool,
     )
     from tracera.tools.ast_tools import (
         # Core tools (always available)
         GetFileOutlineTool,
         GetRepoMapTool,
         AssembleCodeContextTool,
+        GetDependenciesTool,
         # Standard tools
         FindReferencesTool,
         GetCallHierarchyTool,
@@ -252,6 +254,21 @@ def extend_registry_with_retrieval(
         FindImplementationsTool,
     )
 
+    # ── Pipeline-tuple plumbing ─────────────────────────────────────────────
+    # The ast_tools family all accept ``retrieval_pipeline`` (the 10-tuple built
+    # by ``_build_retrieval_pipeline``) and extract the SymbolGraph themselves
+    # via ``_get_graph``. Passing anything else (GraphRetriever, bare retriever,
+    # compressor…) made every one of those tools fail at runtime with
+    # AttributeError ('GraphRetriever' object has no attribute '_g', etc.).
+    #
+    # When this function is called without the full pipeline (older call sites
+    # pass individual components), we still reconstruct a minimal tuple shape:
+    #   [indexer, retriever, expander, _, context_engine, compressor, _, _, _, graph_retriever]
+    if retrieval_pipeline is not None:
+        pipeline = retrieval_pipeline
+    else:
+        pipeline = (None, retriever, expander, None, context_engine, compressor, None, None, None, graph_retriever)
+
     # Create all code intelligence tools
     all_ci_tools = [
         # Core (from code_search.py - these are the primary agent-facing tools)
@@ -259,28 +276,31 @@ def extend_registry_with_retrieval(
         FindSymbolTool(retriever, context_recall=context_recall),
         FindDefinitionTool(retriever, compressor=compressor, context_recall=context_recall),
         GetContextTool(retriever, expander, graph_retriever, compressor=compressor, context_engine=context_engine, context_recall=context_recall),
-        GetDependenciesTool(graph_retriever) if graph_retriever else None,
-        GetFileOutlineTool(retriever),
-        GetRepoMapTool(graph_retriever) if graph_retriever else None,
-        AssembleCodeContextTool(context_engine, compressor) if context_engine else None,
+        # NOTE: the pipeline-backed GetDependenciesTool from ast_tools is used
+        # here, NOT the code_search variant — the latter wraps a bare SymbolGraph
+        # and crashes with AttributeError when handed the 10-tuple.
+        GetDependenciesTool(pipeline),
+        GetFileOutlineTool(graph_retriever.graph if graph_retriever is not None and hasattr(graph_retriever, "graph") else graph_retriever),
+        GetRepoMapTool(graph_retriever.graph if graph_retriever is not None and hasattr(graph_retriever, "graph") else graph_retriever),
+        AssembleCodeContextTool(retrieval_pipeline=pipeline),
         # Standard
-        FindReferencesTool(graph_retriever) if graph_retriever else None,
-        GetCallHierarchyTool(graph_retriever) if graph_retriever else None,
-        GetClassHierarchyTool(graph_retriever) if graph_retriever else None,
-        GetBlastRadiusTool(graph_retriever) if graph_retriever else None,
-        GetChangedSymbolsTool(graph_retriever) if graph_retriever else None,
-        GetIndexFreshnessTool(retriever) if retriever else None,
+        FindReferencesTool(pipeline),
+        GetCallHierarchyTool(pipeline),
+        GetClassHierarchyTool(pipeline),
+        GetBlastRadiusTool(pipeline),
+        GetChangedSymbolsTool(retrieval_pipeline=pipeline),
+        GetIndexFreshnessTool(pipeline),
         # Advanced
-        FindDeadCodeTool(graph_retriever) if graph_retriever else None,
-        GetHotspotsTool(graph_retriever) if graph_retriever else None,
-        CalculatePageRankTool(graph_retriever) if graph_retriever else None,
-        PlanRefactoringTool(graph_retriever) if graph_retriever else None,
-        GetCodeProvenanceTool(graph_retriever) if graph_retriever else None,
-        AssessChangeRiskTool(graph_retriever) if graph_retriever else None,
-        StructuralSearchTool(graph_retriever) if graph_retriever else None,
-        GetSessionStatsTool(context_engine) if context_engine else None,
-        PlanCodeTaskTool(),
-        FindImplementationsTool(graph_retriever) if graph_retriever else None,
+        FindDeadCodeTool(pipeline),
+        GetHotspotsTool(workspace, retrieval_pipeline=pipeline),
+        CalculatePageRankTool(pipeline),
+        PlanRefactoringTool(pipeline),
+        GetCodeProvenanceTool(pipeline),
+        AssessChangeRiskTool(pipeline),
+        StructuralSearchTool(pipeline),
+        GetSessionStatsTool(retrieval_pipeline=pipeline),
+        PlanCodeTaskTool(pipeline),
+        FindImplementationsTool(pipeline),
     ]
 
     # Filter out None values and apply profile filtering

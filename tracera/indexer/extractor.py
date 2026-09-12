@@ -60,37 +60,40 @@ class SymbolExtractor:
         try:
             query = tree_sitter.Query(lang, self.QUERIES[lang_name])
             cursor = tree_sitter.QueryCursor(query)
-            matches = cursor.matches(tree.root_node)
+            # NOTE: QueryCursor.matches() returns nodes backed by freed memory on
+            # some Windows/py-tree-sitter 0.26 combinations (end_point.row values
+            # like 35183298347160 — later crashing pydantic-core with an access
+            # violation). captures() returns clean node references, so the
+            # extraction is built on it instead.
+            captures = cursor.captures(tree.root_node)
         except Exception as e:
             log.warning("Failed to run tree-sitter query for %s: %s", lang_name, e)
             return []
 
         symbols = []
         code_lines = code.split(b"\n")
+        max_line = len(code_lines)
 
-        for match_id, capture_dict in matches:
-            # capture_dict maps capture names to lists of nodes in new python bindings
-            # e.g., {'name': [node1], 'class': [node2]}
-            
-            # We expect a @name capture and a @<type> capture (e.g. @class)
-            name_nodes = capture_dict.get("name")
-            if not name_nodes:
+        # captures() returns {capture_name: [node, ...]}. Each capture name maps
+        # to one capture kind in the query (@name, @class, @function, ...). Pair
+        # every @name node with the @<type> node from the same query match by
+        # walking the tree: a type-node "contains" its name-node.
+        type_by_name_node: dict[int, tuple[str, object]] = {}
+        for capture_type, captured_nodes in captures.items():
+            if capture_type == "name":
                 continue
-            name_node = name_nodes[0]
+            for node in captured_nodes:
+                for child in node.children:
+                    type_by_name_node[child.id] = (capture_type, node)
+
+        name_nodes = captures.get("name", [])
+        for name_node in name_nodes:
+            entry = type_by_name_node.get(name_node.id)
+            if entry is None:
+                continue
+            sym_type, node = entry
 
             symbol_name = code[name_node.start_byte:name_node.end_byte].decode("utf-8")
-            
-            node = None
-            sym_type = None
-
-            for capture_type, captured_nodes in capture_dict.items():
-                if capture_type != "name" and captured_nodes:
-                    sym_type = capture_type
-                    node = captured_nodes[0]
-                    break
-            
-            if not node or not sym_type:
-                continue
 
             # Convert capture name to SymbolType
             try:
@@ -111,6 +114,16 @@ class SymbolExtractor:
 
             start_line = node.start_point.row
             end_line = node.end_point.row
+
+            # Defense-in-depth: clamp impossible line numbers so a corrupt node
+            # can never reach LineRange/pydantic (which crashed with an access
+            # violation on out-of-range values).
+            if start_line < 0 or end_line < start_line or end_line >= max_line + 5:
+                log.warning(
+                    "Skipping implausible node range %d-%d (file has %d lines)",
+                    start_line, end_line, max_line,
+                )
+                continue
 
             # Extract content from lines
             # If start and end are the same, just get that line

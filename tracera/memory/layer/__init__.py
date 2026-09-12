@@ -38,7 +38,7 @@ from tracera.memory.layer.extract import (
     ExtractedMemory,
     MemoryExtractor,
 )
-from tracera.memory.layer.facade import MemoryLayer, MemoryLayerError
+from tracera.memory.layer.facade import AgentMemory, MemoryLayer, MemoryLayerError
 from tracera.memory.layer.events import (
     EventPipeline,
     EventType,
@@ -76,6 +76,7 @@ __all__ = [
     "MemoryEvent",
     "MemoryExtractor",
     "MemoryKind",
+    "AgentMemory",
     "MemoryLayer",
     "MemoryLayerError",
     "MemoryProvider",

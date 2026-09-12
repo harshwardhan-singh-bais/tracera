@@ -86,6 +86,9 @@ _HELP_TEXT = """\
 [bold]/index[/]          Index the workspace (Phase 16-24 pipeline)
 [bold]/test[/]           Run the project's test suite
 [bold]/review[/]         Ask the agent to review current changes
+[bold]/fix[/] <task>     Autonomous fix loop (plan → retrieve → edit → test)
+[bold]/selfreview[/]     Independent LLM review of uncommitted changes
+[bold]/regression[/]     Baseline vs current test comparison
 [bold]/tools[/]          List available tools
 [bold]/mcp[/]            Show MCP status & config
 [bold]/cost[/]           Show session token/cost estimate
@@ -99,6 +102,8 @@ _HELP_TEXT = """\
 [bold]/phases[/]         Show the phase map + verified checklist
 [bold]/phases done <n>[/]  Mark a phase as verified (persisted)
 [bold]/features[/]       List every feature as a slash command
+[bold]/delegate[/] [task]  Decompose a task across sub-agents and aggregate results
+[bold]/agents[/]         Sub-agent fleet overview
 [bold]/tool[/] [name args]  Run any registry tool directly
 [bold]/reset[/]          Reset conversation state
 
@@ -293,6 +298,9 @@ class TraceraTUI(App):
         self.memory = memory
         self.workspace_path = workspace_path
         self.retrieval_pipeline = retrieval_pipeline
+        # Wire the memory layer to the agent so /memory, /memgraph, and memory
+        # tools can reach it through agent._enhanced_memory etc.
+        self._wire_memory_to_agent()
         # The CLI already printed this banner to scrollback; the app reproduces
         # it at the top of its own first frame so the (unavoidable on Windows)
         # alt-screen switch looks continuous rather than like a new screen.
@@ -308,6 +316,50 @@ class TraceraTUI(App):
             tui_theme.set_theme(tui_theme.load_saved_theme(get_settings().tracera_data_dir))
         except Exception:
             tui_theme.set_theme(tui_theme.DEFAULT_THEME)
+
+    # ── Memory wiring ─────────────────────────────────────────────────────────
+
+    def _wire_memory_to_agent(self) -> None:
+        """Connect the memory facade to the agent so TUI commands and tools can reach it.
+
+        The legacy ``AgentMemory`` (JSON-backed) is enhanced with the new
+        memory-layer attributes when a ``MemoryLayer``-based facade is available.
+        This makes ``/memory``, ``/memgraph``, ``/triples``, and the memory tools
+        work without requiring the agent constructor to change.
+        """
+        mem = self.memory
+
+        # If the memory object already has the new-style attributes, use them.
+        if hasattr(mem, "_layer"):
+            # MemoryLayer-based AgentMemory — extract the stores.
+            layer = mem._layer
+            self.agent._enhanced_memory = mem
+            self.agent._triple_store = layer.store.triple_store
+            self.agent._session_manager = layer.store.session_manager
+            return
+
+        # Check if the memory object exposes triple_store / session_manager directly.
+        ts = getattr(mem, "triple_store", None)
+        sm = getattr(mem, "session_manager", None)
+        if ts is not None or sm is not None:
+            self.agent._enhanced_memory = mem
+            self.agent._triple_store = ts
+            self.agent._session_manager = sm
+            return
+
+        # Legacy JSON-backed AgentMemory — attach a TripleStore and SessionManager
+        # so the TUI displays gracefully even without the full memory layer.
+        try:
+            from tracera.memory.triples import TripleStore
+            from tracera.memory.session import SessionManager
+
+            self.agent._triple_store = TripleStore()
+            self.agent._session_manager = SessionManager()
+            self.agent._enhanced_memory = mem
+        except Exception:
+            # If even those can't be created, leave the attributes unset.
+            # action_show_memory will fall back to the legacy display path.
+            pass
 
     # ── Layout ────────────────────────────────────────────────────────────────
 
@@ -414,12 +466,12 @@ class TraceraTUI(App):
         return self._panel().query_one("#status-line", InlineStatus)
 
     @on(AgentPanel.SubmitTask)
-    def on_submit_task(self, event: AgentPanel.SubmitTask) -> None:
+    async def on_submit_task(self, event: AgentPanel.SubmitTask) -> None:
         text = event.text.strip()
         if not text:
             return
         if text.startswith("/"):
-            self._handle_command(text)
+            await self._handle_command(text)
             return
         panel = self._panel()
         panel.add_user_message(text)
@@ -433,7 +485,7 @@ class TraceraTUI(App):
     def on_loader_stop_requested(self, event: LoaderPill.StopRequested) -> None:
         self.action_cancel_task()
 
-    def _handle_command(self, text: str) -> None:
+    async def _handle_command(self, text: str) -> None:
         panel = self._panel()
         cmd = text.split()[0].lower()
 
@@ -526,6 +578,283 @@ class TraceraTUI(App):
                 self._run_tool_command(spec)
             else:
                 panel.add_error("Usage: /tool <name> [key=value ...]")
+        elif cmd == "/delegate":
+            task = text[len(cmd):].strip()
+            if task:
+                self._run_delegate(task)
+            else:
+                panel.add_error("Usage: /delegate <task description>")
+        elif cmd == "/agents":
+            self._show_agents(panel)
+        elif cmd == "/fix":
+            task = text[len(cmd):].strip()
+            if task:
+                self._run_fix_loop(task)
+            else:
+                panel.add_error("Usage: /fix <failing task or test description>")
+        elif cmd == "/selfreview":
+            self._run_selfreview()
+        elif cmd == "/regression":
+            self._run_regression_check()
+        # ── Code intelligence retrieval aliases (require index) ──────────────
+        elif cmd == "/symbol":
+            name = text[len(cmd):].strip()
+            if name:
+                await self._run_symbol(name)
+            else:
+                panel.add_error("Usage: /symbol <name>")
+        elif cmd == "/symbols":
+            query = text[len(cmd):].strip()
+            if query:
+                await self._run_symbols(query)
+            else:
+                panel.add_error("Usage: /symbols <query>")
+        elif cmd == "/source":
+            symbol = text[len(cmd):].strip()
+            if symbol:
+                await self._run_source(symbol)
+            else:
+                panel.add_error("Usage: /source <symbol>")
+        elif cmd == "/definition":
+            name = text[len(cmd):].strip()
+            if name:
+                await self._run_definition(name)
+            else:
+                panel.add_error("Usage: /definition <name>")
+        elif cmd == "/outline":
+            file = text[len(cmd):].strip()
+            if file:
+                await self._run_outline(file)
+            else:
+                panel.add_error("Usage: /outline <file>")
+        elif cmd == "/repomap":
+            await self._run_repomap()
+        elif cmd == "/assemble":
+            task = text[len(cmd):].strip()
+            if task:
+                await self._run_assemble(task)
+            else:
+                panel.add_error("Usage: /assemble <task>")
+        elif cmd == "/context":
+            symbol = text[len(cmd):].strip()
+            if symbol:
+                await self._run_context(symbol)
+            else:
+                panel.add_error("Usage: /context <symbol>")
+        elif cmd == "/deps":
+            symbol = text[len(cmd):].strip()
+            if symbol:
+                await self._run_deps(symbol)
+            else:
+                panel.add_error("Usage: /deps <symbol>")
+        elif cmd == "/refs":
+            symbol = text[len(cmd):].strip()
+            if symbol:
+                await self._run_refs(symbol)
+            else:
+                panel.add_error("Usage: /refs <symbol>")
+        elif cmd == "/callers":
+            symbol = text[len(cmd):].strip()
+            if symbol:
+                await self._run_callers(symbol)
+            else:
+                panel.add_error("Usage: /callers <symbol>")
+        elif cmd == "/blast":
+            symbol = text[len(cmd):].strip()
+            if symbol:
+                await self._run_blast(symbol)
+            else:
+                panel.add_error("Usage: /blast <symbol>")
+        elif cmd == "/changed":
+            await self._run_changed()
+        elif cmd == "/freshness":
+            await self._run_freshness()
+        elif cmd == "/importers":
+            file = text[len(cmd):].strip()
+            if file:
+                await self._run_importers(file)
+            else:
+                panel.add_error("Usage: /importers <file>")
+        elif cmd == "/classhier":
+            class_name = text[len(cmd):].strip()
+            if class_name:
+                await self._run_classhier(class_name)
+            else:
+                panel.add_error("Usage: /classhier <class>")
+        elif cmd == "/cycles":
+            await self._run_cycles()
+        elif cmd == "/coupling":
+            await self._run_coupling()
+        elif cmd == "/endpoint":
+            route = text[len(cmd):].strip()
+            if route:
+                await self._run_endpoint(route)
+            else:
+                panel.add_error("Usage: /endpoint <route>")
+        elif cmd == "/deadcode":
+            await self._run_deadcode()
+        elif cmd == "/hotspots":
+            await self._run_hotspots()
+        elif cmd == "/pagerank":
+            await self._run_pagerank()
+        elif cmd == "/refactor":
+            symbol = text[len(cmd):].strip()
+            if symbol:
+                await self._run_refactor(symbol)
+            else:
+                panel.add_error("Usage: /refactor <symbol>")
+        elif cmd == "/editsafe":
+            symbol = text[len(cmd):].strip()
+            if symbol:
+                await self._run_editsafe(symbol)
+            else:
+                panel.add_error("Usage: /editsafe <symbol>")
+        elif cmd == "/deletesafe":
+            symbol = text[len(cmd):].strip()
+            if symbol:
+                await self._run_deletesafe(symbol)
+            else:
+                panel.add_error("Usage: /deletesafe <symbol>")
+        elif cmd == "/impls":
+            symbol = text[len(cmd):].strip()
+            if symbol:
+                await self._run_impls(symbol)
+            else:
+                panel.add_error("Usage: /impls <symbol>")
+        elif cmd == "/provenance":
+            symbol = text[len(cmd):].strip()
+            if symbol:
+                await self._run_provenance(symbol)
+            else:
+                panel.add_error("Usage: /provenance <symbol>")
+        elif cmd == "/risk":
+            target = text[len(cmd):].strip()
+            if target:
+                await self._run_risk(target)
+            else:
+                panel.add_error("Usage: /risk <target>")
+        elif cmd == "/prrisk":
+            await self._run_prrisk()
+        elif cmd == "/auditconfig":
+            await self._run_auditconfig()
+        elif cmd == "/ast":
+            pattern = text[len(cmd):].strip()
+            if pattern:
+                await self._run_ast(pattern)
+            else:
+                panel.add_error("Usage: /ast <pattern>")
+        elif cmd == "/sessionstats":
+            await self._run_sessionstats()
+        elif cmd == "/plantask":
+            task = text[len(cmd):].strip()
+            if task:
+                await self._run_plantask()
+                panel.add_meta(f"→ [bold]PlanTask[/] {escape(task[:60])}")
+            else:
+                panel.add_error("Usage: /plantask <task description>")
+        elif cmd == "/planturn":
+            query = text[len(cmd):].strip()
+            if query:
+                await self._run_planturn(query)
+            else:
+                panel.add_error("Usage: /planturn <query>")
+        elif cmd == "/ranked":
+            query = text[len(cmd):].strip()
+            if query:
+                await self._run_ranked(query)
+            else:
+                panel.add_error("Usage: /ranked <query>")
+        elif cmd == "/taskcontext":
+            task = text[len(cmd):].strip()
+            if task:
+                await self._run_taskcontext(task)
+            else:
+                panel.add_error("Usage: /taskcontext <task>")
+        # ── Memory aliases ────────────────────────────────────────────────────
+        elif cmd == "/recall":
+            query = text[len(cmd):].strip()
+            if query:
+                await self._run_recall(query)
+            else:
+                panel.add_error("Usage: /recall <query>")
+        elif cmd == "/remember":
+            text_content = text[len(cmd):].strip()
+            if text_content:
+                await self._run_remember(text_content)
+            else:
+                panel.add_error("Usage: /remember <text>")
+        elif cmd == "/forget":
+            text_content = text[len(cmd):].strip()
+            if text_content:
+                await self._run_forget(text_content)
+            else:
+                panel.add_error("Usage: /forget <text>")
+        elif cmd == "/sessions":
+            await self._run_sessions()
+        elif cmd == "/memstats":
+            await self._run_memstats()
+        elif cmd == "/consolidate":
+            await self._run_consolidate()
+        elif cmd == "/memgraph2":
+            await self._run_memgraph2()
+        elif cmd == "/memworker":
+            await self._run_memworker()
+        elif cmd == "/memsearch":
+            query = text[len(cmd):].strip()
+            if query:
+                await self._run_memsearch(query)
+            else:
+                panel.add_error("Usage: /memsearch <query>")
+        elif cmd == "/triples":
+            await self._run_triples()
+        # ── Git & repo operations ────────────────────────────────────────────
+        elif cmd == "/git":
+            subcommand = text[len(cmd):].strip()
+            if subcommand:
+                await self._run_git(subcommand)
+            else:
+                panel.add_error("Usage: /git <subcommand>")
+        elif cmd == "/inspectrepo":
+            await self._run_inspectrepo()
+        elif cmd == "/tests":
+            framework = text[len(cmd):].strip()
+            await self._run_tests_tool(framework)
+        elif cmd == "/read":
+            path = text[len(cmd):].strip()
+            if path:
+                await self._run_read(path)
+            else:
+                panel.add_error("Usage: /read <path>")
+        elif cmd == "/write":
+            path = text[len(cmd):].strip()
+            if path:
+                await self._run_write(path)
+            else:
+                panel.add_error("Usage: /write <path>")
+        elif cmd == "/edit":
+            path = text[len(cmd):].strip()
+            if path:
+                await self._run_edit(path)
+            else:
+                panel.add_error("Usage: /edit <path>")
+        elif cmd == "/ls":
+            path = text[len(cmd):].strip()
+            if path:
+                await self._run_ls(path)
+            else:
+                panel.add_error("Usage: /ls <path>")
+        elif cmd == "/grep":
+            pattern = text[len(cmd):].strip()
+            if pattern:
+                await self._run_grep(pattern)
+            else:
+                panel.add_error("Usage: /grep <pattern>")
+        elif cmd == "/run":
+            command = text[len(cmd):].strip()
+            if command:
+                await self._run_run(command)
+            else:
+                panel.add_error("Usage: /run <command>")
         elif cmd[1:] in SLASH_TOOLS:
             self._run_tool_alias(SLASH_TOOLS[cmd[1:]], text[len(cmd):].strip())
         else:
@@ -756,39 +1085,6 @@ class TraceraTUI(App):
             return
         await self._execute_tool_inline(name, args)
 
-    def _run_tool_alias(self, tool_name: str, arg: str) -> None:
-        """Dispatch a short slash alias (e.g. /blast foo) to its tool."""
-        panel = self._panel()
-        if not self.agent.registry.has(tool_name):
-            panel.add_error(
-                f"Tool '{escape(tool_name)}' not available — run /index first."
-            )
-            return
-        tool = self.agent.registry.get(tool_name)
-        self._run_tool_with_args(tool_name, single_arg_kwargs(tool, arg))
-
-    @work(exclusive=False)
-    async def _run_tool_with_args(self, name: str, args: dict) -> None:
-        await self._execute_tool_inline(name, args)
-
-    async def _execute_tool_inline(self, name: str, args: dict) -> None:
-        panel = self._panel()
-        status = self._status_line()
-        status.update_stats(state="running")
-        panel.add_meta(f"→ [bold]{escape(name)}[/] {escape(format_args(args))}")
-        try:
-            result = await self.agent.registry.execute(name, "tui-cmd", args)
-            body = result.output if result.success else (result.error or result.output)
-            panel.add_info_row(
-                f"{escape(name)} {'✓' if result.success else '✗'} "
-                f"({result.duration_ms:.0f}ms)",
-                body,
-            )
-        except Exception as e:
-            panel.add_error(f"{escape(name)} failed: {escape(str(e))}")
-        finally:
-            status.update_stats(state="idle")
-
     @work(exclusive=False)
     async def _run_search(self, query: str) -> None:
         """Hybrid search — results as a collapsible inline row."""
@@ -1015,7 +1311,522 @@ class TraceraTUI(App):
         except Exception as e:
             panel.add_info_row(f"Dependencies: {escape(symbol)}", f"[dim]Failed: {escape(str(e))}[/]")
 
-    # ── Phase map (roadmap coverage + verified checklist) ─────────────────────
+    # ── Multi-agent delegation (Phases 42–44) ─────────────────────────────
+
+    def _show_agents(self, panel: AgentPanel) -> None:
+        """/agents — sub-agent fleet overview (Phases 42–44)."""
+        try:
+            from tracera.agent.subagents import SubAgentRole
+            roles = [r.value for r in SubAgentRole]
+            lines = [
+                "[bold]Sub-agent fleet[/] — Researcher · Coder · Tester · Reviewer · Debugger\n",
+                "  [dim]roles:[/] " + ", ".join(roles),
+                "  [dim]usage:[/] [bold]/delegate <task>[/] decomposes the task, runs each "
+                "role, and aggregates results into a report.",
+                "  [dim]status:[/] available (delegation runs on demand — nothing "
+                "stays alive between runs).",
+            ]
+            panel.add_assistant_message("\n".join(lines), trusted=True)
+        except Exception as e:
+            panel.add_error(f"Sub-agent framework unavailable: {escape(str(e))}")
+
+    @work(exclusive=False)
+    async def _run_delegate(self, task: str) -> None:
+        """/delegate — decompose a task across the sub-agent fleet."""
+        panel = self._panel()
+        status = self._status_line()
+        status.update_stats(state="running")
+        try:
+            from tracera.agent.orchestrator import TaskOrchestrator
+            from tracera.agent.subagents import build_sub_agent_fleet
+
+            fleet = build_sub_agent_fleet(
+                self.agent.provider,
+                self.agent.registry,
+                model=getattr(self.agent, "model", None),
+                max_iterations=getattr(self.agent, "max_iterations", 12),
+                max_tool_calls=getattr(self.agent, "max_tool_calls", 30),
+            )
+            decomposer = getattr(self.agent, "decomposer", None)
+            orchestrator = TaskOrchestrator(fleet, decomposer=decomposer, parallel=False)
+
+            lines: list[str] = []
+            async for event in orchestrator.delegate(task):
+                etype = event["type"]
+                if etype == "plan_ready":
+                    plan = event["plan"]
+                    lines.append("[bold]Delegation plan[/]")
+                    for step in getattr(plan, "steps", []):
+                        role = getattr(step, "role", None)
+                        lines.append(
+                            f"  [dim]→[/] {getattr(role, 'value', role)}: "
+                            f"{escape(str(getattr(step, 'task', ''))[:80])}"
+                        )
+                    lines.append("")
+                elif etype == "agent_end":
+                    step, result = event["step"], event["result"]
+                    ok = getattr(result, "status", None)
+                    ok = getattr(ok, "value", ok)
+                    icon = "[green]✓[/]" if ok == "success" else "[red]✗[/]"
+                    lines.append(
+                        f"  {icon} {getattr(step, 'role', '?')} — "
+                        f"{getattr(result, 'iterations', 0)} iter · "
+                        f"{getattr(result, 'tool_calls', 0)} tools"
+                    )
+                elif etype == "report":
+                    report = event["report"]
+                    body = getattr(report, "summary", None) or str(report)
+                    lines.append("")
+                    lines.append("[bold]Aggregated report[/]")
+                    lines.append(escape(str(body)[:2000]))
+            panel.add_info_row(f"Delegate: {escape(task[:60])}", "\n".join(lines))
+        except Exception as e:
+            panel.add_error(f"Delegation failed: {escape(str(e))}")
+        finally:
+            status.update_stats(state="idle")
+
+    # ── Autonomous loop (Phases 35-38) ─────────────────────────────────────────
+
+    def _build_test_runner(self):
+        import sys
+        from tracera.tools.test_runner import TestRunner
+        return TestRunner(self.workspace_path, python=sys.executable)
+
+    @work(exclusive=False)
+    async def _run_fix_loop(self, task: str) -> None:
+        """/fix — autonomous fix loop: Plan → Retrieve → Edit → Test → repeat."""
+        panel = self._panel()
+        status = self._status_line()
+        status.update_stats(state="running")
+        try:
+            from tracera.agent.autonomous import AutonomousFixLoop, RetrievalDebugger
+            pipeline = self.retrieval_pipeline
+            debugger = RetrievalDebugger(
+                retriever=pipeline[1] if pipeline else None,
+                context_engine=pipeline[4] if pipeline else None,
+                compressor=pipeline[5] if pipeline and len(pipeline) > 5 else None,
+            )
+            loop = AutonomousFixLoop(
+                self.workspace_path,
+                self._build_test_runner(),
+                debugger,
+                decomposer=getattr(self.agent, "decomposer", None),
+            )
+            lines: list[str] = [f"[bold]Autonomous fix loop[/] — {escape(task)}"]
+            result = await loop.run(task, self.agent.provider, self.agent)
+            icon = "[green]✓ resolved[/]" if getattr(result, "final_success", False) else "[red]✗ unresolved[/]"
+            lines.append(f"{icon} · {getattr(result, 'total_iterations', 0)} iterations · {len(getattr(result, 'attempts', []))} fix attempts")
+            for att in list(getattr(result, "attempts", []))[-3:]:
+                att_ok = getattr(att, "success", None)
+                att_icon = "[green]✓[/]" if att_ok else "[red]✗[/]"
+                lines.append(f"  {att_icon} iter {getattr(att, 'iteration', '?')}: {escape(str(getattr(att, 'patch_description', '') or '')[:100])}")
+            panel.add_info_row(f"/fix: {escape(task[:60])}", "\n".join(lines))
+        except Exception as e:
+            panel.add_error(f"Fix loop failed: {escape(str(e))}")
+        finally:
+            status.update_stats(state="idle")
+
+    @work(exclusive=False)
+    async def _run_selfreview(self) -> None:
+        """/selfreview — independent LLM review of the current uncommitted diff."""
+        panel = self._panel()
+        status = self._status_line()
+        status.update_stats(state="running")
+        try:
+            from tracera.agent.autonomous import SelfReviewer
+            pipeline = self.retrieval_pipeline
+            reviewer = SelfReviewer(
+                self.workspace_path,
+                retriever=pipeline[1] if pipeline else None,
+            )
+            panel.add_meta("→ [bold]SelfReviewer[/] reviewing uncommitted changes…")
+            review = await reviewer.review(self.agent.provider)
+            panel.add_assistant_message(str(review)[:4000], trusted=True)
+        except Exception as e:
+            panel.add_error(f"Self-review failed: {escape(str(e))}")
+        finally:
+            status.update_stats(state="idle")
+
+    @work(exclusive=False)
+    async def _run_regression_check(self) -> None:
+        """/regression — baseline snapshot vs current tests (Phase 38)."""
+        panel = self._panel()
+        status = self._status_line()
+        status.update_stats(state="running")
+        try:
+            from tracera.agent.autonomous import RegressionProtector
+            protector = RegressionProtector(self.workspace_path, self._build_test_runner())
+            panel.add_meta("→ [bold]RegressionProtector[/] running baseline tests…")
+            pre = await asyncio.to_thread(protector.snapshot_before)
+            panel.add_info_row("Baseline", pre.summary)
+            report = await asyncio.to_thread(protector.verify_after)
+            ok = report.get("overall_success", False)
+            icon = "[green]✓ no regressions[/]" if ok else "[red]✗ regressions detected[/]"
+            lines = [
+                icon,
+                f"Baseline passed: {report.get('pre_passed', '?')} · "
+                f"Post: {report.get('post_passed', '?')}/{report.get('post_passed', 0) + report.get('post_failed', 0)} "
+                f"({report.get('post_failed', 0)} failed)",
+                report.get("summary", ""),
+            ]
+            changed = report.get("changed_files") or []
+            if changed:
+                lines.append("")
+                lines.append("[bold]Changed files:[/]")
+                for f in changed[:10]:
+                    lines.append(f"  - {escape(str(f))}")
+            panel.add_info_row("Regression check", "\n".join(lines))
+        except Exception as e:
+            panel.add_error(f"Regression check failed: {escape(str(e))}")
+        finally:
+            status.update_stats(state="idle")
+
+    # ── Code intelligence tool stubs (Phase 11-28) ─────────────────────────
+    # These tools require a full retrieval pipeline + SymbolGraph to be useful.
+    # The stubs dispatch to the registered tool via _run_tool_alias so they
+    # work immediately when /index has been run; otherwise they show a clear
+    # "run /index first" message (handled inside _run_tool_alias).
+
+    @work(exclusive=False)
+    async def _run_code_tool(self, tool_name: str, arg: str) -> None:
+        """Generic dispatcher for every code-intelligence slash alias."""
+        self._run_tool_alias(tool_name, arg)
+
+    # ── Memory tool stubs (Phase 10) ─────────────────────────────────────────
+    # These require the enhanced memory layer (AgentMemory + triple store).
+    # They dispatch through _run_tool_alias; the tools themselves show
+    # fallbacks when the memory layer isn't initialized.
+
+    @work(exclusive=False)
+    async def _run_memory_tool(self, tool_name: str, arg: str) -> None:
+        """Generic dispatcher for every memory slash alias."""
+        self._run_tool_alias(tool_name, arg)
+
+    # ── Session / task context stubs (Phase 29-31) ──────────────────────────
+
+    @work(exclusive=False)
+    async def _run_session_tool(self, tool_name: str, arg: str) -> None:
+        """Generic dispatcher for session/context slash aliases."""
+        self._run_tool_alias(tool_name, arg)
+
+    # ── Dedicated retrieval commands (require index) ────────────────────────
+
+    @work(exclusive=False)
+    async def _run_symbol(self, name: str) -> None:
+        """/symbol <name> — find a symbol by name (requires index)."""
+        self._run_tool_alias("find_symbol", name)
+
+    @work(exclusive=False)
+    async def _run_symbols(self, query: str) -> None:
+        """/symbols <query> — search symbols (requires index)."""
+        self._run_tool_alias("search_symbols", query)
+
+    @work(exclusive=False)
+    async def _run_source(self, symbol: str) -> None:
+        """/source <symbol> — exact source of a symbol (requires index)."""
+        self._run_tool_alias("get_symbol_source", symbol)
+
+    @work(exclusive=False)
+    async def _run_definition(self, name: str) -> None:
+        """/definition <name> — jump to a definition (requires index)."""
+        self._run_tool_alias("find_definition", name)
+
+    @work(exclusive=False)
+    async def _run_outline(self, file: str) -> None:
+        """/outline <file> — file outline (requires index)."""
+        self._run_tool_alias("get_file_outline", file)
+
+    @work(exclusive=False)
+    async def _run_repomap(self) -> None:
+        """/repomap — repository overview (requires index)."""
+        self._run_tool_alias("get_repo_map", "")
+
+    @work(exclusive=False)
+    async def _run_assemble(self, task: str) -> None:
+        """/assemble <task> — task context capsule (requires index)."""
+        self._run_tool_alias("assemble_code_context", task)
+
+    @work(exclusive=False)
+    async def _run_context(self, symbol: str) -> None:
+        """/context <symbol> — expanded context (requires index)."""
+        self._run_tool_alias("get_context", symbol)
+
+    @work(exclusive=False)
+    async def _run_deps(self, symbol: str) -> None:
+        """/deps <symbol> — dependency chain (requires index)."""
+        self._run_tool_alias("get_dependencies", symbol)
+
+    @work(exclusive=False)
+    async def _run_refs(self, symbol: str) -> None:
+        """/refs <symbol> — find references (requires index)."""
+        self._run_tool_alias("find_references", symbol)
+
+    @work(exclusive=False)
+    async def _run_callers(self, symbol: str) -> None:
+        """/callers <symbol> — call hierarchy (requires index)."""
+        self._run_tool_alias("get_call_hierarchy", symbol)
+
+    @work(exclusive=False)
+    async def _run_blast(self, symbol: str) -> None:
+        """/blast <symbol> — blast radius (requires index)."""
+        self._run_tool_alias("get_blast_radius", symbol)
+
+    @work(exclusive=False)
+    async def _run_changed(self) -> None:
+        """/changed — git diff → affected symbols (requires index + git)."""
+        self._run_tool_alias("get_changed_symbols", "")
+
+    @work(exclusive=False)
+    async def _run_freshness(self) -> None:
+        """/freshness — index freshness vs filesystem (requires index)."""
+        self._run_tool_alias("get_index_freshness", "")
+
+    @work(exclusive=False)
+    async def _run_importers(self, file: str) -> None:
+        """/importers <file> — what imports a file (requires index)."""
+        self._run_tool_alias("find_importers", file)
+
+    @work(exclusive=False)
+    async def _run_classhier(self, class_name: str) -> None:
+        """/classhier <class> — inheritance chain (requires index)."""
+        self._run_tool_alias("get_class_hierarchy", class_name)
+
+    @work(exclusive=False)
+    async def _run_cycles(self) -> None:
+        """/cycles — circular dependency cycles (requires index)."""
+        self._run_tool_alias("get_dependency_cycles", "")
+
+    @work(exclusive=False)
+    async def _run_coupling(self) -> None:
+        """/coupling — module coupling + instability (requires index)."""
+        self._run_tool_alias("get_coupling_metrics", "")
+
+    @work(exclusive=False)
+    async def _run_endpoint(self, route: str) -> None:
+        """/endpoint <route> — endpoint blast radius (requires index)."""
+        self._run_tool_alias("get_endpoint_impact", route)
+
+    @work(exclusive=False)
+    async def _run_deadcode(self) -> None:
+        """/deadcode — unreachable symbols (requires index)."""
+        self._run_tool_alias("find_dead_code", "")
+
+    @work(exclusive=False)
+    async def _run_hotspots(self) -> None:
+        """/hotspots — risky code by complexity × churn (requires index)."""
+        self._run_tool_alias("get_hotspots", "")
+
+    @work(exclusive=False)
+    async def _run_pagerank(self) -> None:
+        """/pagerank — symbol importance (requires index)."""
+        self._run_tool_alias("calculate_pagerank", "")
+
+    @work(exclusive=False)
+    async def _run_refactor(self, symbol: str) -> None:
+        """/refactor <symbol> — edit-ready refactor plan (requires index)."""
+        self._run_tool_alias("plan_refactoring", symbol)
+
+    @work(exclusive=False)
+    async def _run_editsafe(self, symbol: str) -> None:
+        """/editsafe <symbol> — pre-modification safety check (requires index)."""
+        self._run_tool_alias("check_edit_safe", symbol)
+
+    @work(exclusive=False)
+    async def _run_deletesafe(self, symbol: str) -> None:
+        """/deletesafe <symbol> — pre-deletion safety check (requires index)."""
+        self._run_tool_alias("check_delete_safe", symbol)
+
+    @work(exclusive=False)
+    async def _run_impls(self, symbol: str) -> None:
+        """/impls <symbol> — find implementations (requires index)."""
+        self._run_tool_alias("find_implementations", symbol)
+
+    @work(exclusive=False)
+    async def _run_provenance(self, symbol: str) -> None:
+        """/provenance <symbol> — git archaeology (requires index)."""
+        self._run_tool_alias("get_code_provenance", symbol)
+
+    @work(exclusive=False)
+    async def _run_risk(self, target: str) -> None:
+        """/risk <target> — composite change-risk score (requires index)."""
+        self._run_tool_alias("assess_change_risk", target)
+
+    @work(exclusive=False)
+    async def _run_prrisk(self) -> None:
+        """/prrisk — PR risk profile (requires git)."""
+        self._run_tool_alias("get_pr_risk_profile", "")
+
+    @work(exclusive=False)
+    async def _run_auditconfig(self) -> None:
+        """/auditconfig — scan config for token waste (requires index)."""
+        self._run_tool_alias("audit_agent_config", "")
+
+    @work(exclusive=False)
+    async def _run_ast(self, pattern: str) -> None:
+        """/ast <pattern> — cross-language AST pattern search (requires index)."""
+        self._run_tool_alias("structural_search", pattern)
+
+    @work(exclusive=False)
+    async def _run_sessionstats(self) -> None:
+        """/sessionstats — session economics + token savings."""
+        self._run_tool_alias("get_session_stats", "")
+
+    @work(exclusive=False)
+    async def _run_plantask(self) -> None:
+        """/plantask — plan a code task (intent + anchors + route)."""
+        panel = self._panel()
+        panel.add_error("Usage: /plantask <task description>")
+
+    @work(exclusive=False)
+    async def _run_planturn(self, query: str) -> None:
+        """/planturn <query> — confidence-guided routing."""
+        self._run_tool_alias("plan_turn", query)
+
+    @work(exclusive=False)
+    async def _run_ranked(self, query: str) -> None:
+        """/ranked <query> — token-budgeted ranked context."""
+        self._run_tool_alias("get_ranked_context", query)
+
+    @work(exclusive=False)
+    async def _run_taskcontext(self, task: str) -> None:
+        """/taskcontext <task> — full task context assembly."""
+        self._run_tool_alias("assemble_task_context", task)
+
+    # ── Memory commands (require memory layer) ──────────────────────────────
+
+    @work(exclusive=False)
+    async def _run_recall(self, query: str) -> None:
+        """/recall <query> — recall relevant memories."""
+        self._run_tool_alias("recall_memory", query)
+
+    @work(exclusive=False)
+    async def _run_remember(self, text: str) -> None:
+        """/remember <text> — store a memory."""
+        self._run_tool_alias("remember_memory", text)
+
+    @work(exclusive=False)
+    async def _run_forget(self, text: str) -> None:
+        """/forget <text> — forget a memory."""
+        self._run_tool_alias("forget_memory", text)
+
+    @work(exclusive=False)
+    async def _run_sessions(self) -> None:
+        """/sessions — list past sessions."""
+        self._run_tool_alias("list_sessions", "")
+
+    @work(exclusive=False)
+    async def _run_memstats(self) -> None:
+        """/memstats — memory statistics."""
+        self._run_tool_alias("memory_stats", "")
+
+    @work(exclusive=False)
+    async def _run_consolidate(self) -> None:
+        """/consolidate — merge near-duplicate memories."""
+        self._run_tool_alias("memory_consolidate", "")
+
+    @work(exclusive=False)
+    async def _run_memgraph2(self) -> None:
+        """/memgraph2 — knowledge graph (tool form)."""
+        self._run_tool_alias("memory_graph", "")
+
+    @work(exclusive=False)
+    async def _run_memworker(self) -> None:
+        """/memworker — background memory worker stats."""
+        self._run_tool_alias("memory_worker_status", "")
+
+    @work(exclusive=False)
+    async def _run_memsearch(self, query: str) -> None:
+        """/memsearch <query> — search the memory store."""
+        self._run_tool_alias("search_memory", query)
+
+    @work(exclusive=False)
+    async def _run_triples(self) -> None:
+        """/triples — semantic triples in the knowledge graph."""
+        self._run_tool_alias("get_memory_graph", "")
+
+    # ── Git & repo operations ───────────────────────────────────────────────
+
+    @work(exclusive=False)
+    async def _run_git(self, subcommand: str) -> None:
+        """/git <subcommand> — run a git operation."""
+        self._run_tool_alias("git", subcommand)
+
+    @work(exclusive=False)
+    async def _run_inspectrepo(self) -> None:
+        """/inspectrepo — repository overview."""
+        self._run_tool_alias("inspect_repository", "")
+
+    @work(exclusive=False)
+    async def _run_tests_tool(self, framework: str) -> None:
+        """/tests <framework> — run tests (pytest/unittest/npm/cargo)."""
+        self._run_tool_alias("run_tests", framework)
+
+    @work(exclusive=False)
+    async def _run_read(self, path: str) -> None:
+        """/read <path> — read a file."""
+        self._run_tool_alias("read_file", path)
+
+    @work(exclusive=False)
+    async def _run_write(self, path: str) -> None:
+        """/write <path> — write a file."""
+        self._run_tool_alias("write_file", path)
+
+    @work(exclusive=False)
+    async def _run_edit(self, path: str) -> None:
+        """/edit <path> — edit a file."""
+        self._run_tool_alias("edit_file", path)
+
+    @work(exclusive=False)
+    async def _run_ls(self, path: str) -> None:
+        """/ls <path> — list a directory."""
+        self._run_tool_alias("list_dir", path)
+
+    @work(exclusive=False)
+    async def _run_grep(self, pattern: str) -> None:
+        """/grep <pattern> — regex search file contents."""
+        self._run_tool_alias("grep", pattern)
+
+    @work(exclusive=False)
+    async def _run_run(self, command: str) -> None:
+        """/run <command> — run a shell command."""
+        self._run_tool_alias("run_command", command)
+
+    # ── Tool profile helpers ─────────────────────────────────────────────────
+
+    def _run_tool_alias(self, tool_name: str, arg: str) -> None:
+        """Dispatch a short slash alias (e.g. /blast foo) to its tool."""
+        panel = self._panel()
+        if not self.agent.registry.has(tool_name):
+            panel.add_error(
+                f"Tool '{escape(tool_name)}' not available — run /index first."
+            )
+            return
+        tool = self.agent.registry.get(tool_name)
+        self._run_tool_with_args(tool_name, single_arg_kwargs(tool, arg))
+
+    @work(exclusive=False)
+    async def _run_tool_with_args(self, name: str, args: dict) -> None:
+        await self._execute_tool_inline(name, args)
+
+    async def _execute_tool_inline(self, name: str, args: dict) -> None:
+        panel = self._panel()
+        status = self._status_line()
+        status.update_stats(state="running")
+        panel.add_meta(f"→ [bold]{escape(name)}[/] {escape(format_args(args))}")
+        try:
+            result = await self.agent.registry.execute(name, "tui-cmd", args)
+            body = result.output if result.success else (result.error or result.output)
+            panel.add_info_row(
+                f"{escape(name)} {'✓' if result.success else '✗'} "
+                f"({result.duration_ms:.0f}ms)",
+                body,
+            )
+        except Exception as e:
+            panel.add_error(f"{escape(name)} failed: {escape(str(e))}")
+        finally:
+            status.update_stats(state="idle")
+
+    # ── Phase map (roadmap coverage + verified checklist) ─────────────────────────
 
     def _phases_progress_path(self) -> Path:
         """Where verified-phase progress is persisted (per data dir)."""

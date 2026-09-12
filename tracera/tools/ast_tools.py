@@ -1453,24 +1453,41 @@ class GetFileOutlineTool(Tool):
     description = "Get the symbol outline of a file (classes, functions, constants)."
     _params = {
         "type": "object",
-        "properties": {"file_path": {"type": "string"}},
+        "properties": {"file_path": {"type": "string", "description": "Path of the file to outline (relative or absolute)."}},
         "required": ["file_path"]
     }
 
-    def __init__(self, retriever=None):
-        self._retriever = retriever
+    def __init__(self, graph_retriever=None):
+        # Accepts a GraphRetriever OR a bare SymbolGraph; both expose the
+        # graph needed for outline lookup.
+        self._graph = getattr(graph_retriever, "graph", graph_retriever)
 
     @property
     def parameters_schema(self) -> dict: return self._params
 
     async def execute(self, file_path: str) -> ToolResult:
-        if not self._retriever:
-            return ToolResult.ok(self.name, "", "Retriever not available.")
-        nodes = self._retriever.get_file_symbols(file_path)
+        graph = self._graph
+        if graph is None:
+            return ToolResult.ok(self.name, "", "Symbol graph not available — run /index first.")
+        nodes = graph.find_by_file(file_path)
+        if not nodes:
+            # Try suffix matching so 'tools/base.py' matches 'tracera/tools/base.py'
+            matches: set[str] = set()
+            for nid, data in graph._g.nodes(data=True):
+                fp = data.get("file_path", "")
+                if fp and (fp.endswith(file_path) or fp.endswith("/" + file_path) or fp.replace("\\", "/").endswith(file_path.replace("\\", "/"))):
+                    matches.add(nid)
+            nodes = sorted(matches)
         if not nodes:
             return ToolResult.ok(self.name, "", f"No symbols found for '{file_path}' in the indexed/analyzable corpus.")
+        rows = []
+        for nid in nodes:
+            node = graph.get_node(nid)
+            if node:
+                rows.append((node.get("start_line", 0) or 0, node))
+        rows.sort(key=lambda pair: pair[0])
         lines = [f"## File Outline: `{file_path}`\n"]
-        for node in sorted(nodes, key=lambda x: x.get("start_line", 0)):
+        for _, node in rows:
             node_type = node.get("symbol_type", "symbol")
             lines.append(f"- {node_type}: `{node.get('name')}` (line {node.get('start_line', '?')})")
         return ToolResult.ok(self.name, "", "\n".join(lines))
@@ -1483,14 +1500,15 @@ class GetRepoMapTool(Tool):
     _params = {"type": "object", "properties": {}, "required": []}
 
     def __init__(self, graph_retriever=None):
-        self._graph = graph_retriever
+        # Accepts a GraphRetriever OR a bare SymbolGraph.
+        self._graph = getattr(graph_retriever, "graph", graph_retriever)
 
     @property
     def parameters_schema(self) -> dict: return self._params
 
     async def execute(self) -> ToolResult:
         if not self._graph:
-            return ToolResult.ok(self.name, "", "Graph retriever not available.")
+            return ToolResult.ok(self.name, "", "Symbol graph not available — run /index first.")
         # Generate repository map
         files = {}
         for _, data in self._graph._g.nodes(data=True):
