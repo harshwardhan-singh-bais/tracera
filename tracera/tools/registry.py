@@ -136,7 +136,9 @@ TOOL_PROFILES: dict[str, list[str]] = {
     "standard": [
         "search_code",
         "find_symbol",
+        "search_symbols",
         "find_definition",
+        "get_symbol_source",
         "get_context",
         "get_dependencies",
         "get_file_outline",
@@ -148,6 +150,18 @@ TOOL_PROFILES: dict[str, list[str]] = {
         "get_blast_radius",
         "get_changed_symbols",
         "get_index_freshness",
+        # Read-only analysis tools advertised by /features — every alias in
+        # SLASH_TOOLS must resolve to a registered tool (see test_slash_commands).
+        "find_dead_code",
+        "get_hotspots",
+        "calculate_pagerank",
+        "plan_refactoring",
+        "get_code_provenance",
+        "assess_change_risk",
+        "structural_search",
+        "get_session_stats",
+        "plan_code_task",
+        "find_implementations",
     ],
     "advanced": [
         "search_code",
@@ -175,6 +189,8 @@ TOOL_PROFILES: dict[str, list[str]] = {
         "get_session_stats",
         "plan_code_task",
         "find_implementations",
+        "search_symbols",
+        "get_symbol_source",
     ]
 }
 
@@ -252,6 +268,8 @@ def extend_registry_with_retrieval(
         GetSessionStatsTool,
         PlanCodeTaskTool,
         FindImplementationsTool,
+        SearchSymbolsTool,
+        GetSymbolSourceTool,
     )
 
     # ── Pipeline-tuple plumbing ─────────────────────────────────────────────
@@ -301,6 +319,8 @@ def extend_registry_with_retrieval(
         GetSessionStatsTool(retrieval_pipeline=pipeline),
         PlanCodeTaskTool(pipeline),
         FindImplementationsTool(pipeline),
+        SearchSymbolsTool(pipeline),
+        GetSymbolSourceTool(pipeline),
     ]
 
     # Filter out None values and apply profile filtering

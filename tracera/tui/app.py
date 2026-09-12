@@ -748,8 +748,8 @@ class TraceraTUI(App):
         elif cmd == "/plantask":
             task = text[len(cmd):].strip()
             if task:
-                await self._run_plantask()
                 panel.add_meta(f"→ [bold]PlanTask[/] {escape(task[:60])}")
+                await self._run_plantask(task)
             else:
                 panel.add_error("Usage: /plantask <task description>")
         elif cmd == "/planturn":
@@ -1672,10 +1672,13 @@ class TraceraTUI(App):
         self._run_tool_alias("get_session_stats", "")
 
     @work(exclusive=False)
-    async def _run_plantask(self) -> None:
-        """/plantask — plan a code task (intent + anchors + route)."""
+    async def _run_plantask(self, task: str = "") -> None:
+        """/plantask <task> — plan a code task (intent + anchors + route)."""
         panel = self._panel()
-        panel.add_error("Usage: /plantask <task description>")
+        if not task:
+            panel.add_error("Usage: /plantask <task description>")
+            return
+        self._run_tool_alias("plan_code_task", task)
 
     @work(exclusive=False)
     async def _run_planturn(self, query: str) -> None:
@@ -1706,8 +1709,12 @@ class TraceraTUI(App):
 
     @work(exclusive=False)
     async def _run_forget(self, text: str) -> None:
-        """/forget <text> — forget a memory."""
-        self._run_tool_alias("forget_memory", text)
+        """/forget <text> — forget a memory by content fragment."""
+        tool = self.agent.registry.get("forget_memory")
+        if tool is None:
+            self._panel().add_error("Tool 'forget_memory' not available.")
+            return
+        self._run_tool_with_args("forget_memory", {"content_match": text})
 
     @work(exclusive=False)
     async def _run_sessions(self) -> None:

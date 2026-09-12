@@ -436,7 +436,7 @@ class MemoryGraphTool(Tool):
         "properties": {
             "concept": {
                 "type": "string",
-                "description": "Concept to explore relationships for.",
+                "description": "Concept to explore relationships for. Omit for a graph overview.",
             },
             "depth": {
                 "type": "integer",
@@ -445,8 +445,8 @@ class MemoryGraphTool(Tool):
             },
             "action": {
                 "type": "string",
-                "enum": ["neighbors", "paths", "central", "clusters"],
-                "description": "What to query (default: neighbors).",
+                "enum": ["neighbors", "paths", "central", "clusters", "overview"],
+                "description": "What to query (default: neighbors when a concept is given, overview otherwise).",
                 "default": "neighbors",
             },
             "target": {
@@ -454,7 +454,7 @@ class MemoryGraphTool(Tool):
                 "description": "Target concept for path finding (used with action=paths).",
             },
         },
-        "required": ["concept"],
+        "required": [],
     }
 
     def __init__(self, triple_store: Any) -> None:
@@ -466,12 +466,26 @@ class MemoryGraphTool(Tool):
 
     async def execute(
         self,
-        concept: str,
+        concept: str = "",
         depth: int = 2,
         action: str = "neighbors",
         target: str = "",
     ) -> ToolResult:
         try:
+            if not concept:
+                # Argless call (/memgraph2): graph overview instead of an error.
+                total = getattr(self._store, "triple_count", 0)
+                central = self._store.get_central_concepts(10)
+                lines = ["## Knowledge Graph Overview\n"]
+                lines.append(f"  Triples: {total}")
+                if central:
+                    lines.append("\n**Most connected concepts:**")
+                    for c, d in central:
+                        lines.append(f"  {c}: {d} connections")
+                else:
+                    lines.append("  No concepts yet — memories build the graph as you chat.")
+                return ToolResult.ok(tool_name=self.name, tool_call_id="", output="\n".join(lines))
+
             if action == "neighbors":
                 subgraph = self._store.get_entity_subgraph(concept, max_depth=depth)
                 lines = [f"## Knowledge Graph: {concept}\n"]

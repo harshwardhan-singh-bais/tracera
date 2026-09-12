@@ -1382,6 +1382,11 @@ class SearchSymbolsTool(Tool):
     }
 
     def __init__(self, retriever=None):
+        # Accept either a bare SymbolRetriever or the full retrieval pipeline
+        # tuple (index 1 is the symbol retriever — same convention the other
+        # ast_tools use via _get_graph).
+        if retriever is not None and not hasattr(retriever, "search"):
+            retriever = retriever[1] if len(retriever) > 1 else None
         self._retriever = retriever
 
     @property
@@ -1390,29 +1395,35 @@ class SearchSymbolsTool(Tool):
     async def execute(self, query: str, top_n: int = 20) -> ToolResult:
         if not self._retriever:
             return ToolResult.ok(self.name, "", "Retriever not available.")
-        
+
         # Hybrid scoring as specified:
         # final_score = lexical_relevance + semantic_relevance + structural_importance + exact_identifier_boost + freshness_adjustment
-        results = self._retriever.search(query, top_n=top_n)
-        # Post-process with hybrid scoring
+        results = self._retriever.search(query, k=max(top_n * 2, 20))
+        # Post-process with hybrid scoring. The SymbolRetriever returns hits
+        # keyed _bm25_score / _dense_score / symbol / _final_score — map those
+        # onto the tool's scoring model.
         scored_results = []
         for res in results:
-            lexical = res.get("lexical_score", 0.0)
-            semantic = res.get("semantic_score", 0.0)
-            structural = res.get("importance_score", 0.0)
-            exact_boost = 1.5 if res.get("name", "").lower() == query.lower() else 1.0
-            freshness = res.get("freshness_score", 1.0)
-            final_score = (lexical + semantic + structural) * exact_boost * freshness
+            lexical = float(res.get("_bm25_score", 0.0) or 0.0)
+            semantic = float(res.get("_dense_score", 0.0) or 0.0)
+            structural = float(res.get("_rrf_score", res.get("_relevance_score", 0.0)) or 0.0)
+            exact_boost = 1.5 if res.get("symbol", "").lower() == query.lower() else 1.0
+            final_score = (lexical + semantic + structural) * exact_boost
+            res = dict(res)
             res["final_score"] = final_score
+            res["name"] = res.get("symbol", "")
             scored_results.append(res)
         # Sort by final score
         scored_results.sort(key=lambda x: x["final_score"], reverse=True)
-        
+
         # Build output
         lines = [f"## Symbol Search Results: '{query}'\n"]
         for i, r in enumerate(scored_results[:top_n]):
-            lines.append(f"{i+1}. `{r.get('name')}` in `{r.get('file_path')}` (score: {r['final_score']:.3f})")
-        
+            lines.append(
+                f"{i+1}. `{r.get('name')}` [{r.get('symbol_type', '?')}] in "
+                f"`{r.get('file_path')}`:{r.get('start_line', '?')} (score: {r['final_score']:.3f})"
+            )
+
         metadata = {"symbols_found": len(scored_results), "query": query}
         return ToolResult.ok(self.name, "", "\n".join(lines), **metadata)
 
