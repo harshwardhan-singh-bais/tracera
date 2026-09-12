@@ -45,10 +45,12 @@ class MemoryGraphWidget(Widget):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self._nodes: dict[str, dict] = {}
-        self._edges: list[tuple[str, str, str]] = []  # (from, to, relation)
-        self._central_concepts: list[tuple[str, int]] = []
-        self._type_counts: dict[str, int] = {}
+        # NOTE: must not shadow Textual's Widget._nodes (a NodeList used by
+        # the compositor) — hence the _mem_ prefix on our own data attrs.
+        self._mem_nodes: dict[str, dict] = {}
+        self._mem_edges: list[tuple[str, str, str]] = []  # (from, to, relation)
+        self._mem_central: list[tuple[str, int]] = []
+        self._mem_type_counts: dict[str, int] = {}
 
     def compose(self) -> ComposeResult:
         with Vertical(id="memory-graph-container"):
@@ -66,16 +68,16 @@ class MemoryGraphWidget(Widget):
     def _render_graph(self) -> Text:
         text = Text()
 
-        if not self._nodes and not self._central_concepts:
+        if not self._mem_nodes and not self._mem_central:
             text.append("  No memory data loaded", style="dim #55555e")
             return text
 
         # Render central concepts as a simple graph visualization
-        if self._central_concepts:
+        if self._mem_central:
             text.append("\n", style="dim")
 
             # Find the most central concept
-            top_concepts = self._central_concepts[:5]
+            top_concepts = self._mem_central[:5]
 
             if len(top_concepts) >= 3:
                 # Create a simple radial visualization
@@ -115,18 +117,18 @@ class MemoryGraphWidget(Widget):
         # Statistics
         text.append("\n  ", style="dim")
         text.append("Nodes: ", style="dim #9a9aa3")
-        text.append(str(len(self._nodes)), style="bold #e0e0ff")
+        text.append(str(len(self._mem_nodes)), style="bold #e0e0ff")
         text.append("  │  ", style="dim #3a3a4a")
         text.append("Edges: ", style="dim #9a9aa3")
-        text.append(str(len(self._edges)), style="bold #e0e0ff")
+        text.append(str(len(self._mem_edges)), style="bold #e0e0ff")
         text.append("  │  ", style="dim #3a3a4a")
         text.append("Types: ", style="dim #9a9aa3")
-        text.append(str(len(self._type_counts)), style="bold #e0e0ff")
+        text.append(str(len(self._mem_type_counts)), style="bold #e0e0ff")
 
         # Type breakdown
-        if self._type_counts:
+        if self._mem_type_counts:
             text.append("\n  ", style="dim")
-            for mtype, count in sorted(self._type_counts.items(), key=lambda x: -x[1])[:5]:
+            for mtype, count in sorted(self._mem_type_counts.items(), key=lambda x: -x[1])[:5]:
                 color = _TYPE_COLORS.get(mtype, "#9a9aa3")
                 text.append(f"{mtype}:{count} ", style=f"dim {color}")
 
@@ -141,21 +143,21 @@ class MemoryGraphWidget(Widget):
     ) -> None:
         """Update the graph visualization with new data."""
         if nodes is not None:
-            self._nodes = nodes
+            self._mem_nodes = nodes
         if edges is not None:
-            self._edges = edges
+            self._mem_edges = edges
         if central_concepts is not None:
-            self._central_concepts = central_concepts
+            self._mem_central = central_concepts
         if type_counts is not None:
-            self._type_counts = type_counts
+            self._mem_type_counts = type_counts
         self._refresh()
 
     def add_node(self, node_id: str, node_data: dict) -> None:
-        self._nodes[node_id] = node_data
+        self._mem_nodes[node_id] = node_data
         self._refresh()
 
     def add_edge(self, from_node: str, to_node: str, relation: str = "") -> None:
-        self._edges.append((from_node, to_node, relation))
+        self._mem_edges.append((from_node, to_node, relation))
         self._refresh()
 
     def _refresh(self) -> None:

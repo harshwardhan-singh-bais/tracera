@@ -503,7 +503,7 @@ class TraceraTUI(App):
         elif cmd == "/plan":
             task = text[6:].strip()
             if task:
-                self._run_planning(task)
+                await self._run_planning(task)
             else:
                 panel.add_error("Usage: /plan <task description>")
         elif cmd == "/model":
@@ -529,21 +529,21 @@ class TraceraTUI(App):
         elif cmd == "/search":
             query = text[len(cmd):].strip()
             if query:
-                self._run_search(query)
+                await self._run_search(query)
             else:
                 panel.add_error("Usage: /search <query>")
         elif cmd == "/debug":
             query = text[len(cmd):].strip()
             if query:
-                self._run_debug(query)
+                await self._run_debug(query)
             else:
                 panel.add_error("Usage: /debug <query>")
         elif cmd == "/index":
-            self._run_indexing()
+            await self._run_indexing()
         elif cmd == "/test":
-            self._run_tests()
+            await self._run_tests()
         elif cmd == "/review":
-            self._run_review()
+            await self._run_review()
         elif cmd == "/tools":
             self._show_tools(panel)
         elif cmd == "/mcp":
@@ -551,11 +551,11 @@ class TraceraTUI(App):
         elif cmd == "/cost":
             self._show_cost(panel)
         elif cmd == "/inspect":
-            self._run_inspect()
+            await self._run_inspect()
         elif cmd == "/deps":
             symbol = text[len(cmd):].strip()
             if symbol:
-                self._run_deps(symbol)
+                await self._run_deps(symbol)
             else:
                 panel.add_error("Usage: /deps <symbol>")
         elif cmd == "/phases":
@@ -575,13 +575,13 @@ class TraceraTUI(App):
         elif cmd == "/tool":
             spec = text[len(cmd):].strip()
             if spec:
-                self._run_tool_command(spec)
+                await self._run_tool_command(spec)
             else:
                 panel.add_error("Usage: /tool <name> [key=value ...]")
         elif cmd == "/delegate":
             task = text[len(cmd):].strip()
             if task:
-                self._run_delegate(task)
+                await self._run_delegate(task)
             else:
                 panel.add_error("Usage: /delegate <task description>")
         elif cmd == "/agents":
@@ -589,13 +589,13 @@ class TraceraTUI(App):
         elif cmd == "/fix":
             task = text[len(cmd):].strip()
             if task:
-                self._run_fix_loop(task)
+                await self._run_fix_loop(task)
             else:
                 panel.add_error("Usage: /fix <failing task or test description>")
         elif cmd == "/selfreview":
-            self._run_selfreview()
+            await self._run_selfreview()
         elif cmd == "/regression":
-            self._run_regression_check()
+            await self._run_regression_check()
         # ── Code intelligence retrieval aliases (require index) ──────────────
         elif cmd == "/symbol":
             name = text[len(cmd):].strip()
@@ -856,7 +856,7 @@ class TraceraTUI(App):
             else:
                 panel.add_error("Usage: /run <command>")
         elif cmd[1:] in SLASH_TOOLS:
-            self._run_tool_alias(SLASH_TOOLS[cmd[1:]], text[len(cmd):].strip())
+            await self._run_tool_alias(SLASH_TOOLS[cmd[1:]], text[len(cmd):].strip())
         else:
             panel.add_error(
                 f"Unknown command: {escape(cmd)}. Type /help for available commands."
@@ -1065,7 +1065,6 @@ class TraceraTUI(App):
         )
         panel.add_assistant_message("\n".join(lines), trusted=True)
 
-    @work(exclusive=False)
     async def _run_tool_command(self, spec: str) -> None:
         """/tool <name> [key=value ...] — run any registered tool inline."""
         panel = self._panel()
@@ -1085,7 +1084,6 @@ class TraceraTUI(App):
             return
         await self._execute_tool_inline(name, args)
 
-    @work(exclusive=False)
     async def _run_search(self, query: str) -> None:
         """Hybrid search — results as a collapsible inline row."""
         panel = self._panel()
@@ -1124,7 +1122,6 @@ class TraceraTUI(App):
         finally:
             status.update_stats(state="idle")
 
-    @work(exclusive=False)
     async def _run_debug(self, query: str) -> None:
         """Phase 59: retrieval debugging — per-strategy comparison row."""
         panel = self._panel()
@@ -1176,7 +1173,6 @@ class TraceraTUI(App):
         finally:
             status.update_stats(state="idle")
 
-    @work(exclusive=False)
     async def _run_indexing(self) -> None:
         """/index — run the Phase 16-24 indexing pipeline."""
         panel = self._panel()
@@ -1205,7 +1201,6 @@ class TraceraTUI(App):
         finally:
             status.update_stats(state="idle")
 
-    @work(exclusive=False)
     async def _run_tests(self) -> None:
         """/test — run the project test suite."""
         panel = self._panel()
@@ -1234,7 +1229,6 @@ class TraceraTUI(App):
         finally:
             status.update_stats(state="idle")
 
-    @work(exclusive=False)
     async def _run_review(self) -> None:
         """/review — ask the agent to review current changes."""
         panel = self._panel()
@@ -1245,7 +1239,6 @@ class TraceraTUI(App):
             "Report findings with file locations."
         )
 
-    @work(exclusive=False)
     async def _run_inspect(self) -> None:
         """/inspect — repository overview as a collapsible row."""
         panel = self._panel()
@@ -1330,7 +1323,6 @@ class TraceraTUI(App):
         except Exception as e:
             panel.add_error(f"Sub-agent framework unavailable: {escape(str(e))}")
 
-    @work(exclusive=False)
     async def _run_delegate(self, task: str) -> None:
         """/delegate — decompose a task across the sub-agent fleet."""
         panel = self._panel()
@@ -1392,7 +1384,6 @@ class TraceraTUI(App):
         from tracera.tools.test_runner import TestRunner
         return TestRunner(self.workspace_path, python=sys.executable)
 
-    @work(exclusive=False)
     async def _run_fix_loop(self, task: str) -> None:
         """/fix — autonomous fix loop: Plan → Retrieve → Edit → Test → repeat."""
         panel = self._panel()
@@ -1426,7 +1417,6 @@ class TraceraTUI(App):
         finally:
             status.update_stats(state="idle")
 
-    @work(exclusive=False)
     async def _run_selfreview(self) -> None:
         """/selfreview — independent LLM review of the current uncommitted diff."""
         panel = self._panel()
@@ -1447,7 +1437,6 @@ class TraceraTUI(App):
         finally:
             status.update_stats(state="idle")
 
-    @work(exclusive=False)
     async def _run_regression_check(self) -> None:
         """/regression — baseline snapshot vs current tests (Phase 38)."""
         panel = self._panel()
@@ -1487,320 +1476,262 @@ class TraceraTUI(App):
     # work immediately when /index has been run; otherwise they show a clear
     # "run /index first" message (handled inside _run_tool_alias).
 
-    @work(exclusive=False)
     async def _run_code_tool(self, tool_name: str, arg: str) -> None:
         """Generic dispatcher for every code-intelligence slash alias."""
-        self._run_tool_alias(tool_name, arg)
+        await self._run_tool_alias(tool_name, arg)
 
     # ── Memory tool stubs (Phase 10) ─────────────────────────────────────────
     # These require the enhanced memory layer (AgentMemory + triple store).
     # They dispatch through _run_tool_alias; the tools themselves show
     # fallbacks when the memory layer isn't initialized.
 
-    @work(exclusive=False)
     async def _run_memory_tool(self, tool_name: str, arg: str) -> None:
         """Generic dispatcher for every memory slash alias."""
-        self._run_tool_alias(tool_name, arg)
+        await self._run_tool_alias(tool_name, arg)
 
     # ── Session / task context stubs (Phase 29-31) ──────────────────────────
 
-    @work(exclusive=False)
     async def _run_session_tool(self, tool_name: str, arg: str) -> None:
         """Generic dispatcher for session/context slash aliases."""
-        self._run_tool_alias(tool_name, arg)
+        await self._run_tool_alias(tool_name, arg)
 
     # ── Dedicated retrieval commands (require index) ────────────────────────
 
-    @work(exclusive=False)
     async def _run_symbol(self, name: str) -> None:
         """/symbol <name> — find a symbol by name (requires index)."""
-        self._run_tool_alias("find_symbol", name)
+        await self._run_tool_alias("find_symbol", name)
 
-    @work(exclusive=False)
     async def _run_symbols(self, query: str) -> None:
         """/symbols <query> — search symbols (requires index)."""
-        self._run_tool_alias("search_symbols", query)
+        await self._run_tool_alias("search_symbols", query)
 
-    @work(exclusive=False)
     async def _run_source(self, symbol: str) -> None:
         """/source <symbol> — exact source of a symbol (requires index)."""
-        self._run_tool_alias("get_symbol_source", symbol)
+        await self._run_tool_alias("get_symbol_source", symbol)
 
-    @work(exclusive=False)
     async def _run_definition(self, name: str) -> None:
         """/definition <name> — jump to a definition (requires index)."""
-        self._run_tool_alias("find_definition", name)
+        await self._run_tool_alias("find_definition", name)
 
-    @work(exclusive=False)
     async def _run_outline(self, file: str) -> None:
         """/outline <file> — file outline (requires index)."""
-        self._run_tool_alias("get_file_outline", file)
+        await self._run_tool_alias("get_file_outline", file)
 
-    @work(exclusive=False)
     async def _run_repomap(self) -> None:
         """/repomap — repository overview (requires index)."""
-        self._run_tool_alias("get_repo_map", "")
+        await self._run_tool_alias("get_repo_map", "")
 
-    @work(exclusive=False)
     async def _run_assemble(self, task: str) -> None:
         """/assemble <task> — task context capsule (requires index)."""
-        self._run_tool_alias("assemble_code_context", task)
+        await self._run_tool_alias("assemble_code_context", task)
 
-    @work(exclusive=False)
     async def _run_context(self, symbol: str) -> None:
         """/context <symbol> — expanded context (requires index)."""
-        self._run_tool_alias("get_context", symbol)
+        await self._run_tool_alias("get_context", symbol)
 
-    @work(exclusive=False)
     async def _run_deps(self, symbol: str) -> None:
         """/deps <symbol> — dependency chain (requires index)."""
-        self._run_tool_alias("get_dependencies", symbol)
+        await self._run_tool_alias("get_dependencies", symbol)
 
-    @work(exclusive=False)
     async def _run_refs(self, symbol: str) -> None:
         """/refs <symbol> — find references (requires index)."""
-        self._run_tool_alias("find_references", symbol)
+        await self._run_tool_alias("find_references", symbol)
 
-    @work(exclusive=False)
     async def _run_callers(self, symbol: str) -> None:
         """/callers <symbol> — call hierarchy (requires index)."""
-        self._run_tool_alias("get_call_hierarchy", symbol)
+        await self._run_tool_alias("get_call_hierarchy", symbol)
 
-    @work(exclusive=False)
     async def _run_blast(self, symbol: str) -> None:
         """/blast <symbol> — blast radius (requires index)."""
-        self._run_tool_alias("get_blast_radius", symbol)
+        await self._run_tool_alias("get_blast_radius", symbol)
 
-    @work(exclusive=False)
     async def _run_changed(self) -> None:
         """/changed — git diff → affected symbols (requires index + git)."""
-        self._run_tool_alias("get_changed_symbols", "")
+        await self._run_tool_alias("get_changed_symbols", "")
 
-    @work(exclusive=False)
     async def _run_freshness(self) -> None:
         """/freshness — index freshness vs filesystem (requires index)."""
-        self._run_tool_alias("get_index_freshness", "")
+        await self._run_tool_alias("get_index_freshness", "")
 
-    @work(exclusive=False)
     async def _run_importers(self, file: str) -> None:
         """/importers <file> — what imports a file (requires index)."""
-        self._run_tool_alias("find_importers", file)
+        await self._run_tool_alias("find_importers", file)
 
-    @work(exclusive=False)
     async def _run_classhier(self, class_name: str) -> None:
         """/classhier <class> — inheritance chain (requires index)."""
-        self._run_tool_alias("get_class_hierarchy", class_name)
+        await self._run_tool_alias("get_class_hierarchy", class_name)
 
-    @work(exclusive=False)
     async def _run_cycles(self) -> None:
         """/cycles — circular dependency cycles (requires index)."""
-        self._run_tool_alias("get_dependency_cycles", "")
+        await self._run_tool_alias("get_dependency_cycles", "")
 
-    @work(exclusive=False)
     async def _run_coupling(self) -> None:
         """/coupling — module coupling + instability (requires index)."""
-        self._run_tool_alias("get_coupling_metrics", "")
+        await self._run_tool_alias("get_coupling_metrics", "")
 
-    @work(exclusive=False)
     async def _run_endpoint(self, route: str) -> None:
         """/endpoint <route> — endpoint blast radius (requires index)."""
-        self._run_tool_alias("get_endpoint_impact", route)
+        await self._run_tool_alias("get_endpoint_impact", route)
 
-    @work(exclusive=False)
     async def _run_deadcode(self) -> None:
         """/deadcode — unreachable symbols (requires index)."""
-        self._run_tool_alias("find_dead_code", "")
+        await self._run_tool_alias("find_dead_code", "")
 
-    @work(exclusive=False)
     async def _run_hotspots(self) -> None:
         """/hotspots — risky code by complexity × churn (requires index)."""
-        self._run_tool_alias("get_hotspots", "")
+        await self._run_tool_alias("get_hotspots", "")
 
-    @work(exclusive=False)
     async def _run_pagerank(self) -> None:
         """/pagerank — symbol importance (requires index)."""
-        self._run_tool_alias("calculate_pagerank", "")
+        await self._run_tool_alias("calculate_pagerank", "")
 
-    @work(exclusive=False)
     async def _run_refactor(self, symbol: str) -> None:
         """/refactor <symbol> — edit-ready refactor plan (requires index)."""
-        self._run_tool_alias("plan_refactoring", symbol)
+        await self._run_tool_alias("plan_refactoring", symbol)
 
-    @work(exclusive=False)
     async def _run_editsafe(self, symbol: str) -> None:
         """/editsafe <symbol> — pre-modification safety check (requires index)."""
-        self._run_tool_alias("check_edit_safe", symbol)
+        await self._run_tool_alias("check_edit_safe", symbol)
 
-    @work(exclusive=False)
     async def _run_deletesafe(self, symbol: str) -> None:
         """/deletesafe <symbol> — pre-deletion safety check (requires index)."""
-        self._run_tool_alias("check_delete_safe", symbol)
+        await self._run_tool_alias("check_delete_safe", symbol)
 
-    @work(exclusive=False)
     async def _run_impls(self, symbol: str) -> None:
         """/impls <symbol> — find implementations (requires index)."""
-        self._run_tool_alias("find_implementations", symbol)
+        await self._run_tool_alias("find_implementations", symbol)
 
-    @work(exclusive=False)
     async def _run_provenance(self, symbol: str) -> None:
         """/provenance <symbol> — git archaeology (requires index)."""
-        self._run_tool_alias("get_code_provenance", symbol)
+        await self._run_tool_alias("get_code_provenance", symbol)
 
-    @work(exclusive=False)
     async def _run_risk(self, target: str) -> None:
         """/risk <target> — composite change-risk score (requires index)."""
-        self._run_tool_alias("assess_change_risk", target)
+        await self._run_tool_alias("assess_change_risk", target)
 
-    @work(exclusive=False)
     async def _run_prrisk(self) -> None:
         """/prrisk — PR risk profile (requires git)."""
-        self._run_tool_alias("get_pr_risk_profile", "")
+        await self._run_tool_alias("get_pr_risk_profile", "")
 
-    @work(exclusive=False)
     async def _run_auditconfig(self) -> None:
         """/auditconfig — scan config for token waste (requires index)."""
-        self._run_tool_alias("audit_agent_config", "")
+        await self._run_tool_alias("audit_agent_config", "")
 
-    @work(exclusive=False)
     async def _run_ast(self, pattern: str) -> None:
         """/ast <pattern> — cross-language AST pattern search (requires index)."""
-        self._run_tool_alias("structural_search", pattern)
+        await self._run_tool_alias("structural_search", pattern)
 
-    @work(exclusive=False)
     async def _run_sessionstats(self) -> None:
         """/sessionstats — session economics + token savings."""
-        self._run_tool_alias("get_session_stats", "")
+        await self._run_tool_alias("get_session_stats", "")
 
-    @work(exclusive=False)
     async def _run_plantask(self, task: str = "") -> None:
         """/plantask <task> — plan a code task (intent + anchors + route)."""
         panel = self._panel()
         if not task:
             panel.add_error("Usage: /plantask <task description>")
             return
-        self._run_tool_alias("plan_code_task", task)
+        await self._run_tool_alias("plan_code_task", task)
 
-    @work(exclusive=False)
     async def _run_planturn(self, query: str) -> None:
         """/planturn <query> — confidence-guided routing."""
-        self._run_tool_alias("plan_turn", query)
+        await self._run_tool_alias("plan_turn", query)
 
-    @work(exclusive=False)
     async def _run_ranked(self, query: str) -> None:
         """/ranked <query> — token-budgeted ranked context."""
-        self._run_tool_alias("get_ranked_context", query)
+        await self._run_tool_alias("get_ranked_context", query)
 
-    @work(exclusive=False)
     async def _run_taskcontext(self, task: str) -> None:
         """/taskcontext <task> — full task context assembly."""
-        self._run_tool_alias("assemble_task_context", task)
+        await self._run_tool_alias("assemble_task_context", task)
 
     # ── Memory commands (require memory layer) ──────────────────────────────
 
-    @work(exclusive=False)
     async def _run_recall(self, query: str) -> None:
         """/recall <query> — recall relevant memories."""
-        self._run_tool_alias("recall_memory", query)
+        await self._run_tool_alias("recall_memory", query)
 
-    @work(exclusive=False)
     async def _run_remember(self, text: str) -> None:
         """/remember <text> — store a memory."""
-        self._run_tool_alias("remember_memory", text)
+        await self._run_tool_alias("remember_memory", text)
 
-    @work(exclusive=False)
     async def _run_forget(self, text: str) -> None:
         """/forget <text> — forget a memory by content fragment."""
         tool = self.agent.registry.get("forget_memory")
         if tool is None:
             self._panel().add_error("Tool 'forget_memory' not available.")
             return
-        self._run_tool_with_args("forget_memory", {"content_match": text})
+        await self._run_tool_with_args("forget_memory", {"content_match": text})
 
-    @work(exclusive=False)
     async def _run_sessions(self) -> None:
         """/sessions — list past sessions."""
-        self._run_tool_alias("list_sessions", "")
+        await self._run_tool_alias("list_sessions", "")
 
-    @work(exclusive=False)
     async def _run_memstats(self) -> None:
         """/memstats — memory statistics."""
-        self._run_tool_alias("memory_stats", "")
+        await self._run_tool_alias("memory_stats", "")
 
-    @work(exclusive=False)
     async def _run_consolidate(self) -> None:
         """/consolidate — merge near-duplicate memories."""
-        self._run_tool_alias("memory_consolidate", "")
+        await self._run_tool_alias("memory_consolidate", "")
 
-    @work(exclusive=False)
     async def _run_memgraph2(self) -> None:
         """/memgraph2 — knowledge graph (tool form)."""
-        self._run_tool_alias("memory_graph", "")
+        await self._run_tool_alias("memory_graph", "")
 
-    @work(exclusive=False)
     async def _run_memworker(self) -> None:
         """/memworker — background memory worker stats."""
-        self._run_tool_alias("memory_worker_status", "")
+        await self._run_tool_alias("memory_worker_status", "")
 
-    @work(exclusive=False)
     async def _run_memsearch(self, query: str) -> None:
         """/memsearch <query> — search the memory store."""
-        self._run_tool_alias("search_memory", query)
+        await self._run_tool_alias("search_memory", query)
 
-    @work(exclusive=False)
     async def _run_triples(self) -> None:
         """/triples — semantic triples in the knowledge graph."""
-        self._run_tool_alias("get_memory_graph", "")
+        await self._run_tool_alias("get_memory_graph", "")
 
     # ── Git & repo operations ───────────────────────────────────────────────
 
-    @work(exclusive=False)
     async def _run_git(self, subcommand: str) -> None:
         """/git <subcommand> — run a git operation."""
-        self._run_tool_alias("git", subcommand)
+        await self._run_tool_alias("git", subcommand)
 
-    @work(exclusive=False)
     async def _run_inspectrepo(self) -> None:
         """/inspectrepo — repository overview."""
-        self._run_tool_alias("inspect_repository", "")
+        await self._run_tool_alias("inspect_repository", "")
 
-    @work(exclusive=False)
     async def _run_tests_tool(self, framework: str) -> None:
         """/tests <framework> — run tests (pytest/unittest/npm/cargo)."""
-        self._run_tool_alias("run_tests", framework)
+        await self._run_tool_alias("run_tests", framework)
 
-    @work(exclusive=False)
     async def _run_read(self, path: str) -> None:
         """/read <path> — read a file."""
-        self._run_tool_alias("read_file", path)
+        await self._run_tool_alias("read_file", path)
 
-    @work(exclusive=False)
     async def _run_write(self, path: str) -> None:
         """/write <path> — write a file."""
-        self._run_tool_alias("write_file", path)
+        await self._run_tool_alias("write_file", path)
 
-    @work(exclusive=False)
     async def _run_edit(self, path: str) -> None:
         """/edit <path> — edit a file."""
-        self._run_tool_alias("edit_file", path)
+        await self._run_tool_alias("edit_file", path)
 
-    @work(exclusive=False)
     async def _run_ls(self, path: str) -> None:
         """/ls <path> — list a directory."""
-        self._run_tool_alias("list_dir", path)
+        await self._run_tool_alias("list_dir", path)
 
-    @work(exclusive=False)
     async def _run_grep(self, pattern: str) -> None:
         """/grep <pattern> — regex search file contents."""
-        self._run_tool_alias("grep", pattern)
+        await self._run_tool_alias("grep", pattern)
 
-    @work(exclusive=False)
     async def _run_run(self, command: str) -> None:
         """/run <command> — run a shell command."""
-        self._run_tool_alias("run_command", command)
+        await self._run_tool_alias("run_command", command)
 
     # ── Tool profile helpers ─────────────────────────────────────────────────
 
-    def _run_tool_alias(self, tool_name: str, arg: str) -> None:
+    async def _run_tool_alias(self, tool_name: str, arg: str) -> None:
         """Dispatch a short slash alias (e.g. /blast foo) to its tool."""
         panel = self._panel()
         if not self.agent.registry.has(tool_name):
@@ -1809,9 +1740,8 @@ class TraceraTUI(App):
             )
             return
         tool = self.agent.registry.get(tool_name)
-        self._run_tool_with_args(tool_name, single_arg_kwargs(tool, arg))
+        await self._run_tool_with_args(tool_name, single_arg_kwargs(tool, arg))
 
-    @work(exclusive=False)
     async def _run_tool_with_args(self, name: str, args: dict) -> None:
         await self._execute_tool_inline(name, args)
 
@@ -2334,7 +2264,6 @@ class TraceraTUI(App):
             self._reset_loader()
             self._running_worker = None
 
-    @work(exclusive=False)
     async def _run_planning(self, task: str) -> None:
         """/plan — decompose a task and show the plan as a collapsible row."""
         panel = self._panel()
