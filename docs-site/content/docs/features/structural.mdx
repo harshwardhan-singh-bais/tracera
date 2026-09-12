@@ -1,0 +1,43 @@
+---
+title: Structural Analysis
+description: References, call graphs, blast radius, dead code and risk scoring.
+---
+
+Beyond text search, TRACERA builds a **symbol graph** from the tree-sitter
+index and runs graph algorithms on it.
+
+## What you can ask
+
+| Question | Command |
+| --- | --- |
+| Who calls this function? | `/callers <symbol>` |
+| What does this symbol touch? | `/deps <symbol>` |
+| If I change this, what breaks? | `/blast <symbol>` |
+| Which files import this module? | `/importers <file>` |
+| Is anything unreachable? | `/deadcode` |
+| Where is the risk concentrated? | `/hotspots` |
+| How important is this symbol, globally? | `/pagerank` |
+| Are there circular dependencies? | `/cycles` |
+| Is it safe to delete this? | `/deletesafe <symbol>` |
+
+## Blast radius example
+
+```bash
+> /blast WorkspaceSandbox
+  158 symbols affected across 31 files
+  direct callers: 23
+  transitive: 135 (depth ≤ 4)
+  entry points touched: CLI (3), TUI (2), MCP (1)
+```
+
+## Risk scoring
+
+`/risk` and `/hotspots` combine several signals:
+
+- **Complexity** — cyclomatic complexity from the AST.
+- **Churn** — change frequency from git history.
+- **Centrality** — PageRank over the symbol graph.
+- **Test coverage** — optionally, coverage data from your test suite.
+
+The result is a ranked list of *where changes are most likely to hurt* —
+useful for deciding review depth and where to add tests first.

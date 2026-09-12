@@ -1,0 +1,40 @@
+---
+title: Memory
+description: Persistent, graph-structured memory that survives sessions.
+---
+
+TRACERA's memory layer gives the agent durable, structured recall instead
+of a flat text log.
+
+## What gets stored
+
+Memories are typed records:
+
+- **facts** — verified statements about the codebase or environment;
+- **decisions** — choices made with their rationale;
+- **preferences** — your conventions (test runner, formatting, style);
+- **skills** — learned procedures that worked.
+
+Each memory is embedded and linked into a knowledge graph (triples), so
+recall is associative, not just keyword matching.
+
+## Command surface
+
+```bash
+/remember "We use pytest with asyncio_mode=auto"
+/recall "what test framework"
+/memory                 # browse everything
+/memgraph               # render the knowledge graph
+/forget "asyncio_mode"  # delete matching memories
+```
+
+## How the agent uses it
+
+- **On launch**, relevant memories are injected into the system context.
+- **During tasks**, decisions and conventions steer tool use (e.g. the
+  configured test timeout, preferred provider).
+- **After tasks**, the agent persists what it learned for next time.
+
+The memory store lives in the TRACERA data directory alongside the index
+(see [Configuration](/docs/configuration)); it is plain local data you can
+inspect, back up, or delete.

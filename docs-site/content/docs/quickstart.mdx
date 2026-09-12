@@ -1,0 +1,83 @@
+---
+title: Quickstart
+description: Get TRACERA running and indexing your workspace in under a minute.
+---
+
+TRACERA is a Python 3.12+ application managed with
+[uv](https://docs.astral.sh/uv/). The fastest way in:
+
+## 1. Install
+
+```bash
+# clone and sync the environment
+git clone <your-fork-url> tracera
+cd tracera
+uv sync
+```
+
+Or install as a tool:
+
+```bash
+uv tool install .
+```
+
+## 2. Configure a provider
+
+TRACERA talks to LLM providers via API keys read from the environment or a
+`.env` file. Any one of these is enough to start:
+
+```bash
+# .env
+GROQ_API_KEY=gsk_...
+# or
+OPENAI_API_KEY=sk-...
+# or
+ANTHROPIC_API_KEY=...
+```
+
+The first launch builds a local embedding index (sentence-transformers) —
+no API key is needed for indexing itself.
+
+## 3. Launch
+
+```bash
+uv run tracera
+```
+
+This opens the TUI. You land on an agent panel with autocomplete — type
+`/` to see every available command.
+
+## 4. Index your workspace
+
+```bash
+/index
+```
+
+The first run parses every source file with tree-sitter, chunks it, embeds
+it, and stores everything in LanceDB under `.tracera/`. Subsequent runs are
+incremental (only changed files are re-processed).
+
+## 5. Try the core loop
+
+```bash
+/search "where is authentication handled"
+/blast AgentPanel          # what breaks if you change this symbol
+/plan "add a --json flag to the search CLI"
+/code "add a --json flag to the search CLI"
+```
+
+`/code` runs the full agent loop with tool access. After it finishes:
+
+```bash
+/review        # LLM review of uncommitted changes
+/test          # run the project test suite
+```
+
+## Troubleshooting
+
+- **Index crashes or reports `files_indexed: 0`** — verify tree-sitter is
+  on a 0.25.x runtime (`uv pip show tree-sitter`); the lockfile pins a
+  known-good combination.
+- **Provider errors / rate limits** — TRACERA supports provider failover;
+  check `/status` to see the active provider and model.
+- **Slow first launch** — the embedding model download happens once.

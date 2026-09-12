@@ -1,0 +1,53 @@
+---
+title: Introduction
+description: What TRACERA is, and why it exists.
+---
+
+TRACERA is an **agentic code intelligence engine** that lives in your
+terminal. It indexes your codebase into a hybrid retrieval index, answers
+questions about architecture, and can autonomously plan, edit, and verify
+code changes — all through a TUI driven by slash commands.
+
+## Highlights
+
+- **Hybrid retrieval** — BM25 keyword search fused with dense sentence
+  embeddings (LanceDB + sentence-transformers) over a tree-sitter symbol
+  index.
+- **80+ slash commands** — every registered tool is reachable directly from
+  the TUI: `/search`, `/blast`, `/deadcode`, `/hotspots`, `/refs`, `/plan`,
+  `/fix`, and friends. Type `/features` to list them all.
+- **Autonomous coding loops** — `/fix` runs a plan → retrieve → edit → test
+  cycle; `/regression` compares test results before and after changes.
+- **Multi-agent fleet** — Researcher, Coder, Tester, Reviewer and Debugger
+  sub-agents with a hard sandbox: they cannot run mutating git commands.
+- **Persistent memory** — a knowledge-graph memory layer (facts, decisions,
+  skills) that survives across sessions and feeds retrieval context.
+- **MCP native** — expose the whole tool registry over the
+  [Model Context Protocol](https://modelcontextprotocol.io) or consume
+  external MCP servers as tools.
+
+## Architecture at a glance
+
+```
+┌───────────────────────────── Terminal (Textual TUI) ─────────────────────────┐
+│  slash commands · autocomplete · dashboards · memory graph · sub-agents      │
+└──────────────┬───────────────────────────────────────────────┬───────────────┘
+               │                                               │
+      ┌────────▼────────┐                            ┌─────────▼─────────┐
+      │  Agent runtime  │                            │   Memory layer    │
+      │  (LLM + tools)  │                            │ (facts/graph/RAG) │
+      └────────┬────────┘                            └───────────────────┘
+               │
+   ┌───────────┼──────────────┬──────────────────┐
+   ▼           ▼              ▼                  ▼
+ Retrieval   Indexer      Tool registry      MCP server/client
+ (BM25+dense) (tree-sitter) (58 tools)
+```
+
+## Next steps
+
+<Cards>
+  <Card title="Quickstart" description="Install, launch, and index a workspace in under a minute." href="/docs/quickstart" />
+  <Card title="Slash commands" description="The complete command reference." href="/docs/slash-commands" />
+  <Card title="CLI reference" description="Headless usage: ask, index, search, fix, review." href="/docs/cli" />
+</Cards>

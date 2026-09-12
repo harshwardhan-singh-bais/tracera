@@ -1,0 +1,11 @@
+{
+  "title": "Features",
+  "defaultOpen": true,
+  "pages": [
+    "retrieval",
+    "structural",
+    "quality",
+    "agent",
+    "memory"
+  ]
+}

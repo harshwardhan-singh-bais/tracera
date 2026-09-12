@@ -1,0 +1,18 @@
+{
+  "title": "TRACERA",
+  "description": "Agentic Code Intelligence & Autonomous Coding Engine",
+  "root": true,
+  "pages": [
+    "index",
+    "quickstart",
+    "cli",
+    "---Slash Commands---",
+    "slash-commands",
+    "---Features---",
+    "...features",
+    "---Integrations & Internals---",
+    "mcp",
+    "configuration",
+    "architecture"
+  ]
+}

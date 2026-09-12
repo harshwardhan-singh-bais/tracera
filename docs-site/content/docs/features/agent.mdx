@@ -1,0 +1,52 @@
+---
+title: Agents & Delegation
+description: The main agent loop and the sandboxed sub-agent fleet.
+---
+
+## The main agent
+
+The core loop is tool-augmented LLM conversation: the agent sees your
+request, decides which of the 58 registered tools to call (retrieval,
+structural analysis, shell, file edit, memory...), and iterates until the
+task is done. Guards bound the loop: max iterations, max tool calls, and a
+context token budget.
+
+## The sub-agent fleet
+
+`/delegate <task>` splits a task across role-specialized sub-agents:
+
+| Role | Focus |
+| --- | --- |
+| **Researcher** | Retrieval and codebase questions only |
+| **Coder** | Edits code (within its tool allowlist) |
+| **Tester** | Runs tests, reads failures |
+| **Reviewer** | Reviews changes, no mutation tools |
+| **Debugger** | Diagnoses failures with read tools |
+
+### The sandbox
+
+Sub-agents are **hard-sandboxed**:
+
+- the `git` tool is removed from every sub-agent role;
+- `run_command` is wrapped with a guard that rejects mutating git
+  operations (`commit`, `push`, `reset`, `rebase`, `checkout`, ...);
+- the main agent retains unrestricted access.
+
+```bash
+> /delegate "add type hints to tracera/retrieval/symbols.py"
+  researcher: located module + 4 dependents
+  coder: applied hints (3 functions)
+  tester: 12/12 tests pass
+  reviewer: approved with 1 nit
+```
+
+<Callout type="warn">
+Even sandboxed, delegation runs real tools against your workspace. Commit
+or stash before large delegation runs.
+</Callout>
+
+## Memory integration
+
+The agent writes durable facts to the memory layer automatically
+(decisions, conventions, learned fixes) and recalls them in future
+sessions — see [Memory](/docs/features/memory).

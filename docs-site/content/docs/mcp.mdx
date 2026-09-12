@@ -1,0 +1,54 @@
+---
+title: MCP Integration
+description: Expose TRACERA tools over MCP, or consume external MCP servers.
+---
+
+TRACERA is [Model Context Protocol](https://modelcontextprotocol.io) native
+on both sides.
+
+## As an MCP server
+
+`tracera mcp serve` exposes the full tool registry — retrieval, structural
+analysis, memory, shell, file operations — to any MCP client:
+
+```bash
+tracera mcp serve
+```
+
+Example client config (Claude Desktop / any MCP host):
+
+```json
+{
+  "mcpServers": {
+    "tracera": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/tracera", "tracera", "mcp", "serve"]
+    }
+  }
+}
+```
+
+This makes TRACERA's code intelligence available inside your editor or
+agent host of choice.
+
+## As an MCP client
+
+TRACERA can also *consume* external MCP servers and merge their tools into
+its own registry. Configure servers, then check:
+
+```bash
+/mcp        # TUI: connection status + merged tools
+tracera mcp status
+```
+
+External tools appear in the normal tool registry, which means they are
+also reachable as slash commands.
+
+## Server settings
+
+| Setting | Purpose |
+| --- | --- |
+| `TRACERA_MCP_API_KEY` / `TRACERA_MCP_API_KEYS` | Authenticate MCP clients |
+| `TRACERA_MCP_ENFORCE_WORKSPACE_BOUNDARIES` | Restrict file tools to the workspace root |
+
+See [Configuration](/docs/configuration) for the full list.

@@ -1,0 +1,53 @@
+---
+title: Quality & Review
+description: Dead-code detection, hotspots, self-review and regression guarding.
+---
+
+TRACERA includes a battery of quality tools and LLM-assisted review loops
+that operate on real repository state (git + index), not just diffs.
+
+## Detection
+
+- `/deadcode` — symbols unreachable from any entry point (CLI commands,
+  TUI handlers, MCP tools, tests can be treated as roots).
+- `/hotspots` — complexity × churn ranking; the default view skips the
+  slow coverage pass (opt in with `with_coverage`).
+- `/pagerank` — global symbol importance from the reference graph.
+- `/cycles` — dependency cycles, so you can break them before they
+  metastasize.
+
+## Review loops
+
+### `/review`
+
+The agent reviews current uncommitted changes with structural context:
+affected symbols, callers, and blast radius accompany the diff.
+
+### `/selfreview`
+
+An **independent** LLM pass over uncommitted changes — separate from the
+agent conversation, so it can catch what the authoring context rationalized.
+
+### `/regression`
+
+Runs the test suite twice — a baseline (stashed/stored state) and the
+current state — and compares. Intended as the gate before committing
+agent-made changes.
+
+```bash
+/code "add pagination to search results"
+/review
+/regression        # 334/334 before, 334/334 after ✓
+```
+
+## Fix loop
+
+`/fix <task>` is the autonomous loop for failing work:
+
+1. **Plan** — decompose the failure into steps.
+2. **Retrieve** — pull relevant symbols and history.
+3. **Edit** — apply changes with the write/edit tools.
+4. **Test** — run the suite; repeat or stop based on results.
+
+Iteration limits, command timeouts (`TRACERA_TEST_TIMEOUT`), and the
+confirmation policy are configurable — see [Configuration](/docs/configuration).

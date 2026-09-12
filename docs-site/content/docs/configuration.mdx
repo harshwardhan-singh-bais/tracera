@@ -1,0 +1,73 @@
+---
+title: Configuration
+description: Settings, environment variables, and data locations.
+---
+
+TRACERA is configured via environment variables (or a `.env` file), read
+through pydantic-settings. Every setting has a prefix or is namespaced by
+convention.
+
+## Core
+
+| Variable | Purpose |
+| --- | --- |
+| `TRACERA_WORKSPACE` | Default workspace root |
+| `TRACERA_DATA_DIR` | Where the index, memory, and logs live |
+| `TRACERA_DEFAULT_PROVIDER` | Provider used on launch |
+| `TRACERA_DEFAULT_MODEL` | Model ID used on launch |
+| `TRACERA_DEFAULT_TEMPERATURE` | Sampling temperature |
+| `TRACERA_DEFAULT_MAX_TOKENS` | Max completion tokens |
+
+## Agent limits
+
+| Variable | Purpose |
+| --- | --- |
+| `TRACERA_MAX_ITERATIONS` | Max agent loop iterations |
+| `TRACERA_MAX_TOOL_CALLS` | Max tool calls per task |
+| `TRACERA_MAX_CONTEXT_TOKENS` | Hard context window budget |
+| `TRACERA_CONTEXT_BUDGET_TOKENS` | Soft budget for context assembly |
+| `TRACERA_COMMAND_TIMEOUT` | Shell command timeout (seconds) |
+| `TRACERA_TEST_TIMEOUT` | Test-suite timeout (default 300 s) |
+
+## Safety
+
+| Variable | Purpose |
+| --- | --- |
+| `TRACERA_ALLOWED_SHELL_COMMANDS` | Shell command allowlist |
+| `TRACERA_REQUIRE_CONFIRMATION_FOR` | Operations that prompt first |
+
+## Providers
+
+Each provider reads its own key:
+
+```bash
+OPENAI_API_KEY=...
+ANTHROPIC_API_KEY=...
+GOOGLE_API_KEY=...
+GROQ_API_KEY=...
+SAMBANOVA_API_KEY=...
+MISTRAL_API_KEY=...
+CEREBRAS_API_KEY=...
+NVIDIA_API_KEY=...
+OPENROUTER_API_KEY=...
+TOGETHER_API_KEY=...
+COHERE_API_KEY=...
+OLLAMA_BASE_URL=http://localhost:11434
+```
+
+## Code intelligence
+
+| Variable | Purpose |
+| --- | --- |
+| `TRACERA_EMBEDDING_MODEL` | sentence-transformers model ID |
+| `CODE_INTELLIGENCE_ENABLED` | Toggle the index layer |
+| `CODE_INTELLIGENCE_INDEX_PATH` | Override the index location |
+| `CODE_INTELLIGENCE_IGNORE_PATTERNS` | Extra ignore globs |
+| `CODE_INTELLIGENCE_MAX_FILES` | Cap on indexed files |
+
+## Data directory
+
+`.tracera/` (or `TRACERA_DATA_DIR`) holds the LanceDB index, the memory
+store, and logs. It is machine-local, safe to delete (rebuild with
+`/index`), and should not be committed — TRACERA adds it to `.gitignore`
+for you.

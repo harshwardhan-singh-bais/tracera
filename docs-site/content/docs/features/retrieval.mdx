@@ -1,0 +1,46 @@
+---
+title: Retrieval
+description: Hybrid BM25 + dense retrieval over a tree-sitter code index.
+---
+
+TRACERA's retrieval layer answers *where is this in the codebase?* with a
+hybrid of keyword and semantic search, ranked and fused.
+
+## The pipeline
+
+1. **Parse** — every source file is parsed with tree-sitter; symbols
+   (functions, classes, methods) are extracted with byte/line ranges.
+2. **Chunk** — files are split into overlapping chunks respecting symbol
+   boundaries where possible.
+3. **Embed** — chunks are embedded locally with sentence-transformers (no
+   API calls).
+4. **Store** — embeddings land in [LanceDB](https://lancedb.com) under
+   `.tracera/`; a BM25 index is built alongside.
+5. **Fuse** — queries run through both retrievers; scores are normalized
+   and fused, then boosted by structural signals (symbol popularity).
+
+```bash
+/index            # incremental index build
+/search "jwt token refresh flow"
+/debug "jwt token refresh flow"   # compare retrieval strategies
+```
+
+## What you get
+
+Each hit includes the file path, line range, matched symbol, and the fused
+score breakdown — so you can tell *why* something ranked.
+
+## Command surface
+
+| Command | Purpose |
+| --- | --- |
+| `/search` | Hybrid search |
+| `/symbol`, `/symbols`, `/source` | Symbol lookup |
+| `/ranked` | Token-budgeted context assembly |
+| `/planturn` | Confidence-guided retrieval routing |
+| `/index` | (Re)build the index |
+
+<Callout type="info">
+The index lives entirely on your machine. Embeddings are computed locally;
+only LLM chat calls leave your machine.
+</Callout>

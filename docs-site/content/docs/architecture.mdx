@@ -1,0 +1,60 @@
+---
+title: Architecture
+description: How TRACERA is organized under the hood.
+---
+
+TRACERA is a Python 3.12+ package (`tracera/`) with a Textual TUI, a Typer
+CLI, and a layered engine underneath.
+
+## Module map
+
+| Module | Responsibility |
+| --- | --- |
+| `tracera/main.py` | Typer CLI entrypoint (`tracera` command) |
+| `tracera/tui/` | Textual app, agent panel, widgets, command registry |
+| `tracera/agent/` | Agent loop, provider abstraction, sub-agents |
+| `tracera/retrieval/` | Hybrid pipeline: BM25 + dense fusion, reranking |
+| `tracera/indexer/` | tree-sitter parsing, symbol extraction, chunking |
+| `tracera/tools/` | Tool registry — 58 tools, schema-validated |
+| `tracera/memory/` | Memory layer: typed records, triples, graph |
+| `tracera/mcp/` | MCP server & client |
+| `tracera/workspace/` | Workspace lifecycle and sandboxing |
+| `tracera/config/` | pydantic-settings, provider profiles |
+
+## Data flow
+
+```
+user input ──▶ command registry ──▶ dispatch
+                                    │
+              ┌─────────────────────┼──────────────────────┐
+              ▼                     ▼                      ▼
+        tool registry         agent loop            direct render
+              │                     │
+              ▼                     ▼
+   retrieval / structural /   provider (LLM)
+   memory / shell / files          │
+              │                    ▼
+              └──────────▶ results streamed to panel
+```
+
+## Slash dispatch
+
+`tracera/tui/widgets/command_registry.py` is the single source of truth:
+`SLASH_COMMANDS` (built-in) merged with `SLASH_TOOLS` (generated aliases
+from the tool registry). Autocomplete, `/help`, and the dispatch table all
+read from it — adding a tool makes it slash-addressable automatically.
+
+## Provider layer
+
+Providers are pluggable (OpenAI-compatible, Anthropic, Gemini, Groq,
+Cerebras, Mistral, Together, Cohere, SambaNova, NVIDIA, Ollama). The layer
+supports failover: if the primary provider rate-limits, the configured
+fallback takes over mid-task.
+
+## Indexing internals
+
+- **tree-sitter** parses Python, JavaScript, and TypeScript. The runtime
+  is pinned (`>=0.25,<0.26`) — 0.26.x has a verified native crash on
+  Windows during symbol extraction.
+- **LanceDB** stores chunk embeddings locally (no server).
+- Indexing is incremental: file hashes decide what gets reprocessed.

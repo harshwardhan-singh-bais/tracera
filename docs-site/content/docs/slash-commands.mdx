@@ -1,0 +1,124 @@
+---
+title: Slash Commands
+description: The complete reference for every slash command in the TRACERA TUI.
+---
+
+Everything in the TUI is a slash command. Type `/` for autocomplete with
+descriptions, or `/features` to list the full surface grouped by category.
+
+## Sessions & help
+
+| Command | Description |
+| --- | --- |
+| `/help` | Show all commands and keys |
+| `/features` | List every feature as a slash command |
+| `/clear` | Clear the conversation |
+| `/reset` | Reset conversation state |
+| `/dashboard` | System overview panel |
+| `/status` | Provider, model, tokens, memory status |
+| `/cost` | Session token/cost estimate |
+| `/observability` | Live telemetry (LLM/tool/retrieval/cost) |
+| `/phases` | Phase map + verified checklist |
+| `/theme` | Cycle accent theme (claude → crush → nord) |
+| `/files` | Recently touched files |
+
+## Models & providers
+
+| Command | Description |
+| --- | --- |
+| `/models` | List all provider/model options |
+| `/model <id>` | Switch model |
+| `/mcp` | Show MCP status & config |
+| `/tools` | List available tools |
+| `/agents` | Sub-agent fleet overview |
+
+## Retrieval & search
+
+| Command | Description |
+| --- | --- |
+| `/search <query>` | Hybrid (BM25 + dense) code search |
+| `/debug <query>` | Compare retrieval strategies side by side |
+| `/ranked <query>` | Token-budgeted ranked context |
+| `/index` | Index the workspace (incremental) |
+
+## Structural analysis
+
+| Command | Description |
+| --- | --- |
+| `/symbol <name>` | Find a symbol by name |
+| `/symbols <query>` | Search symbols (exact/prefix/fuzzy) |
+| `/source <symbol>` | Exact source of a symbol |
+| `/refs <symbol>` | Find references |
+| `/callers <symbol>` | Call hierarchy (callers/callees) |
+| `/impls <symbol>` | Find implementations |
+| `/blast <symbol>` | Blast radius — what breaks if you change it |
+| `/importers <file>` | What imports a file |
+| `/deps <symbol>` | Symbol dependency chain |
+| `/endpoint <route>` | Trace an API route to its handler |
+
+## Quality & risk
+
+| Command | Description |
+| --- | --- |
+| `/deadcode` | Symbols unreachable from entry points |
+| `/hotspots` | Risky code by complexity × churn |
+| `/pagerank` | Symbol importance (graph centrality) |
+| `/risk <target>` | Composite change-risk score |
+| `/coupling` | Coupling metrics |
+| `/cycles` | Dependency cycles |
+| `/audit` | Agent configuration audit |
+
+## Refactoring
+
+| Command | Description |
+| --- | --- |
+| `/refactor <symbol>` | Edit-ready rename/move/extract plan |
+| `/editsafe <symbol>` | Preflight before modifying a symbol |
+| `/deletesafe <symbol>` | Preflight before deleting a symbol |
+
+## Git & provenance
+
+| Command | Description |
+| --- | --- |
+| `/changed` | Map git diff to affected symbols |
+| `/provenance <symbol>` | Git archaeology for a symbol |
+| `/git <subcommand>` | Run a git operation |
+
+## Agent tasks
+
+| Command | Description |
+| --- | --- |
+| `/plan <task>` | Decompose a task into steps |
+| `/plantask <task>` | Intent + anchors + tool-chain plan |
+| `/code <task>` | Run a coding task with full tool access |
+| `/fix <task>` | Autonomous fix loop (plan→retrieve→edit→test) |
+| `/review` | Agent review of current changes |
+| `/selfreview` | Independent LLM review of uncommitted changes |
+| `/regression` | Baseline vs current test comparison |
+| `/delegate <task>` | Delegate a task to sub-agents |
+| `/taskcontext <task>` | Full task context assembly |
+| `/planturn <query>` | Confidence-guided routing for a query |
+| `/test [pytest]` | Run the project's test suite |
+
+## Memory
+
+| Command | Description |
+| --- | --- |
+| `/memory` | Show stored memories |
+| `/memgraph` | Render the memory knowledge graph |
+| `/remember <text>` | Store a memory |
+| `/recall <query>` | Recall relevant memories |
+| `/forget <text>` | Forget a memory |
+| `/triples` | Knowledge-graph tool view |
+
+## Running any tool
+
+Every registered tool is also reachable directly:
+
+```bash
+/tool <name> [key=value ...]      # run any registry tool
+```
+
+Tool aliases (like `/search` → `hybrid_search`, `/blast` →
+`blast_radius`) are generated from the tool registry, so new tools appear
+in autocomplete automatically.
