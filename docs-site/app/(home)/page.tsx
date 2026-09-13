@@ -28,6 +28,12 @@ const features = [
     href: '/docs/features/agent',
   },
   {
+    title: 'Quality & Review',
+    description:
+      'Dead-code detection, hotspots, self-review and regression guarding on real repository state.',
+    href: '/docs/features/quality',
+  },
+  {
     title: 'Persistent Memory',
     description:
       'A knowledge-graph memory layer with facts, decisions, and skills that survives across sessions.',
@@ -40,6 +46,99 @@ const features = [
     href: '/docs/mcp',
   },
 ];
+
+/** Every slash command the TUI registers — mirrors /docs/slash-commands. */
+const commandGroups: { label: string; commands: string[] }[] = [
+  {
+    label: 'Sessions & help',
+    commands: [
+      '/help',
+      '/features',
+      '/clear',
+      '/reset',
+      '/dashboard',
+      '/status',
+      '/cost',
+      '/observability',
+      '/phases',
+      '/theme',
+      '/files',
+    ],
+  },
+  {
+    label: 'Models & providers',
+    commands: ['/models', '/model', '/mcp', '/tools', '/agents'],
+  },
+  {
+    label: 'Retrieval & search',
+    commands: ['/search', '/debug', '/ranked', '/index'],
+  },
+  {
+    label: 'Structural analysis',
+    commands: [
+      '/symbol',
+      '/symbols',
+      '/source',
+      '/refs',
+      '/callers',
+      '/impls',
+      '/blast',
+      '/importers',
+      '/deps',
+      '/endpoint',
+    ],
+  },
+  {
+    label: 'Quality & risk',
+    commands: [
+      '/deadcode',
+      '/hotspots',
+      '/pagerank',
+      '/risk',
+      '/coupling',
+      '/cycles',
+      '/audit',
+    ],
+  },
+  {
+    label: 'Refactoring',
+    commands: ['/refactor', '/editsafe', '/deletesafe'],
+  },
+  {
+    label: 'Git & provenance',
+    commands: ['/changed', '/provenance', '/git'],
+  },
+  {
+    label: 'Agent tasks',
+    commands: [
+      '/plan',
+      '/plantask',
+      '/code',
+      '/fix',
+      '/review',
+      '/selfreview',
+      '/regression',
+      '/delegate',
+      '/taskcontext',
+      '/planturn',
+      '/test',
+    ],
+  },
+  {
+    label: 'Memory',
+    commands: [
+      '/memory',
+      '/memgraph',
+      '/remember',
+      '/recall',
+      '/forget',
+      '/triples',
+    ],
+  },
+];
+
+const totalCommands =
+  commandGroups.reduce((n, g) => n + g.commands.length, 0) + 1; // + /tool
 
 export default function HomePage() {
   return (
@@ -62,7 +161,7 @@ export default function HomePage() {
       <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
         <Link
           href="/docs"
-          className="rounded-lg bg-fd-primary px-5 py-2.5 font-medium text-fd-primary-foreground transition-colors hover:opacity-90"
+          className="rounded-lg bg-fd-primary px-5 py-2.5 font-medium text-fd-primary-foreground transition-opacity hover:opacity-90"
         >
           Get Started
         </Link>
@@ -70,7 +169,7 @@ export default function HomePage() {
           href="/docs/slash-commands"
           className="rounded-lg border border-fd-border bg-fd-card px-5 py-2.5 font-medium transition-colors hover:bg-fd-muted"
         >
-          Browse 80+ slash commands
+          Browse all {totalCommands} slash commands
         </Link>
       </div>
 
@@ -98,6 +197,66 @@ export default function HomePage() {
   plan → retrieve → edit → test ✓  (3/3 checks passed)`}</code>
           </pre>
         </div>
+      </div>
+
+      {/* Full slash-command surface */}
+      <div className="mt-20 w-full max-w-4xl text-left">
+        <h2 className="mb-2 text-center text-sm font-medium uppercase tracking-widest text-fd-muted-foreground">
+          Every command, one keystroke away
+        </h2>
+        <p className="mb-8 text-center text-sm text-fd-muted-foreground">
+          All {totalCommands} commands below ship in the TUI — type{' '}
+          <code className="rounded bg-fd-muted px-1 py-0.5 font-mono text-[13px]">
+            /
+          </code>{' '}
+          for autocomplete, or <code className="rounded bg-fd-muted px-1 py-0.5 font-mono text-[13px]">/features</code> to
+          list them live.
+        </p>
+
+        <div className="grid gap-x-8 gap-y-6 sm:grid-cols-2">
+          {commandGroups.map((group) => (
+            <section key={group.label}>
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-fd-primary">
+                {group.label}
+              </h3>
+              <ul className="flex flex-wrap gap-1.5">
+                {group.commands.map((cmd) => (
+                  <li key={cmd}>
+                    <code className="inline-block rounded-md border border-fd-border bg-fd-card px-2 py-0.5 font-mono text-[13px] text-fd-muted-foreground transition-colors hover:border-fd-primary hover:text-fd-foreground">
+                      {cmd}
+                    </code>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+          <section>
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-fd-primary">
+              Any tool
+            </h3>
+            <ul className="flex flex-wrap gap-1.5">
+              <li>
+                <code className="inline-block rounded-md border border-fd-border bg-fd-card px-2 py-0.5 font-mono text-[13px] text-fd-muted-foreground">
+                  /tool &lt;name&gt;
+                </code>
+              </li>
+            </ul>
+            <p className="mt-2 text-xs text-fd-muted-foreground">
+              Every registry tool is slash-addressable — new tools appear in
+              autocomplete automatically.
+            </p>
+          </section>
+        </div>
+
+        <p className="mt-6 text-center text-sm text-fd-muted-foreground">
+          Full reference with arguments and examples:{' '}
+          <Link
+            href="/docs/slash-commands"
+            className="font-medium text-fd-primary hover:underline"
+          >
+            Slash Commands →
+          </Link>
+        </p>
       </div>
 
       <div className="mt-20 w-full text-left">

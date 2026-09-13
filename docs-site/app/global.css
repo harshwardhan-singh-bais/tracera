@@ -1,6 +1,17 @@
 @import 'tailwindcss';
-@import 'fumadocs-ui/css/ocean.css';
+@import 'fumadocs-ui/css/purple.css';
 @import 'fumadocs-ui/css/preset.css';
+
+/* Light violet accent — softer than the stock purple, in both modes */
+@theme {
+  --color-fd-primary: hsl(262, 85%, 64%);
+  --color-fd-primary-foreground: white;
+}
+
+.dark {
+  --color-fd-primary: hsl(264, 100%, 86%);
+  --color-fd-primary-foreground: hsl(264, 70%, 13%);
+}
 
 html {
   scrollbar-gutter: stable;
