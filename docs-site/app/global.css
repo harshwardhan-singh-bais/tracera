@@ -2,15 +2,15 @@
 @import 'fumadocs-ui/css/purple.css';
 @import 'fumadocs-ui/css/preset.css';
 
-/* Light violet accent — softer than the stock purple, in both modes */
+/* Soften the stock purple into a calmer, professional violet */
 @theme {
-  --color-fd-primary: hsl(262, 85%, 64%);
+  --color-fd-primary: hsl(255, 55%, 58%);
   --color-fd-primary-foreground: white;
 }
 
 .dark {
-  --color-fd-primary: hsl(264, 100%, 86%);
-  --color-fd-primary-foreground: hsl(264, 70%, 13%);
+  --color-fd-primary: hsl(255, 70%, 76%);
+  --color-fd-primary-foreground: hsl(258, 40%, 12%);
 }
 
 html {

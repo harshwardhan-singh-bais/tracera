@@ -13,9 +13,10 @@ code changes — all through a TUI driven by slash commands.
 - **Hybrid retrieval** — BM25 keyword search fused with dense sentence
   embeddings (LanceDB + sentence-transformers) over a tree-sitter symbol
   index.
-- **80+ slash commands** — every registered tool is reachable directly from
+- **61 slash commands** — every capability is reachable directly from
   the TUI: `/search`, `/blast`, `/deadcode`, `/hotspots`, `/refs`, `/plan`,
-  `/fix`, and friends. Type `/features` to list them all.
+  `/fix`, and friends — plus `/tool <name>` to invoke any registry tool.
+  Type `/features` to list them all.
 - **Autonomous coding loops** — `/fix` runs a plan → retrieve → edit → test
   cycle; `/regression` compares test results before and after changes.
 - **Multi-agent fleet** — Researcher, Coder, Tester, Reviewer and Debugger
