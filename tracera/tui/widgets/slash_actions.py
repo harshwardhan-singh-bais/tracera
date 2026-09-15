@@ -194,6 +194,7 @@ FEATURE_GROUPS: dict[str, list[tuple[str, str]]] = {
 
 # ── Argument parsing ─────────────────────────────────────────────────────────
 
+
 def parse_tool_invocation(spec: str) -> tuple[str, dict[str, str]]:
     """
     Split ``"name key=value key2='a b'"`` into ``("name", {k: v})``.
@@ -248,8 +249,16 @@ def coerce_args(tool: Any, raw_args: dict[str, str]) -> dict[str, Any]:
 
 #: Fallback positional parameter names, most-specific first.
 _POSITIONAL_CANDIDATES = (
-    "query", "symbol", "name", "path", "pattern", "command",
-    "task", "file", "instruction", "text",
+    "query",
+    "symbol",
+    "name",
+    "path",
+    "pattern",
+    "command",
+    "task",
+    "file",
+    "instruction",
+    "text",
 )
 
 

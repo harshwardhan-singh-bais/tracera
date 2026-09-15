@@ -18,17 +18,10 @@ the user-facing response.
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 from tracera.logging import get_logger
 from tracera.memory.taxonomy import (
-    MemoryEvent,
-    MemoryFact,
-    MemoryPreference,
-    MemoryRelationship,
-    MemoryRule,
-    MemorySkill,
     StructuredMemory,
     create_event,
     create_fact,
@@ -288,7 +281,10 @@ class ConversationExtractor:
 
             # Detect user preferences (lines starting with "I prefer", "I like", etc.)
             lower = line.lower()
-            if any(lower.startswith(p) for p in ["i prefer", "i like", "i want", "please use", "always use"]):
+            if any(
+                lower.startswith(p)
+                for p in ["i prefer", "i like", "i want", "please use", "always use"]
+            ):
                 memories.append(create_preference(line, strength=0.8, **common))
                 continue
 

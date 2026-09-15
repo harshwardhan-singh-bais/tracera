@@ -14,6 +14,8 @@ TRACERA Evaluation — Phases 45-50.
                             compare agent performance.
 """
 
+from tracera.evaluation.ablation import AblationFramework
+from tracera.evaluation.agent_benchmark import AgentBenchmark, AgentTaskResult
 from tracera.evaluation.dataset import EvalQuery, EvaluationDataset
 from tracera.evaluation.metrics import (
     ndcg_at_k,
@@ -21,18 +23,16 @@ from tracera.evaluation.metrics import (
     recall_at_k,
     reciprocal_rank,
 )
+from tracera.evaluation.retrieval_benchmark import RetrievalBenchmark
 from tracera.evaluation.strategies import (
     BM25Strategy,
     DenseStrategy,
     GrepStrategy,
     HybridStrategy,
-    RetrievalHit,
     RerankedHybridStrategy,
+    RetrievalHit,
     build_strategies,
 )
-from tracera.evaluation.retrieval_benchmark import RetrievalBenchmark
-from tracera.evaluation.agent_benchmark import AgentBenchmark, AgentTaskResult
-from tracera.evaluation.ablation import AblationFramework
 
 __all__ = [
     "EvalQuery",

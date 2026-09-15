@@ -12,18 +12,18 @@ TRACERA MCP Layer — Code Intelligence + Memory over Model Context Protocol.
                       their tools into the unified ToolRegistry.
 """
 
+from tracera.mcp.client import MCPClient, MCPTool
+from tracera.mcp.manager import MCPManager, MCPServerConfig
 from tracera.mcp.server import (
-    TraceraMCPServer,
-    build_mcp_server,
     ALL_MCP_TOOLS,
     CODE_INTELLIGENCE_TOOLS,
     CONTEXT_TOOLS,
     MEMORY_TOOLS,
-    SAFETY_TOOLS,
     REPOSITORY_TOOLS,
+    SAFETY_TOOLS,
+    TraceraMCPServer,
+    build_mcp_server,
 )
-from tracera.mcp.client import MCPClient, MCPTool
-from tracera.mcp.manager import MCPServerConfig, MCPManager
 
 __all__ = [
     "TraceraMCPServer",

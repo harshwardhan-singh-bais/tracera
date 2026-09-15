@@ -86,8 +86,7 @@ class ContextCompressor:
         # --- 1. Relevance filtering ---
         before = len(chunks)
         chunks = [
-            c for c in chunks
-            if c.get("_final_score", c.get("_rrf_score", 0.99)) >= self._min_score
+            c for c in chunks if c.get("_final_score", c.get("_rrf_score", 0.99)) >= self._min_score
         ]
         log.debug("Relevance filter: %d → %d chunks", before, len(chunks))
 
@@ -114,7 +113,8 @@ class ContextCompressor:
         if total_chars > self._target_chars:
             log.debug(
                 "Over budget (%d > %d chars) — truncating",
-                total_chars, self._target_chars,
+                total_chars,
+                self._target_chars,
             )
             budget_per_chunk = self._target_chars // max(len(chunks), 1)
             for chunk in chunks:
@@ -125,6 +125,7 @@ class ContextCompressor:
         final_chars = sum(len(c.get("content", "")) for c in chunks)
         log.info(
             "Context compressed: %d chunks, ~%d tokens",
-            len(chunks), final_chars // _CHARS_PER_TOKEN,
+            len(chunks),
+            final_chars // _CHARS_PER_TOKEN,
         )
         return chunks

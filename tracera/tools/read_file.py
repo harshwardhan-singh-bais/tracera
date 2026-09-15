@@ -1,7 +1,9 @@
 """read_file tool — Phase 7."""
 
 from __future__ import annotations
+
 from typing import Any
+
 from tracera.tools.base import Tool, ToolResult
 from tracera.workspace.sandbox import WorkspaceSandbox
 
@@ -61,7 +63,7 @@ class ReadFileTool(Tool):
                 el = min(total_lines, end_line or total_lines)
                 lines = lines[sl:el]
                 content = "".join(lines)
-                note = f"\n[Lines {sl+1}–{el} of {total_lines}]"
+                note = f"\n[Lines {sl + 1}–{el} of {total_lines}]"
             else:
                 note = f"\n[{total_lines} lines]"
 

@@ -3,10 +3,11 @@
 import pytest
 
 # Aliased so pytest doesn't try to collect these dataclasses as test classes
-from tracera.tools.test_runner import TestFailure as Failure, TestReport as Report
-
+from tracera.tools.test_runner import TestFailure as Failure
+from tracera.tools.test_runner import TestReport as Report
 
 # ── Phase 35: RetrievalDebugger ───────────────────────────────────────────────
+
 
 class _FakeRetriever:
     def __init__(self, chunks):
@@ -39,8 +40,11 @@ def test_retrieval_debugger_uses_compressor():
     debugger = RetrievalDebugger(retriever, ContextAssemblyEngine(), compressor=compressor)
 
     failure = Failure(
-        test_name="test_auth", error_type="AssertionError",
-        error_message="auth failed", file_path="auth.py", line_number=3,
+        test_name="test_auth",
+        error_type="AssertionError",
+        error_message="auth failed",
+        file_path="auth.py",
+        line_number=3,
     )
     plan = debugger.build_debug_plan(failure, provider=None)
 
@@ -62,6 +66,7 @@ def test_retrieval_debugger_tolerates_missing_retriever():
 
 
 # ── Phase 36: AutonomousFixLoop consumes the agent event stream ───────────────
+
 
 class _PassingTestRunner:
     def run(self, framework=None, test_paths=None):
@@ -118,7 +123,10 @@ async def test_fix_loop_drives_agent_on_failure(tmp_path):
             if self.calls >= 2:  # pass after the first fix attempt
                 return Report(framework="pytest", passed=3, total=3, success=True)
             return Report(
-                framework="pytest", passed=2, total=3, success=False,
+                framework="pytest",
+                passed=2,
+                total=3,
+                success=False,
                 failures=[Failure(test_name="t", error_type="E", error_message="m")],
             )
 
@@ -136,6 +144,7 @@ async def test_fix_loop_drives_agent_on_failure(tmp_path):
 
 # ── Phase 9 → 36: fix loop plans and replans after failures ───────────────────
 
+
 class _ReplanDecomposer:
     def __init__(self):
         self.decompose_calls = 0
@@ -143,6 +152,7 @@ class _ReplanDecomposer:
 
     async def decompose(self, task):
         from tracera.agent.planner import Plan
+
         self.decompose_calls += 1
         plan = Plan(task)
         plan.add_item("Step 1")
@@ -168,15 +178,21 @@ async def test_fix_loop_replans_on_failure(tmp_path):
             if self.calls >= 2:
                 return Report(framework="pytest", passed=2, total=2, success=True)
             return Report(
-                framework="pytest", passed=1, total=2, success=False,
+                framework="pytest",
+                passed=1,
+                total=2,
+                success=False,
                 failures=[Failure(test_name="t", error_type="E", error_message="m")],
             )
 
     decomposer = _ReplanDecomposer()
     debugger = RetrievalDebugger(None, ContextAssemblyEngine())
     loop = AutonomousFixLoop(
-        tmp_path, _FailThenPassRunner(), debugger,
-        max_iterations=3, decomposer=decomposer,
+        tmp_path,
+        _FailThenPassRunner(),
+        debugger,
+        max_iterations=3,
+        decomposer=decomposer,
     )
 
     result = await loop.run("fix the bug", provider=None, agent=_FakeAgent())
@@ -187,6 +203,7 @@ async def test_fix_loop_replans_on_failure(tmp_path):
 
 
 # ── Phase 38: RegressionProtector ─────────────────────────────────────────────
+
 
 class _CountingRunner:
     def __init__(self):

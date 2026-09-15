@@ -20,11 +20,11 @@ from __future__ import annotations
 
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any
 
 from tracera.logging import get_logger
 
 log = get_logger("memory.layer.attribution")
+
 
 #: Raised when an operation requires attribution but none has been set.
 class AttributionError(RuntimeError):
@@ -67,9 +67,7 @@ def set_attribution(entity_id: str, process_id: str) -> Attribution:
     entity_id = (entity_id or "").strip()
     process_id = (process_id or "").strip()
     if not entity_id or not process_id:
-        raise AttributionError(
-            "attribution requires both an entity_id and a process_id"
-        )
+        raise AttributionError("attribution requires both an entity_id and a process_id")
     _entity_var.set(entity_id)
     _process_var.set(process_id)
     scope = Attribution(entity_id, process_id)
@@ -93,6 +91,7 @@ def reset_attribution() -> None:
 
 
 # ── Session state ──────────────────────────────────────────────────────────────
+
 
 def set_session_id(session_id: str) -> None:
     """Associate the current task with a session id."""

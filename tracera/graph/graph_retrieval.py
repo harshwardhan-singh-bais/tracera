@@ -9,8 +9,8 @@ to return the full dependency chain:
 from __future__ import annotations
 
 from tracera.graph.symbol_graph import SymbolGraph
-from tracera.retrieval.bm25 import BM25Index
 from tracera.logging import get_logger
+from tracera.retrieval.bm25 import BM25Index
 
 log = get_logger("graph.graph_retrieval")
 
@@ -65,10 +65,9 @@ class GraphRetriever:
             node_id = f"{file_path}::{symbol_name}"
 
             # Traverse: ancestors (callers) + descendants (callees)
-            related_node_ids = (
-                self._graph.get_ancestors(node_id, max_depth=max_depth)
-                + self._graph.get_descendants(node_id, max_depth=max_depth)
-            )
+            related_node_ids = self._graph.get_ancestors(
+                node_id, max_depth=max_depth
+            ) + self._graph.get_descendants(node_id, max_depth=max_depth)
 
             for related_id in related_node_ids:
                 if len(expanded) >= max_total:
@@ -87,20 +86,24 @@ class GraphRetriever:
                     if chunk_id in seen_ids or score < 0.1:
                         continue
                     text = self._bm25.get_document(chunk_id) or ""
-                    expanded.append({
-                        "id": chunk_id,
-                        "content": text,
-                        "file_path": related_file,
-                        "symbol": related_symbol,
-                        "_expansion_reason": f"graph neighbor of {symbol_name}",
-                        "_final_score": 0.0,
-                        "_source": "graph",
-                    })
+                    expanded.append(
+                        {
+                            "id": chunk_id,
+                            "content": text,
+                            "file_path": related_file,
+                            "symbol": related_symbol,
+                            "_expansion_reason": f"graph neighbor of {symbol_name}",
+                            "_final_score": 0.0,
+                            "_source": "graph",
+                        }
+                    )
                     seen_ids.add(chunk_id)
                     break
 
         log.debug(
             "Graph retrieval: %d base → %d total (max_depth=%d)",
-            len(base_results), len(expanded), max_depth,
+            len(base_results),
+            len(expanded),
+            max_depth,
         )
         return expanded

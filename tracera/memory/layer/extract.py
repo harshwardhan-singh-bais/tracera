@@ -20,8 +20,9 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from tracera.logging import get_logger
 from tracera.memory.layer.store import ALL_KINDS
@@ -168,7 +169,9 @@ def filter_memory_worthy(
         # Check if the text content is memory-worthy
         worthy, worthiness_score = is_memory_worthy(item.text)
         if not worthy:
-            log.debug("Filtered out non-worthy memory: %s (score=%.2f)", item.text[:50], worthiness_score)
+            log.debug(
+                "Filtered out non-worthy memory: %s (score=%.2f)", item.text[:50], worthiness_score
+            )
             continue
 
         # Safety checks
@@ -185,15 +188,17 @@ def filter_memory_worthy(
 
         # Boost confidence by worthiness
         boosted_confidence = min(1.0, item.confidence * (0.8 + 0.2 * worthiness_score))
-        filtered.append(ExtractedMemory(
-            kind=item.kind,
-            subject=item.subject,
-            predicate=item.predicate,
-            object=item.object,
-            text=item.text,
-            confidence=boosted_confidence,
-            importance=item.importance,
-        ))
+        filtered.append(
+            ExtractedMemory(
+                kind=item.kind,
+                subject=item.subject,
+                predicate=item.predicate,
+                object=item.object,
+                text=item.text,
+                confidence=boosted_confidence,
+                importance=item.importance,
+            )
+        )
 
     return filtered
 

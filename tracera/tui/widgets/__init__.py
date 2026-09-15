@@ -13,8 +13,8 @@ from tracera.tui.widgets.agent_panel import (
     LoaderPill,
     MessageWidget,
     PhaseRow,
-    ToolRow,
     ThinkingDisclosure,
+    ToolRow,
     format_args,
 )
 from tracera.tui.widgets.dashboard import DashboardWidget

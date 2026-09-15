@@ -110,7 +110,7 @@ class StructuredMemory:
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> "StructuredMemory":
+    def from_dict(cls, d: dict) -> StructuredMemory:
         return cls(
             id=d["id"],
             memory_type=MemoryType(d["memory_type"]),
@@ -295,10 +295,11 @@ class MemoryAttribute(StructuredMemory):
 
     memory_type: MemoryType = MemoryType.ATTRIBUTE
     entity: str = ""  # what this attribute applies to
-    value: str = ""   # the attribute value
+    value: str = ""  # the attribute value
 
 
 # ── Factory helpers ────────────────────────────────────────────────────────────
+
 
 def create_fact(
     content: str,

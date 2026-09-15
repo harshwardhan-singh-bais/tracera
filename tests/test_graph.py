@@ -8,9 +8,9 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from tracera.indexer.schema import LineRange, Symbol, SymbolType
-from tracera.graph.symbol_graph import SymbolGraph
 from tracera.graph.graph_retrieval import GraphRetriever
+from tracera.graph.symbol_graph import SymbolGraph
+from tracera.indexer.schema import LineRange, Symbol, SymbolType
 from tracera.retrieval.bm25 import BM25Index
 
 
@@ -86,7 +86,14 @@ def test_graph_retriever_expansion():
 
     retriever = GraphRetriever(g, bm25)
     results = retriever.expand_with_graph(
-        [{"id": "c1", "symbol": "AuthMiddleware", "file_path": "auth.py", "content": "class AuthMiddleware"}],
+        [
+            {
+                "id": "c1",
+                "symbol": "AuthMiddleware",
+                "file_path": "auth.py",
+                "content": "class AuthMiddleware",
+            }
+        ],
         max_total=10,
     )
 
@@ -185,11 +192,11 @@ def test_bm25_reindex_is_idempotent():
 def test_code_search_tools_execute():
     """Phase 27 tools run and return structured results."""
     from tracera.tools.code_search import (
-        SearchCodeTool,
-        FindSymbolTool,
         FindReferencesTool,
-        GetDependenciesTool,
+        FindSymbolTool,
         GetContextTool,
+        GetDependenciesTool,
+        SearchCodeTool,
     )
 
     class FakeRetriever:
@@ -249,4 +256,10 @@ def test_registry_extension_with_graph():
     extend_registry_with_retrieval(registry, FakeRetriever(), None, graph_retriever)
 
     names = set(registry.names)
-    assert {"search_code", "find_symbol", "get_context", "find_references", "get_dependencies"} <= names
+    assert {
+        "search_code",
+        "find_symbol",
+        "get_context",
+        "find_references",
+        "get_dependencies",
+    } <= names

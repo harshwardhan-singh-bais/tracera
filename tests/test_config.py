@@ -1,8 +1,6 @@
 """Tests for TRACERA configuration system."""
 
 import os
-import pytest
-from pathlib import Path
 
 from tracera.config.settings import get_settings
 
@@ -17,6 +15,7 @@ def test_settings_defaults(tmp_path, monkeypatch):
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
 
     from tracera.config.settings import Settings, reset_settings
+
     reset_settings()
     s = Settings()  # type: ignore[call-arg]
 
@@ -34,6 +33,7 @@ def test_settings_env_override(tmp_path, monkeypatch):
     monkeypatch.setenv("TRACERA_DEFAULT_PROVIDER", "ollama")
 
     from tracera.config.settings import Settings, reset_settings
+
     reset_settings()
     s = Settings()  # type: ignore[call-arg]
 
@@ -45,6 +45,7 @@ def test_settings_env_override(tmp_path, monkeypatch):
 def test_settings_allowed_commands():
     """allowed_commands property splits correctly."""
     from tracera.config.settings import Settings, reset_settings
+
     reset_settings()
     s = Settings()  # type: ignore[call-arg]
     cmds = s.allowed_commands
@@ -59,6 +60,7 @@ def test_settings_ensure_dirs(tmp_path, monkeypatch):
     monkeypatch.setenv("TRACERA_DATA_DIR", str(tmp_path / ".tracera"))
 
     from tracera.config.settings import Settings, reset_settings
+
     reset_settings()
     s = Settings()  # type: ignore[call-arg]
     s.ensure_dirs()
@@ -92,6 +94,7 @@ def test_profile_selection_changes_behavior(tmp_path, monkeypatch):
             monkeypatch.delenv(var, raising=False)
 
     from tracera.config.settings import reset_settings
+
     reset_settings()
 
     # Default profile → development defaults (groq, 50 iterations, INFO).
@@ -124,6 +127,7 @@ def test_provider_api_key_mapping(monkeypatch):
     monkeypatch.setenv("MISTRAL_API_KEY", "mist-test")
 
     from tracera.config.settings import Settings, reset_settings
+
     reset_settings()
     s = Settings()  # type: ignore[call-arg]
 

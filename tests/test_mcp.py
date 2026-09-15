@@ -20,36 +20,59 @@ from tracera.mcp.server import (
     CODE_INTELLIGENCE_TOOLS,
     CONTEXT_TOOLS,
     MEMORY_TOOLS,
-    SAFETY_TOOLS,
     REPOSITORY_TOOLS,
+    SAFETY_TOOLS,
     TraceraMCPServer,
 )
 
 EXPECTED_CODE_INTELLIGENCE = {
-    "search_code", "find_symbol", "find_references", "get_context",
-    "get_dependencies", "find_importers", "get_blast_radius",
-    "get_call_hierarchy", "find_dead_code", "get_changed_symbols",
-    "get_hotspots", "search_ast", "get_class_hierarchy",
-    "get_dependency_cycles", "get_coupling_metrics", "get_endpoint_impact",
+    "search_code",
+    "find_symbol",
+    "find_references",
+    "get_context",
+    "get_dependencies",
+    "find_importers",
+    "get_blast_radius",
+    "get_call_hierarchy",
+    "find_dead_code",
+    "get_changed_symbols",
+    "get_hotspots",
+    "search_ast",
+    "get_class_hierarchy",
+    "get_dependency_cycles",
+    "get_coupling_metrics",
+    "get_endpoint_impact",
 }
 
 EXPECTED_CONTEXT = {
-    "assemble_task_context", "get_ranked_context", "plan_turn",
-    "get_session_stats", "get_repo_map",
+    "assemble_task_context",
+    "get_ranked_context",
+    "plan_turn",
+    "get_session_stats",
+    "get_repo_map",
 }
 
 EXPECTED_MEMORY = {
-    "recall_memory", "remember_memory", "forget_memory",
-    "list_sessions", "search_memory", "get_memory_graph",
+    "recall_memory",
+    "remember_memory",
+    "forget_memory",
+    "list_sessions",
+    "search_memory",
+    "get_memory_graph",
 }
 
 EXPECTED_SAFETY = {
-    "check_edit_safe", "check_delete_safe", "plan_refactoring",
-    "get_pr_risk_profile", "get_symbol_provenance", "audit_agent_config",
+    "check_edit_safe",
+    "check_delete_safe",
+    "plan_refactoring",
+    "get_pr_risk_profile",
+    "get_symbol_provenance",
+    "audit_agent_config",
 }
 
 EXPECTED_REPOSITORY = {
-    "run_tests", "inspect_repository",
+    "run_tests",
+    "inspect_repository",
 }
 
 # Diagnostic tools
@@ -71,6 +94,7 @@ ALL_EXPECTED = (
 def mcp_settings(tmp_path, monkeypatch):
     """Settings isolated in a temp workspace with no code index."""
     from tracera.config.settings import Settings
+
     monkeypatch.setenv("TRACERA_WORKSPACE", str(tmp_path))
     monkeypatch.setenv("TRACERA_DATA_DIR", str(tmp_path / ".tracera"))
     return Settings()
@@ -153,9 +177,7 @@ async def test_server_tool_schemas_are_valid(mcp_settings, tmp_path):
 async def test_server_search_code_without_index_returns_hint(mcp_settings, tmp_path):
     """No index → a clear hint, not a crash (graceful degradation)."""
     server = TraceraMCPServer(mcp_settings, tmp_path)
-    content, _ = await server.mcp.call_tool(
-        "search_code", {"query": "authentication middleware"}
-    )
+    content, _ = await server.mcp.call_tool("search_code", {"query": "authentication middleware"})
     text = content[0].text
     assert "tracera index" in text
 
@@ -171,9 +193,7 @@ async def test_server_inspect_repository(mcp_settings, tmp_path):
 
 async def test_server_run_tests(mcp_settings, tmp_path):
     """Exercises the real Phase 33 test execution path (pytest subprocess)."""
-    (tmp_path / "test_sample.py").write_text(
-        "def test_ok():\n    assert 1 == 1\n"
-    )
+    (tmp_path / "test_sample.py").write_text("def test_ok():\n    assert 1 == 1\n")
     server = TraceraMCPServer(mcp_settings, tmp_path)
     content, _ = await server.mcp.call_tool("run_tests", {})
     text = content[0].text
@@ -252,10 +272,7 @@ async def test_server_over_real_stdio_protocol(tmp_path):
             assert names == ALL_EXPECTED
 
             call = await session.call_tool("inspect_repository", {})
-            assert any(
-                "Repository:" in str(getattr(c, "text", ""))
-                for c in call.content
-            )
+            assert any("Repository:" in str(getattr(c, "text", "")) for c in call.content)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -307,9 +324,7 @@ async def test_client_interops_with_official_filesystem_server(tmp_path):
         assert "read_text_file" in names
         assert "write_file" in names
 
-        text = await client.call_tool(
-            "read_text_file", {"path": str(tmp_path / "note.txt")}
-        )
+        text = await client.call_tool("read_text_file", {"path": str(tmp_path / "note.txt")})
         assert "hello filesystem" in text
     finally:
         await client.disconnect()
@@ -355,20 +370,22 @@ async def test_unified_registry_merges_native_and_mcp_tools(mcp_settings, tmp_pa
     from tracera.tools.registry import ToolRegistry
 
     repo_root = Path(__file__).resolve().parent.parent
-    manager = MCPManager([
-        MCPServerConfig(
-            name="tracera-a",
-            command=sys.executable,
-            args=["-m", "tracera.mcp.server"],
-            cwd=str(repo_root),
-        ),
-        MCPServerConfig(
-            name="tracera-b",
-            command=sys.executable,
-            args=["-m", "tracera.mcp.server"],
-            cwd=str(repo_root),
-        ),
-    ])
+    manager = MCPManager(
+        [
+            MCPServerConfig(
+                name="tracera-a",
+                command=sys.executable,
+                args=["-m", "tracera.mcp.server"],
+                cwd=str(repo_root),
+            ),
+            MCPServerConfig(
+                name="tracera-b",
+                command=sys.executable,
+                args=["-m", "tracera.mcp.server"],
+                cwd=str(repo_root),
+            ),
+        ]
+    )
 
     registry = ToolRegistry()
 
@@ -383,10 +400,9 @@ async def test_unified_registry_merges_native_and_mcp_tools(mcp_settings, tmp_pa
         # A remote tool executes through the unified registry path while
         # the connection is live
         from tracera.workspace.sandbox import WorkspaceSandbox
+
         ws = WorkspaceSandbox(repo_root)
-        result = await registry.execute(
-            "tracera-b_inspect_repository", "mcp-call-1", {}
-        )
+        result = await registry.execute("tracera-b_inspect_repository", "mcp-call-1", {})
         assert result.success
         assert "Repository:" in result.output
 
@@ -401,6 +417,7 @@ async def test_unified_registry_merges_native_and_mcp_tools(mcp_settings, tmp_pa
 
 def test_manager_loads_config_from_file(tmp_path):
     from tracera.mcp.manager import MCPManager
+
     config_file = tmp_path / "mcp_servers.json"
     config_file.write_text(
         '[{"name": "filesystem", "command": "npx", '
@@ -417,14 +434,16 @@ async def test_attach_live_keeps_connections_open(mcp_settings, tmp_path):
     from tracera.tools.registry import ToolRegistry
 
     repo_root = Path(__file__).resolve().parent.parent
-    manager = MCPManager([
-        MCPServerConfig(
-            name="live-a",
-            command=sys.executable,
-            args=["-m", "tracera.mcp.server"],
-            cwd=str(repo_root),
-        ),
-    ])
+    manager = MCPManager(
+        [
+            MCPServerConfig(
+                name="live-a",
+                command=sys.executable,
+                args=["-m", "tracera.mcp.server"],
+                cwd=str(repo_root),
+            ),
+        ]
+    )
     registry = ToolRegistry()
 
     added = await manager.attach_live(registry)

@@ -10,18 +10,17 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Iterator
 
-from tracera.indexer.schema import CodeChunk, FileMetadata
-from tracera.indexer.scanner import RepositoryScanner
-from tracera.indexer.parser import LanguageParser
-from tracera.indexer.extractor import SymbolExtractor
-from tracera.indexer.chunker import SymbolAwareChunker
 from tracera.graph.symbol_graph import SymbolGraph
+from tracera.indexer.chunker import SymbolAwareChunker
+from tracera.indexer.extractor import SymbolExtractor
+from tracera.indexer.parser import LanguageParser
+from tracera.indexer.scanner import RepositoryScanner
+from tracera.indexer.schema import CodeChunk, FileMetadata
+from tracera.logging import get_logger
 from tracera.retrieval.bm25 import BM25Index
 from tracera.retrieval.embedder import EmbeddingPipeline
 from tracera.retrieval.vector_store import VectorStore
-from tracera.logging import get_logger
 
 log = get_logger("retrieval.incremental")
 
@@ -75,7 +74,8 @@ class IncrementalIndexer:
                 self._graph = SymbolGraph.load(self._graph_path)
                 log.info(
                     "Loaded symbol graph: %d nodes, %d edges",
-                    self._graph.node_count, self._graph.edge_count,
+                    self._graph.node_count,
+                    self._graph.edge_count,
                 )
             except Exception as e:
                 log.warning("Failed to load symbol graph (%s) — starting fresh", e)
@@ -100,20 +100,24 @@ class IncrementalIndexer:
 
     def _save_manifest(self, manifest: dict[str, str]) -> None:
         """Save complete index snapshot metadata to disk."""
-        import subprocess
         import datetime
+        import subprocess
+
         # Get git SHA
         git_sha = ""
         try:
             result = subprocess.run(
                 ["git", "rev-parse", "HEAD"],
-                cwd=str(self._workspace), capture_output=True, text=True, timeout=10
+                cwd=str(self._workspace),
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             git_sha = result.stdout.strip()
         except Exception:
             pass
         # Get parser versions
-        parser_versions = {lang: "0.1.0" for lang in self._parser.languages()}
+        parser_versions = dict.fromkeys(self._parser.languages(), "0.1.0")
         # Full snapshot metadata
         full_manifest = {
             "snapshot": {
@@ -123,9 +127,9 @@ class IncrementalIndexer:
                 "files_indexed": len(manifest),
                 "files_excluded": 0,
                 "parser_versions": parser_versions,
-                "index_version": "1.0.0"
+                "index_version": "1.0.0",
             },
-            "files": manifest
+            "files": manifest,
         }
         self._index_dir.mkdir(parents=True, exist_ok=True)
         self._manifest_path.write_text(json.dumps(full_manifest, indent=2), encoding="utf-8")
@@ -244,7 +248,12 @@ class IncrementalIndexer:
 
         # Process new + modified files
         to_index = new_files + modified_files
-        log.info("Indexing %d files (%d new, %d modified)", len(to_index), len(new_files), len(modified_files))
+        log.info(
+            "Indexing %d files (%d new, %d modified)",
+            len(to_index),
+            len(new_files),
+            len(modified_files),
+        )
 
         for fmeta in to_index:
             # Drop stale chunk ids for modified files before re-adding
@@ -262,13 +271,14 @@ class IncrementalIndexer:
         bm25_path = self._index_dir / "bm25.json"
         self._bm25.save(bm25_path)
         self._graph.save(self._graph_path)
-        self._file_chunks_path.write_text(
-            json.dumps(self._file_chunks), encoding="utf-8"
-        )
+        self._file_chunks_path.write_text(json.dumps(self._file_chunks), encoding="utf-8")
 
         log.info(
             "Indexing complete: %d new, %d modified, %d deleted, %d chunks indexed",
-            stats["new"], stats["modified"], stats["deleted"], stats["chunks_indexed"],
+            stats["new"],
+            stats["modified"],
+            stats["deleted"],
+            stats["chunks_indexed"],
         )
         return stats
 
@@ -276,17 +286,20 @@ class IncrementalIndexer:
     def check_freshness(self) -> dict[str, dict[str, str]]:
         """Return freshness state for every file in the index."""
         import subprocess
-        from datetime import datetime
+
         current_files = {f.path: f for f in self._scanner.scan()}
         old_manifest = self._load_manifest()
         old_files = old_manifest.get("files", {})
-        
+
         # Get git status to find uncommitted changes
         git_modified = set()
         try:
             result = subprocess.run(
                 ["git", "status", "--porcelain"],
-                cwd=str(self._workspace), capture_output=True, text=True, timeout=10
+                cwd=str(self._workspace),
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             for line in result.stdout.strip().split("\n"):
                 if line:
@@ -304,9 +317,15 @@ class IncrementalIndexer:
                 current_sha = current_files[path].sha256
                 if current_sha != old_sha:
                     if path in git_modified:
-                        freshness[path] = {"state": "edited_uncommitted", "reason": "File modified since last commit"}
+                        freshness[path] = {
+                            "state": "edited_uncommitted",
+                            "reason": "File modified since last commit",
+                        }
                     else:
-                        freshness[path] = {"state": "stale_index", "reason": "Filesystem SHA doesn't match index SHA"}
+                        freshness[path] = {
+                            "state": "stale_index",
+                            "reason": "Filesystem SHA doesn't match index SHA",
+                        }
                 else:
                     freshness[path] = {"state": "fresh", "reason": "Index matches filesystem"}
         return freshness

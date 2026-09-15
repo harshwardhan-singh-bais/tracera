@@ -1,6 +1,8 @@
 """TRACERA logging package."""
 
 from tracera.logging.logger import (
+    animate_banner,
+    banner_text,
     get_console,
     get_logger,
     log_agent,
@@ -10,9 +12,8 @@ from tracera.logging.logger import (
     log_plan,
     log_success,
     log_tool,
-    banner_text,
     print_banner,
-    animate_banner,
+    redirect_console_to_stderr,
     setup_logging,
 )
 
@@ -20,6 +21,7 @@ __all__ = [
     "setup_logging",
     "get_logger",
     "get_console",
+    "redirect_console_to_stderr",
     "banner_text",
     "print_banner",
     "animate_banner",

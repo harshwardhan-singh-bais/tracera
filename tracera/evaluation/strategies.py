@@ -21,9 +21,10 @@ hybrid + cross-encoder reranker (Phase 47).
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from tracera.logging import get_logger
 
@@ -52,6 +53,7 @@ class RetrievalHit:
 
 # ── Base strategy ─────────────────────────────────────────────────────────────
 
+
 class RetrievalStrategy:
     """Common base: measures and records its own latency per retrieval."""
 
@@ -78,6 +80,7 @@ class RetrievalStrategy:
 
 # ── Grep baseline (Phase 48) ──────────────────────────────────────────────────
 
+
 class GrepStrategy(RetrievalStrategy):
     """Baseline: literal grep over the workspace. Returns file hits."""
 
@@ -87,16 +90,55 @@ class GrepStrategy(RetrievalStrategy):
     #: Directories that must never be walked (vendored deps, build output,
     #: hidden dirs) — keeps the baseline fast and results meaningful.
     _SKIP_DIRS = {
-        ".git", ".venv", "venv", "env", "node_modules", "__pycache__",
-        ".tracera", ".pytest_cache", ".mypy_cache", ".ruff_cache",
-        "dist", "build", ".idea", ".vscode", "target", "site-packages",
+        ".git",
+        ".venv",
+        "venv",
+        "env",
+        "node_modules",
+        "__pycache__",
+        ".tracera",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        "dist",
+        "build",
+        ".idea",
+        ".vscode",
+        "target",
+        "site-packages",
     }
 
     _SOURCE_SUFFIXES = {
-        ".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java",
-        ".c", ".h", ".cpp", ".rb", ".php", ".swift", ".kt", ".md",
-        ".yml", ".yaml", ".json", ".toml", ".sql", ".sh", ".css",
-        ".html", ".vue", ".svelte", ".cs", ".scala", ".ex", ".exs",
+        ".py",
+        ".js",
+        ".ts",
+        ".tsx",
+        ".jsx",
+        ".go",
+        ".rs",
+        ".java",
+        ".c",
+        ".h",
+        ".cpp",
+        ".rb",
+        ".php",
+        ".swift",
+        ".kt",
+        ".md",
+        ".yml",
+        ".yaml",
+        ".json",
+        ".toml",
+        ".sql",
+        ".sh",
+        ".css",
+        ".html",
+        ".vue",
+        ".svelte",
+        ".cs",
+        ".scala",
+        ".ex",
+        ".exs",
     }
 
     def __init__(self, workspace: Path, *, search_fn: Callable | None = None) -> None:
@@ -128,8 +170,7 @@ class GrepStrategy(RetrievalStrategy):
             parts = path.parts
             # Never walk vendored deps / build output / hidden dirs — the
             # baseline would read tens of thousands of files (e.g. .venv).
-            if any(part in self._SKIP_DIRS or part.startswith(".")
-                   for part in parts[:-1]):
+            if any(part in self._SKIP_DIRS or part.startswith(".") for part in parts[:-1]):
                 continue
             if path.suffix not in self._SOURCE_SUFFIXES:
                 continue
@@ -156,6 +197,7 @@ class GrepStrategy(RetrievalStrategy):
 
 
 # ── BM25 (Phase 47) ───────────────────────────────────────────────────────────
+
 
 def build_doc_resolver(vector_store: Any) -> Callable[[str], str | None]:
     """
@@ -185,7 +227,9 @@ class BM25Strategy(RetrievalStrategy):
     name = "bm25"
     kind = "lexical"
 
-    def __init__(self, bm25: Any, *, resolve_doc: Callable[[str], str | None] | None = None) -> None:
+    def __init__(
+        self, bm25: Any, *, resolve_doc: Callable[[str], str | None] | None = None
+    ) -> None:
         super().__init__()
         self._bm25 = bm25
         self._resolve = resolve_doc or (lambda doc_id: None)
@@ -206,6 +250,7 @@ class BM25Strategy(RetrievalStrategy):
 
 
 # ── Dense (Phase 47) ──────────────────────────────────────────────────────────
+
 
 class DenseStrategy(RetrievalStrategy):
     """Dense semantic retrieval over the vector store."""
@@ -234,6 +279,7 @@ class DenseStrategy(RetrievalStrategy):
 
 # ── Hybrid (Phase 47) ─────────────────────────────────────────────────────────
 
+
 class HybridStrategy(RetrievalStrategy):
     """BM25 + Dense fused with Reciprocal Rank Fusion."""
 
@@ -261,6 +307,7 @@ class HybridStrategy(RetrievalStrategy):
 
 # ── Hybrid + reranker (Phase 47) ──────────────────────────────────────────────
 
+
 def cross_encoder_available(model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2") -> bool:
     """
     True when the cross-encoder model is already downloaded in the Hugging
@@ -269,6 +316,7 @@ def cross_encoder_available(model_name: str = "cross-encoder/ms-marco-MiniLM-L-6
     """
     try:
         from huggingface_hub.constants import HF_HUB_CACHE
+
         cache_name = model_name.replace("/", "--")
         return (Path(HF_HUB_CACHE) / f"models--{cache_name}").is_dir()
     except Exception:
@@ -305,6 +353,7 @@ class RerankedHybridStrategy(RetrievalStrategy):
 
 
 # ── Factory ───────────────────────────────────────────────────────────────────
+
 
 def build_strategies(
     *,

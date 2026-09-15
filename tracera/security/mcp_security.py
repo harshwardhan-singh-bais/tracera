@@ -20,10 +20,8 @@ prompt-injection detection before it reaches the agent context.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
 
 from tracera.logging import get_logger
 from tracera.security.injection import PromptInjectionDetector
@@ -47,10 +45,30 @@ class MCPToolPolicy(str, Enum):
 #: Tool names/substrings that mutate state and should need confirmation
 #: unless the server is fully trusted.
 DESTRUCTIVE_TOOL_HINTS = (
-    "delete", "remove", "rm", "drop", "truncate", "write", "update",
-    "create", "edit", "insert", "push", "merge", "publish", "deploy",
-    "restart", "stop", "kill", "format", "clear", "overwrite", "rename",
-    "move", "execute", "run",
+    "delete",
+    "remove",
+    "rm",
+    "drop",
+    "truncate",
+    "write",
+    "update",
+    "create",
+    "edit",
+    "insert",
+    "push",
+    "merge",
+    "publish",
+    "deploy",
+    "restart",
+    "stop",
+    "kill",
+    "format",
+    "clear",
+    "overwrite",
+    "rename",
+    "move",
+    "execute",
+    "run",
 )
 
 
@@ -88,8 +106,15 @@ def default_policy(trust: ServerTrust) -> ToolPolicyRules:
 
 #: Registry of servers known to be official / safe-ish by name.
 TRUSTED_SERVER_NAMES = {
-    "filesystem", "github", "git", "postgres", "postgresql",
-    "playwright", "brave-search", "fetch", "memory",
+    "filesystem",
+    "github",
+    "git",
+    "postgres",
+    "postgresql",
+    "playwright",
+    "brave-search",
+    "fetch",
+    "memory",
 }
 
 
@@ -143,9 +168,7 @@ class MCPSecurityManager:
             return self._default_policy
         return default_policy(self.trust_for(server_name))
 
-    def check_tool(
-        self, server_name: str, tool_name: str
-    ) -> tuple[bool, MCPToolPolicy]:
+    def check_tool(self, server_name: str, tool_name: str) -> tuple[bool, MCPToolPolicy]:
         """
         May we call *tool_name* on *server_name*?
 
@@ -172,9 +195,7 @@ class MCPSecurityManager:
         redact secrets, flag/strip prompt-injection attempts.
         """
         redacted, secret_findings = self._redactor.redact(text)
-        sanitized, injection_findings = self._detector.sanitize(
-            redacted, mode="strip"
-        )
+        sanitized, injection_findings = self._detector.sanitize(redacted, mode="strip")
         return MCPValidationResult(
             redacted=sanitized,
             secrets_found=len(secret_findings),

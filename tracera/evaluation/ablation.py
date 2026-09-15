@@ -20,14 +20,14 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from tracera.evaluation.agent_benchmark import (
     AgentBenchmark,
     AgentBenchmarkReport,
-    AgentTaskResult,
 )
 from tracera.logging import get_logger
 
@@ -35,6 +35,7 @@ log = get_logger("evaluation.ablation")
 
 
 # ── Configuration model ───────────────────────────────────────────────────────
+
 
 @dataclass
 class AblationConfig:
@@ -88,6 +89,7 @@ def default_ablation_configs() -> list[AblationConfig]:
 
 # ── Report ────────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class AblationReport:
     """Comparison of benchmark results across ablation arms."""
@@ -130,13 +132,12 @@ class AblationReport:
     def save(self, path: str | Path) -> Path:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(self.to_dict(), indent=2), encoding="utf-8"
-        )
+        path.write_text(json.dumps(self.to_dict(), indent=2), encoding="utf-8")
         return path
 
 
 # ── Framework ─────────────────────────────────────────────────────────────────
+
 
 class AblationFramework:
     """
@@ -154,7 +155,9 @@ class AblationFramework:
     def __init__(
         self,
         tasks: list[str],
-        build_agent: Callable[[AblationConfig], Awaitable[Callable[[str], Awaitable[dict[str, Any]]]]],
+        build_agent: Callable[
+            [AblationConfig], Awaitable[Callable[[str], Awaitable[dict[str, Any]]]]
+        ],
         configs: list[AblationConfig] | None = None,
         *,
         verify_tests: Callable[[], bool] | None = None,

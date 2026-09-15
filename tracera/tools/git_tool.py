@@ -8,10 +8,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from tracera.tools.base import Tool, ToolResult
-from tracera.workspace.sandbox import WorkspaceSandbox
 from tracera.git.operations import GitRepo, detect_git_repo
 from tracera.logging import get_logger
+from tracera.tools.base import Tool, ToolResult
+from tracera.workspace.sandbox import WorkspaceSandbox
 
 log = get_logger("tools.git")
 
@@ -65,7 +65,8 @@ class GitTool(Tool):
             repo = detect_git_repo(self._ws.root)
             if repo is None:
                 return ToolResult.fail(
-                    self.name, "",
+                    self.name,
+                    "",
                     f"Not a git repository: {self._ws.root}",
                     operation=operation,
                 )
@@ -82,9 +83,7 @@ class GitTool(Tool):
             log.error("git tool failed (%s): %s", operation, e)
             return ToolResult.fail(self.name, "", str(e), operation=operation)
 
-    def _run_operation(
-        self, repo: GitRepo, op: str, path: str | None, max_count: int
-    ) -> str:
+    def _run_operation(self, repo: GitRepo, op: str, path: str | None, max_count: int) -> str:
         if op == "status":
             status = repo.status()
             lines = [f"Branch: {status.branch}"]
@@ -106,8 +105,7 @@ class GitTool(Tool):
                 return "No changes."
             return (
                 f"{diff.files_changed} file(s) changed, "
-                f"+{diff.insertions} / -{diff.deletions}\n\n"
-                + diff.diff_text[:4000]
+                f"+{diff.insertions} / -{diff.deletions}\n\n" + diff.diff_text[:4000]
             )
 
         if op == "log":

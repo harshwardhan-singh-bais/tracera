@@ -46,10 +46,7 @@ class WorkspaceLifecycle:
 
     def status(self) -> dict[str, bool]:
         """Return a dict of required dirs and whether they exist."""
-        return {
-            subdir: (self.data_dir / subdir).exists()
-            for subdir in self.REQUIRED_DIRS
-        }
+        return {subdir: (self.data_dir / subdir).exists() for subdir in self.REQUIRED_DIRS}
 
     def clean(self, *, confirm: bool = False) -> None:
         """
@@ -59,6 +56,7 @@ class WorkspaceLifecycle:
         if not confirm:
             raise ValueError("Pass confirm=True to clean workspace data.")
         import shutil
+
         for subdir in ["index", "cache"]:
             target = self.data_dir / subdir
             if target.exists():

@@ -7,15 +7,12 @@ and feature status grid on startup.
 
 from __future__ import annotations
 
-from pathlib import Path
-
+from rich.text import Text
 from textual.app import ComposeResult
+from textual.containers import Vertical
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Static
-from textual.containers import Horizontal, Vertical
-
-from rich.text import Text
 
 
 class DashboardWidget(Widget):

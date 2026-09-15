@@ -21,8 +21,11 @@ class _StreamingProvider:
     async def complete(self, messages, **kwargs):
         self.complete_calls += 1
         return LLMResponse(
-            content=self.complete_text, tool_calls=None,
-            usage=TokenUsage(), model=self.default_model, finish_reason="stop",
+            content=self.complete_text,
+            tool_calls=None,
+            usage=TokenUsage(),
+            model=self.default_model,
+            finish_reason="stop",
         )
 
     async def stream(self, messages, **kwargs):
@@ -131,7 +134,9 @@ async def test_streaming_tool_calls_are_collected():
                 yield StreamEvent(
                     type="tool_call_complete",
                     tool_call=ToolCallRequest(
-                        id="call-1", name="read_file", arguments={"path": "a.py"},
+                        id="call-1",
+                        name="read_file",
+                        arguments={"path": "a.py"},
                     ),
                 )
             else:

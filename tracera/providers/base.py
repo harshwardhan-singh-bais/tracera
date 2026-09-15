@@ -8,13 +8,13 @@ Every provider adapter must implement this interface.
 from __future__ import annotations
 
 import abc
-import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, AsyncIterator, Literal
-
+from typing import Any, Literal
 
 # ── Message types ─────────────────────────────────────────────────────────────
+
 
 class Role(str, Enum):
     SYSTEM = "system"
@@ -26,6 +26,7 @@ class Role(str, Enum):
 @dataclass
 class ToolCallRequest:
     """A single tool call requested by the LLM."""
+
     id: str
     name: str
     arguments: dict[str, Any]
@@ -37,33 +38,32 @@ class LLMMessage:
     A single message in the conversation.
     Supports all roles including tool calls and tool results.
     """
+
     role: Role
     content: str | None = None
-    tool_calls: list[ToolCallRequest] | None = None   # for assistant → tool
-    tool_call_id: str | None = None                   # for tool → assistant
-    tool_name: str | None = None                      # for tool results
-    name: str | None = None                           # optional display name
+    tool_calls: list[ToolCallRequest] | None = None  # for assistant → tool
+    tool_call_id: str | None = None  # for tool → assistant
+    tool_name: str | None = None  # for tool results
+    name: str | None = None  # optional display name
 
     @classmethod
-    def system(cls, content: str) -> "LLMMessage":
+    def system(cls, content: str) -> LLMMessage:
         return cls(role=Role.SYSTEM, content=content)
 
     @classmethod
-    def user(cls, content: str) -> "LLMMessage":
+    def user(cls, content: str) -> LLMMessage:
         return cls(role=Role.USER, content=content)
 
     @classmethod
-    def assistant(cls, content: str) -> "LLMMessage":
+    def assistant(cls, content: str) -> LLMMessage:
         return cls(role=Role.ASSISTANT, content=content)
 
     @classmethod
-    def assistant_tool_calls(cls, tool_calls: list[ToolCallRequest]) -> "LLMMessage":
+    def assistant_tool_calls(cls, tool_calls: list[ToolCallRequest]) -> LLMMessage:
         return cls(role=Role.ASSISTANT, content=None, tool_calls=tool_calls)
 
     @classmethod
-    def tool_result(
-        cls, tool_call_id: str, tool_name: str, content: str
-    ) -> "LLMMessage":
+    def tool_result(cls, tool_call_id: str, tool_name: str, content: str) -> LLMMessage:
         return cls(
             role=Role.TOOL,
             content=content,
@@ -81,6 +81,7 @@ class LLMMessage:
 
 # ── Response types ────────────────────────────────────────────────────────────
 
+
 @dataclass
 class TokenUsage:
     prompt_tokens: int = 0
@@ -97,6 +98,7 @@ class TokenUsage:
 @dataclass
 class LLMResponse:
     """The complete response from an LLM call."""
+
     content: str | None
     tool_calls: list[ToolCallRequest] | None
     usage: TokenUsage
@@ -122,9 +124,11 @@ class LLMResponse:
 
 # ── Streaming events ──────────────────────────────────────────────────────────
 
+
 @dataclass
 class StreamEvent:
     """A single event in a streaming LLM response."""
+
     type: Literal["text_delta", "tool_call_delta", "tool_call_complete", "usage", "done"]
     text: str | None = None
     tool_call: ToolCallRequest | None = None
@@ -133,12 +137,14 @@ class StreamEvent:
 
 # ── Tool schema for LLM ───────────────────────────────────────────────────────
 
+
 @dataclass
 class ToolSchema:
     """JSON schema representation of a tool for LLM function calling."""
+
     name: str
     description: str
-    parameters: dict[str, Any]   # JSON Schema object
+    parameters: dict[str, Any]  # JSON Schema object
 
     def to_openai_dict(self) -> dict[str, Any]:
         return {
@@ -166,6 +172,7 @@ class ToolSchema:
 
 
 # ── Provider interface ────────────────────────────────────────────────────────
+
 
 class LLMProvider(abc.ABC):
     """
@@ -222,9 +229,7 @@ class LLMProvider(abc.ABC):
         """
         yield StreamEvent(type="done")  # satisfies type checker
 
-    async def count_tokens(
-        self, messages: list[LLMMessage], *, model: str | None = None
-    ) -> int:
+    async def count_tokens(self, messages: list[LLMMessage], *, model: str | None = None) -> int:
         """
         Estimate token count for the given messages.
         Default implementation uses a rough char-based heuristic.

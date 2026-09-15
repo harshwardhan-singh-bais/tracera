@@ -38,14 +38,29 @@ SECRET_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "aws_access_key"),
     (re.compile(r"\beyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\b"), "jwt_token"),
     (re.compile(r"\b-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----"), "private_key"),
-    (re.compile(r"(?i)\b(?:api[_-]?key|secret|token|password|passwd)\b\s*[=:]\s*['\"]?[A-Za-z0-9_\-./+]{8,}['\"]?"), "key_value_pair"),
+    (
+        re.compile(
+            r"(?i)\b(?:api[_-]?key|secret|token|password|passwd)\b\s*[=:]\s*['\"]?[A-Za-z0-9_\-./+]{8,}['\"]?"
+        ),
+        "key_value_pair",
+    ),
 ]
 
 #: File names that are almost certainly secret-bearing.
 SECRET_FILENAMES = {
-    ".env", ".env.local", ".env.production", ".env.development",
-    "id_rsa", "id_ed25519", "credentials.json", "service-account.json",
-    "secrets.yaml", "secrets.yml", "vault", "id_rsa.pub", "known_hosts",
+    ".env",
+    ".env.local",
+    ".env.production",
+    ".env.development",
+    "id_rsa",
+    "id_ed25519",
+    "credentials.json",
+    "service-account.json",
+    "secrets.yaml",
+    "secrets.yml",
+    "vault",
+    "id_rsa.pub",
+    "known_hosts",
 }
 
 

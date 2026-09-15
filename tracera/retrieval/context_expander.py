@@ -9,9 +9,9 @@ This makes the agent context richer without the user having to ask explicitly.
 
 from __future__ import annotations
 
+from tracera.logging import get_logger
 from tracera.retrieval.bm25 import BM25Index
 from tracera.retrieval.vector_store import VectorStore
-from tracera.logging import get_logger
 
 log = get_logger("retrieval.context_expander")
 
@@ -61,13 +61,15 @@ class ContextExpander:
                 for doc_id, score in parent_hits:
                     if doc_id not in seen_ids and score > 0.1:
                         text = self._bm25.get_document(doc_id) or ""
-                        additional.append({
-                            "id": doc_id,
-                            "content": text,
-                            "file_path": file_path,
-                            "_expansion_reason": f"parent class of {symbol}",
-                            "_final_score": 0.0,
-                        })
+                        additional.append(
+                            {
+                                "id": doc_id,
+                                "content": text,
+                                "file_path": file_path,
+                                "_expansion_reason": f"parent class of {symbol}",
+                                "_final_score": 0.0,
+                            }
+                        )
                         seen_ids.add(doc_id)
                         break
 
@@ -78,18 +80,21 @@ class ContextExpander:
                 if doc_id not in seen_ids and score > 0.1:
                     text = self._bm25.get_document(doc_id) or ""
                     if "import" in text[:100]:
-                        additional.append({
-                            "id": doc_id,
-                            "content": text,
-                            "file_path": file_path,
-                            "_expansion_reason": f"imports referencing {symbol}",
-                            "_final_score": 0.0,
-                        })
+                        additional.append(
+                            {
+                                "id": doc_id,
+                                "content": text,
+                                "file_path": file_path,
+                                "_expansion_reason": f"imports referencing {symbol}",
+                                "_final_score": 0.0,
+                            }
+                        )
                         seen_ids.add(doc_id)
                         break
 
         log.debug(
             "Context expansion: %d base → +%d additional chunks",
-            len(base_results), len(additional),
+            len(base_results),
+            len(additional),
         )
         return base_results + additional

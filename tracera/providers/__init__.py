@@ -15,6 +15,8 @@ Fallback order (when auto-selecting):
 
 from __future__ import annotations
 
+from tracera.errors import MissingAPIKeyError, ProviderNotFoundError
+from tracera.logging import get_logger
 from tracera.providers.base import (
     LLMMessage,
     LLMProvider,
@@ -25,11 +27,9 @@ from tracera.providers.base import (
     ToolCallRequest,
     ToolSchema,
 )
-from tracera.providers.openai_provider import OpenAIProvider
 from tracera.providers.nemotron_provider import NemotronProvider
 from tracera.providers.ollama_provider import OllamaProvider
-from tracera.errors import MissingAPIKeyError, ProviderNotFoundError
-from tracera.logging import get_logger
+from tracera.providers.openai_provider import OpenAIProvider
 
 log = get_logger("providers")
 
@@ -41,32 +41,52 @@ _FALLBACK_ORDER = [
     # NOTE: default models below were verified against live accounts in 2026;
     # some classic IDs (llama-3.3-70b-versatile, meta-llama/llama-3.1-405b-
     # instruct, nvidia/llama-3.1-nemotron-70b-instruct) are no longer served.
-    ("groq",       "groq_api_key",       "https://api.groq.com/openai/v1",                          "openai/gpt-oss-120b"),
-    ("openai",     "openai_api_key",     "https://api.openai.com/v1",                              "gpt-4o"),
-    ("cerebras",   "cerebras_api_key",   "https://api.cerebras.ai/v1",                              "gpt-oss-120b"),
-    ("nvidia",     "nvidia_api_key",     "https://integrate.api.nvidia.com/v1",                     "meta/llama-3.1-8b-instruct"),
-    ("sambanova",  "sambanova_api_key",  "https://api.sambanova.ai/v1",                             "Meta-Llama-3.1-70B-Instruct"),
-    ("mistral",    "mistral_api_key",    "https://api.mistral.ai/v1",                               "mistral-large-latest"),
-    ("openrouter", "openrouter_api_key", "https://openrouter.ai/api/v1",                            "meta-llama/llama-3.3-70b-instruct"),
-    ("anthropic",  "anthropic_api_key",  "https://api.anthropic.com/v1",                             "claude-3-5-sonnet-latest"),
-    ("gemini",     "google_api_key",     "https://generativelanguage.googleapis.com/v1beta/openai/", "gemini-2.5-pro"),
-    ("ollama",     None,                 None,                                                       "llama3.2"),
+    ("groq", "groq_api_key", "https://api.groq.com/openai/v1", "openai/gpt-oss-120b"),
+    ("openai", "openai_api_key", "https://api.openai.com/v1", "gpt-4o"),
+    ("cerebras", "cerebras_api_key", "https://api.cerebras.ai/v1", "gpt-oss-120b"),
+    (
+        "nvidia",
+        "nvidia_api_key",
+        "https://integrate.api.nvidia.com/v1",
+        "meta/llama-3.1-8b-instruct",
+    ),
+    (
+        "sambanova",
+        "sambanova_api_key",
+        "https://api.sambanova.ai/v1",
+        "Meta-Llama-3.1-70B-Instruct",
+    ),
+    ("mistral", "mistral_api_key", "https://api.mistral.ai/v1", "mistral-large-latest"),
+    (
+        "openrouter",
+        "openrouter_api_key",
+        "https://openrouter.ai/api/v1",
+        "meta-llama/llama-3.3-70b-instruct",
+    ),
+    ("anthropic", "anthropic_api_key", "https://api.anthropic.com/v1", "claude-3-5-sonnet-latest"),
+    (
+        "gemini",
+        "google_api_key",
+        "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "gemini-2.5-pro",
+    ),
+    ("ollama", None, None, "llama3.2"),
 ]
 
 # Per-provider recommended models (used when TRACERA_DEFAULT_MODEL is not set per-provider)
 _PROVIDER_MODELS: dict[str, str] = {
-    "openai":     "gpt-4o",
-    "anthropic":  "claude-3-5-sonnet-latest",
-    "gemini":     "gemini-2.5-pro",
-    "groq":       "openai/gpt-oss-120b",
-    "cerebras":   "gpt-oss-120b",
-    "nvidia":     "meta/llama-3.1-8b-instruct",
-    "nemotron":   "nvidia/nemotron-3-ultra-550b-a55b",
-    "sambanova":  "Meta-Llama-3.1-70B-Instruct",
-    "mistral":    "mistral-large-latest",
+    "openai": "gpt-4o",
+    "anthropic": "claude-3-5-sonnet-latest",
+    "gemini": "gemini-2.5-pro",
+    "groq": "openai/gpt-oss-120b",
+    "cerebras": "gpt-oss-120b",
+    "nvidia": "meta/llama-3.1-8b-instruct",
+    "nemotron": "nvidia/nemotron-3-ultra-550b-a55b",
+    "sambanova": "Meta-Llama-3.1-70B-Instruct",
+    "mistral": "mistral-large-latest",
     "openrouter": "meta-llama/llama-3.3-70b-instruct",
-    "together":   "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
-    "ollama":     "llama3.2",
+    "together": "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
+    "ollama": "llama3.2",
 }
 
 
@@ -99,6 +119,7 @@ def create_provider(
     """
     if settings is None:
         from tracera.config import get_settings
+
         settings = get_settings()
 
     provider_name = (name or settings.tracera_default_provider).lower()
@@ -122,6 +143,7 @@ def _auto_select_provider(settings, model: str | None = None) -> LLMProvider:
         if key_attr is None:
             log.info("Auto-selected provider: ollama (local, no key required)")
             from tracera.config import get_settings
+
             s = settings
             return OllamaProvider(
                 base_url=f"{s.ollama_base_url}/v1",
@@ -294,6 +316,7 @@ def list_available_providers(settings=None) -> list[dict]:
     """
     if settings is None:
         from tracera.config import get_settings
+
         settings = get_settings()
 
     result = []
@@ -302,13 +325,15 @@ def list_available_providers(settings=None) -> list[dict]:
             key_attr is None  # Ollama needs no key
             or bool(getattr(settings, key_attr, None))
         )
-        result.append({
-            "rank": rank,
-            "name": pname,
-            "available": available,
-            "key_env": key_attr.upper() if key_attr else "none",
-            "model": _PROVIDER_MODELS.get(pname, default_model),
-        })
+        result.append(
+            {
+                "rank": rank,
+                "name": pname,
+                "available": available,
+                "key_env": key_attr.upper() if key_attr else "none",
+                "model": _PROVIDER_MODELS.get(pname, default_model),
+            }
+        )
     return result
 
 

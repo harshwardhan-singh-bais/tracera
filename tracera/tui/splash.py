@@ -22,7 +22,7 @@ from __future__ import annotations
 import os
 import random
 import time
-from typing import Callable
+from collections.abc import Callable
 
 from rich.text import Text
 from textual import events
@@ -47,10 +47,10 @@ class SplashConfig:
     def __init__(
         self,
         *,
-        duration: float = 1.5,        # total resolve time
-        tick_rate: float = 1 / 30,    # ~30 fps
-        front_width: float = 7.0,     # soft wipe front, in columns
-        flicker_chance: float = 0.18, # per-cell flicker chance behind the front
+        duration: float = 1.5,  # total resolve time
+        tick_rate: float = 1 / 30,  # ~30 fps
+        front_width: float = 7.0,  # soft wipe front, in columns
+        flicker_chance: float = 0.18,  # per-cell flicker chance behind the front
         subtitle_hold: float = 0.55,  # pause after the subtitle appears
     ) -> None:
         self.duration = duration
@@ -127,9 +127,13 @@ class SplashScreen(Screen):
         self._resolve_at: list[list[float]] = [
             [
                 start
-                + max(0.0, (c / max(1, self._width - 1)) * self.cfg.duration
-                      + self._rng.uniform(-0.35, 0.35) * jitter_scale)
-                if self._grid[r][c] != " " else 0.0
+                + max(
+                    0.0,
+                    (c / max(1, self._width - 1)) * self.cfg.duration
+                    + self._rng.uniform(-0.35, 0.35) * jitter_scale,
+                )
+                if self._grid[r][c] != " "
+                else 0.0
                 for c in range(self._width)
             ]
             for r in range(self._rows)
@@ -173,7 +177,10 @@ class SplashScreen(Screen):
                     self._current[r][c] = self._grid[r][c]
                 else:
                     all_done = False
-                    if resolve_at - now < near_front and self._rng.random() < self.cfg.flicker_chance:
+                    if (
+                        resolve_at - now < near_front
+                        and self._rng.random() < self.cfg.flicker_chance
+                    ):
                         # Flicker: briefly show the real glyph before locking.
                         self._current[r][c] = self._grid[r][c]
                     else:

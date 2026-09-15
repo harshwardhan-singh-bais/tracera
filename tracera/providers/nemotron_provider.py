@@ -7,16 +7,15 @@ required by NVIDIA's Nemotron reasoning models.
 
 from __future__ import annotations
 
-from typing import Any, AsyncIterator
+from typing import Any
 
+from tracera.logging import get_logger
 from tracera.providers.base import (
     LLMMessage,
     LLMResponse,
-    StreamEvent,
     ToolSchema,
 )
 from tracera.providers.openai_provider import OpenAIProvider
-from tracera.logging import get_logger
 
 log = get_logger("providers.nemotron")
 
@@ -46,7 +45,9 @@ class NemotronProvider(OpenAIProvider):
             provider_name="nemotron",
         )
         self._reasoning_budget = reasoning_budget
-        log.debug("NemotronProvider initialised: model=%s budget=%d", default_model, reasoning_budget)
+        log.debug(
+            "NemotronProvider initialised: model=%s budget=%d", default_model, reasoning_budget
+        )
 
     def _extra_body(self) -> dict:
         return {
@@ -64,11 +65,11 @@ class NemotronProvider(OpenAIProvider):
         tools: list[ToolSchema] | None = None,
         system: str | None = None,
     ) -> LLMResponse:
-        import openai
-        import json
         import time
 
-        from tracera.errors import ProviderAuthError, ProviderRateLimitError, ProviderError
+        import openai
+
+        from tracera.errors import ProviderAuthError, ProviderError, ProviderRateLimitError
         from tracera.providers.base import TokenUsage
 
         model_id = model or self._default_model
@@ -110,6 +111,7 @@ class NemotronProvider(OpenAIProvider):
         )
 
         from tracera.providers.base import LLMResponse
+
         return LLMResponse(
             content=choice.message.content,
             tool_calls=tool_calls,

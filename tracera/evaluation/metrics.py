@@ -16,7 +16,7 @@ Relevance is binary: a result is either in the ground truth or it isn't.
 from __future__ import annotations
 
 import math
-from typing import Iterable
+from collections.abc import Iterable
 
 
 def is_relevant(hit: object, ground_truth: Iterable[str]) -> bool:

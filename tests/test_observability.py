@@ -7,8 +7,17 @@ from tracera.observability.telemetry import Telemetry
 def test_telemetry_records_llm_calls():
     reset_telemetry()
     t = get_telemetry()
-    t.record_llm(provider="groq", model="x", prompt_tokens=500, completion_tokens=250, latency_ms=100.0)
-    t.record_llm(provider="groq", model="x", prompt_tokens=100, completion_tokens=50, latency_ms=50.0, error=True)
+    t.record_llm(
+        provider="groq", model="x", prompt_tokens=500, completion_tokens=250, latency_ms=100.0
+    )
+    t.record_llm(
+        provider="groq",
+        model="x",
+        prompt_tokens=100,
+        completion_tokens=50,
+        latency_ms=50.0,
+        error=True,
+    )
 
     snap = t.snapshot()
     llm = snap["llm"]

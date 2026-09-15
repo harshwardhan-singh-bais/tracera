@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import hashlib
 import os
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 import pathspec
 
@@ -48,8 +48,16 @@ class RepositoryScanner:
             "*.exe",
             "*.bin",
             ".DS_Store",
-            "*.jpg", "*.jpeg", "*.png", "*.gif", "*.ico",
-            "*.pdf", "*.mp3", "*.mp4", "*.zip", "*.tar.gz",
+            "*.jpg",
+            "*.jpeg",
+            "*.png",
+            "*.gif",
+            "*.ico",
+            "*.pdf",
+            "*.mp3",
+            "*.mp4",
+            "*.zip",
+            "*.tar.gz",
         ]
 
         gitignore_path = self.workspace_root / ".gitignore"
@@ -60,9 +68,7 @@ class RepositoryScanner:
             except Exception as e:
                 log.warning("Failed to read .gitignore: %s", e)
 
-        return pathspec.PathSpec.from_lines(
-            "gitignore", patterns
-        )
+        return pathspec.PathSpec.from_lines("gitignore", patterns)
 
     def _is_binary(self, filepath: Path) -> bool:
         """Heuristic check for binary files by scanning first 1024 bytes for nulls."""
@@ -109,16 +115,15 @@ class RepositoryScanner:
         """
         for root, dirs, files in os.walk(self.workspace_root):
             root_path = Path(root)
-            
+
             # Filter directories based on gitignore
             rel_root = root_path.relative_to(self.workspace_root)
-            
+
             # Remove ignored directories in-place to prevent os.walk from descending
             dirs[:] = [
-                d for d in dirs
-                if not self._gitignore_spec.match_file(
-                    (rel_root / d).as_posix() + "/"
-                )
+                d
+                for d in dirs
+                if not self._gitignore_spec.match_file((rel_root / d).as_posix() + "/")
             ]
 
             for file in files:

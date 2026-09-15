@@ -1,7 +1,5 @@
 """Tests for the v3 TUI layer: diff summaries and normalized phase events."""
 
-import pytest
-
 from tracera.agent.react_loop import AGENT_PHASES, AgentEventType, ReActAgent
 from tracera.providers.base import (
     LLMResponse,
@@ -18,8 +16,8 @@ from tracera.tui.diffutil import (
     is_image,
 )
 
-
 # ── diffutil ──────────────────────────────────────────────────────────────────
+
 
 class TestComputeDiff:
     def test_insert_only(self):
@@ -68,6 +66,7 @@ class TestHelpers:
 
 # ── Phase events from the agent loop ──────────────────────────────────────────
 
+
 class _StubTool(Tool):
     name = "read_file"
     description = "Read a file"
@@ -95,9 +94,7 @@ class _ToolCallingProvider:
         if self.calls == 1:
             return LLMResponse(
                 content=None,
-                tool_calls=[
-                    ToolCallRequest(id="t1", name="read_file", arguments={"path": "a.py"})
-                ],
+                tool_calls=[ToolCallRequest(id="t1", name="read_file", arguments={"path": "a.py"})],
                 usage=TokenUsage(),
                 model=self.default_model,
                 finish_reason="tool_calls",
@@ -146,9 +143,7 @@ class TestPhaseEvents:
                     finish_reason="stop",
                 )
 
-        agent = ReActAgent(
-            provider=_TextOnly(), registry=ToolRegistry(), streaming=False
-        )
+        agent = ReActAgent(provider=_TextOnly(), registry=ToolRegistry(), streaming=False)
         phases = await _collect_phases(agent)
         assert phases == ["planning", "thinking", "generating"]
 

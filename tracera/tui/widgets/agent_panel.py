@@ -39,18 +39,16 @@ from pygments.token import (
     Number,
     Operator,
     String,
-    Token,
 )
 from pygments.util import ClassNotFound
 from rich.markup import escape
 from rich.style import Style
+from rich.text import Text
 from textual.app import ComposeResult
-from textual.binding import Binding
+from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Static
-from textual.containers import Horizontal, Vertical, ScrollableContainer
-from rich.text import Text
 
 from tracera.tui.diffutil import is_image
 from tracera.tui.theme import get_theme
@@ -61,7 +59,17 @@ from tracera.tui.widgets.command_registry import SLASH_COMMANDS
 _SPINNERS = {
     "thinking": ["◐", "◓", "◑", "◒"],  # Smooth circle rotation
     "running": ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],  # Classic braille
-    "loading": ["▰▱▱▱▱", "▰▰▱▱▱", "▰▰▰▱▱", "▰▰▰▰▱", "▰▰▰▰▰", "▱▰▰▰▰", "▱▱▰▰▰", "▱▱▱▰▰", "▱▱▱▱▰"],  # Progress wave
+    "loading": [
+        "▰▱▱▱▱",
+        "▰▰▱▱▱",
+        "▰▰▰▱▱",
+        "▰▰▰▰▱",
+        "▰▰▰▰▰",
+        "▱▰▰▰▰",
+        "▱▱▰▰▰",
+        "▱▱▱▰▰",
+        "▱▱▱▱▰",
+    ],  # Progress wave
     "pulse": ["●", "○", "◎", "◉", "●", "○", "◎", "◉"],  # Pulsing effect
     "wave": ["⎽", "⎼", "⎻", "⎺", "⎼", "⎻"],  # Vertical wave
     "diamond": ["◇", "◆", "◇", "◆"],  # Blinking diamond
@@ -90,6 +98,7 @@ def format_args(args: dict) -> str:
 
 
 # ── Message bubbles ──────────────────────────────────────────────────────────
+
 
 class MessageWidget(Static):
     """A single message bubble in the stream.
@@ -213,23 +222,24 @@ class ThinkingDisclosure(Widget):
 
 # ── Phase marker rows (full agent-loop visualization) ────────────────────────
 
+
 class PhaseRow(Static):
     """A premium phase marker with dynamic spinner selection based on phase:
 
-        ◐ Planning     ← active (animated circle)
-        ◇ Planning     ← superseded by the next phase (dim)
+    ◐ Planning     ← active (animated circle)
+    ◇ Planning     ← superseded by the next phase (dim)
     """
 
     # Map phases to appropriate spinners — color resolved per render so the
     # theme preset applies live.
     _PHASE_CONFIG = {
-        "planning": "thinking",   # Circle rotation - planning
-        "thinking": "pulse",      # Pulsing - thinking
-        "searching": "running",   # Classic - searching
-        "indexing": "loading",    # Progress wave - indexing
-        "running": "blocks",      # Filling block - executing
-        "generating": "wave",     # Vertical wave - generating
-        "writing": "arrows",      # Spinning arrows - writing
+        "planning": "thinking",  # Circle rotation - planning
+        "thinking": "pulse",  # Pulsing - thinking
+        "searching": "running",  # Classic - searching
+        "indexing": "loading",  # Progress wave - indexing
+        "running": "blocks",  # Filling block - executing
+        "generating": "wave",  # Vertical wave - generating
+        "writing": "arrows",  # Spinning arrows - writing
     }
 
     def __init__(self, label: str, phase_type: str = "thinking", **kwargs) -> None:
@@ -489,7 +499,7 @@ class ToolRow(Static):
     def render(self) -> Text:
         text = Text()
         tool_color = self._get_tool_color()
-        
+
         if self._spinning:
             text.append(f" {self._spinner[self._frame]} ", style=f"bold {tool_color}")
             text.append(self.tool_name, style=f"bold {tool_color}")
@@ -544,6 +554,7 @@ class ToolRow(Static):
 
 
 # ── Collapsible info rows (memory / search / repo / debug / plan) ─────────────
+
 
 class CollapsibleRow(Widget):
     """
@@ -630,6 +641,7 @@ class CollapsibleRow(Widget):
 
 # ── Attachment chips ─────────────────────────────────────────────────────────
 
+
 class AttachmentChip(Static):
     """A removable chip for an attached file, shown above the input pill."""
 
@@ -682,14 +694,14 @@ class LoaderPill(Widget):
     # Phase configurations for the loader pill — color resolved live from
     # the active theme (accent for working phases, success for done).
     _LOADER_PHASES = {
-        "planning":   ("◐", "accent", "Planning…"),
-        "thinking":   ("◉", "accent", "Thinking…"),
-        "searching":  ("⠋", "accent", "Searching…"),
-        "indexing":   ("▰▱▱▱▱", "accent", "Indexing…"),
-        "running":    ("█", "accent", "Running…"),
+        "planning": ("◐", "accent", "Planning…"),
+        "thinking": ("◉", "accent", "Thinking…"),
+        "searching": ("⠋", "accent", "Searching…"),
+        "indexing": ("▰▱▱▱▱", "accent", "Indexing…"),
+        "running": ("█", "accent", "Running…"),
         "generating": ("⎽", "accent", "Generating…"),
-        "writing":    ("→", "accent", "Writing…"),
-        "done":       ("✓", "success", "Done"),
+        "writing": ("→", "accent", "Writing…"),
+        "done": ("✓", "success", "Done"),
     }
 
     def __init__(self, **kwargs) -> None:
@@ -714,7 +726,7 @@ class LoaderPill(Widget):
             # Update label and get the widget to apply color
             label_widget = self.query_one("#loader-label", Static)
             label_widget.update(label)
-            
+
             # Update icon widget
             icon_widget = self.query_one("#loader-icon", Static)
             icon_widget.update(icon)
@@ -740,12 +752,12 @@ class LoaderPill(Widget):
 # ── Inline status line (thin, above the input) ───────────────────────────────
 
 _STATE_GLYPHS = {
-    "idle":     ("○", "faint"),
-    "active":   ("●", "success"),
+    "idle": ("○", "faint"),
+    "active": ("●", "success"),
     "thinking": ("◉", "accent"),
-    "running":  ("◉", "accent"),
-    "done":     ("●", "success"),
-    "error":    ("●", "error"),
+    "running": ("◉", "accent"),
+    "done": ("●", "success"),
+    "error": ("●", "error"),
 }
 
 
@@ -759,12 +771,12 @@ class InlineStatus(Static):
 
     # Feature status indicators → theme color keys
     _FEATURES = {
-        "memory":    ("mem",  "accent"),
-        "retrieval": ("ret",  "accent"),
-        "rag":       ("rag",  "accent"),
-        "mcp":       ("mcp",  "accent"),
-        "index":     ("idx",  "accent"),
-        "sandbox":   ("sbx",  "accent"),
+        "memory": ("mem", "accent"),
+        "retrieval": ("ret", "accent"),
+        "rag": ("rag", "accent"),
+        "mcp": ("mcp", "accent"),
+        "index": ("idx", "accent"),
+        "sandbox": ("sbx", "accent"),
     }
 
     def __init__(self, **kwargs) -> None:
@@ -826,9 +838,7 @@ class InlineStatus(Static):
         """Enhanced stats with more metrics."""
         if state is not None:
             self._state = state
-            self._started_at = (
-                time.time() if state in ("thinking", "running", "active") else None
-            )
+            self._started_at = time.time() if state in ("thinking", "running", "active") else None
         if session is not None:
             self._session = session
         if model is not None:
@@ -956,6 +966,7 @@ class InlineStatus(Static):
 
 # ── The stream panel ─────────────────────────────────────────────────────────
 
+
 class AgentPanel(Widget):
     """
     The single main panel: conversation stream + status + loader/input.
@@ -1017,14 +1028,12 @@ class AgentPanel(Widget):
                 id="input-hints",
             )
 
-    def on_command_input_submit(self, event: "CommandInput.Submit") -> None:
+    def on_command_input_submit(self, event: CommandInput.Submit) -> None:
         text = event.text.strip()
         if text:
             self.post_message(self.SubmitTask(text))
 
-    def on_command_input_suggestions_changed(
-        self, event: "CommandInput.SuggestionsChanged"
-    ) -> None:
+    def on_command_input_suggestions_changed(self, event: CommandInput.SuggestionsChanged) -> None:
         """Render the live slash-command autocomplete list above the prompt."""
         try:
             widget = self.query_one("#suggestion-list", Static)
@@ -1048,7 +1057,7 @@ class AgentPanel(Widget):
         """Set feature status indicator in the status line."""
         status_line = self.query_one("#status-line", InlineStatus)
         status_line.set_feature_status(feature, active)
-        
+
     def update_system_metrics(self, **kwargs) -> None:
         """Update system metrics in status line."""
         status_line = self.query_one("#status-line", InlineStatus)
@@ -1124,6 +1133,7 @@ class AgentPanel(Widget):
         only, or pre-render the styled parts via add_assistant_message.
         """
         import asyncio
+
         stream = self._stream()
         widget = MessageWidget("assistant", "")
         stream.mount(widget)

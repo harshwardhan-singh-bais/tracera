@@ -14,17 +14,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from tracera.tools.test_runner import TestFailure, TestReport, TestRunner
 from tracera.logging import get_logger
+from tracera.tools.test_runner import TestFailure, TestReport, TestRunner
 
 log = get_logger("agent.autonomous")
 
 
 # ── Phase 35: Retrieval-Driven Debugging ─────────────────────────────────────
 
+
 @dataclass
 class DebugPlan:
     """A plan for fixing a specific test failure."""
+
     failure: TestFailure
     retrieved_context: str
     hypothesis: str = ""
@@ -80,9 +82,11 @@ class RetrievalDebugger:
 
 # ── Phase 36: Autonomous Fix Loop ────────────────────────────────────────────
 
+
 @dataclass
 class FixAttempt:
     """Record of a single fix attempt."""
+
     iteration: int
     test_report: TestReport
     success: bool
@@ -92,6 +96,7 @@ class FixAttempt:
 @dataclass
 class AutonomousFixResult:
     """Result of running the full autonomous fix loop."""
+
     task: str
     attempts: list[FixAttempt] = field(default_factory=list)
     final_success: bool = False
@@ -208,6 +213,7 @@ class AutonomousFixLoop:
 
 # ── Phase 37: Self-Review ─────────────────────────────────────────────────────
 
+
 class SelfReviewer:
     """
     Phase 37: After implementation, runs an independent review of the changes.
@@ -226,7 +232,8 @@ class SelfReviewer:
             result = subprocess.run(
                 ["git", "diff", "HEAD"],
                 cwd=str(self._workspace),
-                capture_output=True, text=True,
+                capture_output=True,
+                text=True,
             )
             return result.stdout[:8000]  # Limit diff size
         except Exception as e:
@@ -255,6 +262,7 @@ class SelfReviewer:
         )
 
         from tracera.providers.base import LLMMessage, Role
+
         messages = [LLMMessage(role=Role.USER, content=prompt)]
 
         try:
@@ -265,6 +273,7 @@ class SelfReviewer:
 
 
 # ── Phase 38: Regression Protection ─────────────────────────────────────────
+
 
 class RegressionProtector:
     """
@@ -289,7 +298,8 @@ class RegressionProtector:
             result = subprocess.run(
                 ["git", "diff", "--name-only", "HEAD"],
                 cwd=str(self._workspace),
-                capture_output=True, text=True,
+                capture_output=True,
+                text=True,
             )
             return [f.strip() for f in result.stdout.splitlines() if f.strip()]
         except Exception:

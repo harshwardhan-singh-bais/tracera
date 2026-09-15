@@ -19,7 +19,7 @@ log = get_logger("tools.registry")
 class ToolRegistry:
     """
     Central registry mapping tool names to Tool instances.
-    
+
     The registry is the single source of truth for what the agent can do.
     It also converts tools to LLM-ready schemas.
     """
@@ -62,15 +62,12 @@ class ToolRegistry:
 
     def schemas(self):
         """Return all tools as ToolSchema objects for LLM submission."""
-        from tracera.providers.base import ToolSchema
         return [tool.to_schema() for tool in self._tools.values()]
 
-    async def execute(
-        self, name: str, tool_call_id: str, arguments: dict[str, Any]
-    ) -> ToolResult:
+    async def execute(self, name: str, tool_call_id: str, arguments: dict[str, Any]) -> ToolResult:
         """
         Look up and execute a tool by name.
-        
+
         Validates the tool exists, then delegates to safe_execute().
         """
         tool = self.get(name)
@@ -90,33 +87,36 @@ class ToolRegistry:
 def create_default_registry(workspace=None) -> ToolRegistry:
     """
     Create a ToolRegistry pre-loaded with all default coding tools.
-    
+
     Args:
         workspace: WorkspaceSandbox instance. If None, uses current directory.
     """
-    from tracera.tools.read_file import ReadFileTool
-    from tracera.tools.write_file import WriteFileTool
-    from tracera.tools.edit_file import EditFileTool
-    from tracera.tools.list_dir import ListDirTool
-    from tracera.tools.grep import GrepTool
-    from tracera.tools.run_command import RunCommandTool
-    from tracera.tools.git_tool import GitTool
-    from tracera.workspace.sandbox import WorkspaceSandbox
     from pathlib import Path
+
+    from tracera.tools.edit_file import EditFileTool
+    from tracera.tools.git_tool import GitTool
+    from tracera.tools.grep import GrepTool
+    from tracera.tools.list_dir import ListDirTool
+    from tracera.tools.read_file import ReadFileTool
+    from tracera.tools.run_command import RunCommandTool
+    from tracera.tools.write_file import WriteFileTool
+    from tracera.workspace.sandbox import WorkspaceSandbox
 
     if workspace is None:
         workspace = WorkspaceSandbox(Path(".").resolve())
 
     registry = ToolRegistry()
-    registry.register_many([
-        ReadFileTool(workspace),
-        WriteFileTool(workspace),
-        EditFileTool(workspace),
-        ListDirTool(workspace),
-        GrepTool(workspace),
-        RunCommandTool(workspace),
-        GitTool(workspace),
-    ])
+    registry.register_many(
+        [
+            ReadFileTool(workspace),
+            WriteFileTool(workspace),
+            EditFileTool(workspace),
+            ListDirTool(workspace),
+            GrepTool(workspace),
+            RunCommandTool(workspace),
+            GitTool(workspace),
+        ]
+    )
     return registry
 
 
@@ -191,7 +191,7 @@ TOOL_PROFILES: dict[str, list[str]] = {
         "find_implementations",
         "search_symbols",
         "get_symbol_source",
-    ]
+    ],
 }
 
 
@@ -220,7 +220,7 @@ def extend_registry_with_retrieval(
 ) -> ToolRegistry:
     """
     Phase 21-41 — Extend an existing registry with full code-intelligence tools.
-    
+
     Implements tool tiering/profiles (Step 23) and registers all code intelligence
     tools based on the selected profile. Core tools are always available, standard
     adds common analysis tools, advanced includes all analytical capabilities.
@@ -238,38 +238,38 @@ def extend_registry_with_retrieval(
     Returns:
         The same registry, extended with retrieval tools.
     """
-    from tracera.tools.code_search import (
-        SearchCodeTool,
-        FindSymbolTool,
-        FindDefinitionTool,
-        GetContextTool,
-    )
     from tracera.tools.ast_tools import (
-        # Core tools (always available)
-        GetFileOutlineTool,
-        GetRepoMapTool,
         AssembleCodeContextTool,
-        GetDependenciesTool,
-        # Standard tools
-        FindReferencesTool,
-        GetCallHierarchyTool,
-        GetClassHierarchyTool,
-        GetBlastRadiusTool,
-        GetChangedSymbolsTool,
-        GetIndexFreshnessTool,
+        AssessChangeRiskTool,
+        CalculatePageRankTool,
         # Advanced tools (only if profile allows)
         FindDeadCodeTool,
-        GetHotspotsTool,
-        CalculatePageRankTool,
-        PlanRefactoringTool,
-        GetCodeProvenanceTool,
-        AssessChangeRiskTool,
-        StructuralSearchTool,
-        GetSessionStatsTool,
-        PlanCodeTaskTool,
         FindImplementationsTool,
-        SearchSymbolsTool,
+        # Standard tools
+        FindReferencesTool,
+        GetBlastRadiusTool,
+        GetCallHierarchyTool,
+        GetChangedSymbolsTool,
+        GetClassHierarchyTool,
+        GetCodeProvenanceTool,
+        GetDependenciesTool,
+        # Core tools (always available)
+        GetFileOutlineTool,
+        GetHotspotsTool,
+        GetIndexFreshnessTool,
+        GetRepoMapTool,
+        GetSessionStatsTool,
         GetSymbolSourceTool,
+        PlanCodeTaskTool,
+        PlanRefactoringTool,
+        SearchSymbolsTool,
+        StructuralSearchTool,
+    )
+    from tracera.tools.code_search import (
+        FindDefinitionTool,
+        FindSymbolTool,
+        GetContextTool,
+        SearchCodeTool,
     )
 
     # ── Pipeline-tuple plumbing ─────────────────────────────────────────────
@@ -285,21 +285,52 @@ def extend_registry_with_retrieval(
     if retrieval_pipeline is not None:
         pipeline = retrieval_pipeline
     else:
-        pipeline = (None, retriever, expander, None, context_engine, compressor, None, None, None, graph_retriever)
+        pipeline = (
+            None,
+            retriever,
+            expander,
+            None,
+            context_engine,
+            compressor,
+            None,
+            None,
+            None,
+            graph_retriever,
+        )
 
     # Create all code intelligence tools
     all_ci_tools = [
         # Core (from code_search.py - these are the primary agent-facing tools)
-        SearchCodeTool(retriever, compressor=compressor, context_engine=context_engine, context_recall=context_recall),
+        SearchCodeTool(
+            retriever,
+            compressor=compressor,
+            context_engine=context_engine,
+            context_recall=context_recall,
+        ),
         FindSymbolTool(retriever, context_recall=context_recall),
         FindDefinitionTool(retriever, compressor=compressor, context_recall=context_recall),
-        GetContextTool(retriever, expander, graph_retriever, compressor=compressor, context_engine=context_engine, context_recall=context_recall),
+        GetContextTool(
+            retriever,
+            expander,
+            graph_retriever,
+            compressor=compressor,
+            context_engine=context_engine,
+            context_recall=context_recall,
+        ),
         # NOTE: the pipeline-backed GetDependenciesTool from ast_tools is used
         # here, NOT the code_search variant — the latter wraps a bare SymbolGraph
         # and crashes with AttributeError when handed the 10-tuple.
         GetDependenciesTool(pipeline),
-        GetFileOutlineTool(graph_retriever.graph if graph_retriever is not None and hasattr(graph_retriever, "graph") else graph_retriever),
-        GetRepoMapTool(graph_retriever.graph if graph_retriever is not None and hasattr(graph_retriever, "graph") else graph_retriever),
+        GetFileOutlineTool(
+            graph_retriever.graph
+            if graph_retriever is not None and hasattr(graph_retriever, "graph")
+            else graph_retriever
+        ),
+        GetRepoMapTool(
+            graph_retriever.graph
+            if graph_retriever is not None and hasattr(graph_retriever, "graph")
+            else graph_retriever
+        ),
         AssembleCodeContextTool(retrieval_pipeline=pipeline),
         # Standard
         FindReferencesTool(pipeline),
@@ -326,11 +357,13 @@ def extend_registry_with_retrieval(
     # Filter out None values and apply profile filtering
     ci_tools = [t for t in all_ci_tools if t is not None]
     filtered_tools = filter_tools_by_profile(ci_tools, tool_profile)
-    
+
     # Register all filtered tools
     registry.register_many(filtered_tools)
-    log.info(f"Registered {len(filtered_tools)} code intelligence tools for profile '{tool_profile}'")
-    
+    log.info(
+        f"Registered {len(filtered_tools)} code intelligence tools for profile '{tool_profile}'"
+    )
+
     return registry
 
 
@@ -353,25 +386,22 @@ def extend_registry_with_ast_tools(
     - PageRank importance (calculate_pagerank)
     """
     from tracera.tools.ast_tools import (
-        FindImportersTool,
-        CalculatePageRankTool,
-        PlanRefactoringTool,
-        GetCodeProvenanceTool,
         AssessChangeRiskTool,
+        CalculatePageRankTool,
+        FindImportersTool,
         StructuralSearchTool,
     )
-    from tracera.tools.refactor_tools import (
-        PlanRefactoringTool as RefactorPlanTool,
-        CheckEditSafeTool,
-        CheckDeleteSafeTool,
-        GetPrRiskProfileTool,
-    )
     from tracera.tools.provenance_tools import (
-        GetSymbolProvenanceTool,
-        GetDependencyCyclesTool,
-        GetCouplingMetricsTool,
-        GetEndpointImpactTool,
         AuditAgentConfigTool,
+        GetCouplingMetricsTool,
+        GetDependencyCyclesTool,
+        GetEndpointImpactTool,
+        GetSymbolProvenanceTool,
+    )
+    from tracera.tools.refactor_tools import (
+        CheckDeleteSafeTool,
+        CheckEditSafeTool,
+        GetPrRiskProfileTool,
     )
 
     tools: list[Tool] = [
@@ -397,7 +427,7 @@ def extend_registry_with_ast_tools(
 
     # Wire up the pipeline reference for tools that need it
     for tool in tools:
-        if hasattr(tool, '_pipeline') and tool._pipeline is None:
+        if hasattr(tool, "_pipeline") and tool._pipeline is None:
             tool._pipeline = retrieval_pipeline
 
     registry.register_many(tools)

@@ -14,7 +14,7 @@ and restored on the next launch. ``/theme`` cycles through presets live.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from rich.text import Text
@@ -26,16 +26,16 @@ class Theme:
 
     name: str
     label: str
-    accent: str       # brand / prompt / active states
-    secondary: str    # info rows, search results
+    accent: str  # brand / prompt / active states
+    secondary: str  # info rows, search results
     success: str
     error: str
     warning: str
-    meta: str         # purple metadata
-    muted: str        # dim text
-    faint: str        # barely-there borders/hints
+    meta: str  # purple metadata
+    muted: str  # dim text
+    faint: str  # barely-there borders/hints
     text: str
-    surface: str      # subtle hover background
+    surface: str  # subtle hover background
     border: str
     scrollbar: str
     diff_add_bg: str = "#12291a"
@@ -158,6 +158,7 @@ def theme_label() -> Text:
 
 
 # ── Persistence ──────────────────────────────────────────────────────────────
+
 
 def theme_store_path(data_dir: Path) -> Path:
     return Path(data_dir) / "tui_theme.json"

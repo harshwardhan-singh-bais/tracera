@@ -8,24 +8,86 @@ terminal. It indexes your codebase into a hybrid retrieval index, answers
 questions about architecture, and can autonomously plan, edit, and verify
 code changes — all through a TUI driven by slash commands.
 
-## Highlights
+## What works, out of the box
 
-- **Hybrid retrieval** — BM25 keyword search fused with dense sentence
-  embeddings (LanceDB + sentence-transformers) over a tree-sitter symbol
-  index.
-- **61 slash commands** — every capability is reachable directly from
-  the TUI: `/search`, `/blast`, `/deadcode`, `/hotspots`, `/refs`, `/plan`,
-  `/fix`, and friends — plus `/tool <name>` to invoke any registry tool.
-  Type `/features` to list them all.
-- **Autonomous coding loops** — `/fix` runs a plan → retrieve → edit → test
-  cycle; `/regression` compares test results before and after changes.
-- **Multi-agent fleet** — Researcher, Coder, Tester, Reviewer and Debugger
-  sub-agents with a hard sandbox: they cannot run mutating git commands.
-- **Persistent memory** — a knowledge-graph memory layer (facts, decisions,
-  skills) that survives across sessions and feeds retrieval context.
-- **MCP native** — expose the whole tool registry over the
-  [Model Context Protocol](https://modelcontextprotocol.io) or consume
-  external MCP servers as tools.
+TRACERA ships **85 slash commands**, **58 registered tools**, and a TUI
+with live streaming, attachments, a provider switcher and a command
+palette. Everything below is live in the current build — every item maps to
+a command you can run (see the [Slash Commands reference](/docs/slash-commands)
+and [The TUI](/docs/tui)).
+
+### Hybrid retrieval
+
+- **Local semantic index** — every source file is parsed with tree-sitter,
+  chunked, and embedded with sentence-transformers. Nothing leaves your
+  machine; the index lives in LanceDB under `.tracera/`.
+- **BM25 + dense fusion** — keyword and semantic retrieval run together,
+  scores normalized, fused, and boosted by structural signals.
+- **Score transparency** — every hit shows file path, line range, matched
+  symbol, and the score breakdown, so you can tell *why* it ranked.
+  (`/search`, `/debug`, `/ranked`, `/index`)
+
+### Structural analysis
+
+- **Symbol graph** — references, call hierarchy, and imports extracted from
+  the AST, not regex guessing.
+- **Blast radius** — transitive impact analysis across callers and entry
+  points before you touch anything risky. (`/blast`, `/refs`, `/callers`,
+  `/importers`, `/deps`, `/endpoint`)
+- **Risk & quality metrics** — dead-code detection, complexity × churn
+  hotspots, PageRank importance, coupling, and dependency cycles.
+  (`/deadcode`, `/hotspots`, `/pagerank`, `/risk`, `/coupling`, `/cycles`)
+- **Refactor preflight** — rename/move/extract plans plus edit/delete
+  safety checks. (`/refactor`, `/editsafe`, `/deletesafe`)
+
+### Autonomous coding
+
+- **Fix loop** — `/fix` runs plan → retrieve → edit → test and iterates
+  until checks pass or the budget is exhausted.
+- **Coding tasks with full tool access** — `/code` executes multi-step
+  changes; `/plan` and `/plantask` scope them first.
+- **Regression gate** — the suite runs against a stashed baseline and the
+  current state, so you know an agent change didn't silently break
+  anything. (`/review`, `/selfreview`, `/regression`, `/test`)
+
+### Multi-agent fleet
+
+- **Five role-specialized sub-agents** — Researcher, Coder, Tester,
+  Reviewer, Debugger, orchestrated by `/delegate`.
+- **Hard sandbox** — sub-agents have no git tool and `run_command` rejects
+  mutating git operations (`commit`, `push`, `reset`, `rebase`,
+  `checkout`, ...). The main agent retains full access.
+
+### Persistent memory
+
+- **Typed records** — facts, decisions, preferences, and learned skills,
+  embedded and linked into a knowledge graph for associative recall.
+- **Session-to-session continuity** — relevant memories are injected at
+  launch and steer tool use during tasks. (`/remember`, `/recall`,
+  `/memory`, `/memgraph`, `/forget`, `/triples`)
+
+### MCP integration
+
+- **Server** — `tracera mcp serve` exposes the full tool registry (58
+  tools) to any MCP client: Claude Desktop, editors, other agents.
+- **Client** — consume external MCP servers and merge their tools into the
+  registry, where they become slash-addressable automatically.
+
+### Observability & evaluation
+
+- **Live telemetry** — LLM/tool/retrieval call counts, token usage,
+  latency, and estimated cost, in the TUI and the CLI.
+- **Retrieval benchmarks** — Recall@k, MRR, nDCG and latency for grep vs
+  BM25 vs dense vs hybrid vs +reranker, on a reproducible dataset.
+- **Agent benchmarks & ablations** — end-to-end success/iterations/cost,
+  and arm comparisons (+BM25 / +Dense / +Hybrid / +Graph). (`tracera eval`)
+
+### Safety controls
+
+- Shell command allowlist and confirmation policy (`TRACERA_ALLOWED_SHELL_COMMANDS`,
+  `TRACERA_REQUIRE_CONFIRMATION_FOR`), command/test timeouts, workspace
+  boundary enforcement for MCP file tools, and provider failover across 11
+  LLM providers (including fully-local Ollama).
 
 ## Architecture at a glance
 
@@ -49,6 +111,7 @@ code changes — all through a TUI driven by slash commands.
 
 <Cards>
   <Card title="Quickstart" description="Install, launch, and index a workspace in under a minute." href="/docs/quickstart" />
-  <Card title="Slash commands" description="The complete command reference." href="/docs/slash-commands" />
+  <Card title="The TUI" description="Panels, streaming, attachments — every interactive feature." href="/docs/tui" />
+  <Card title="Slash commands" description="All 85 commands, organized by use case." href="/docs/slash-commands" />
   <Card title="CLI reference" description="Headless usage: ask, index, search, fix, review." href="/docs/cli" />
 </Cards>

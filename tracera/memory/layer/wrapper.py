@@ -18,7 +18,8 @@ logs a clear warning and simply forwards the call untouched.
 
 from __future__ import annotations
 
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 from tracera.logging import get_logger
 from tracera.providers.base import (
@@ -26,7 +27,6 @@ from tracera.providers.base import (
     LLMProvider,
     LLMResponse,
     StreamEvent,
-    TokenUsage,
     ToolSchema,
 )
 
@@ -128,12 +128,7 @@ class MemoryProvider(LLMProvider):
                 assistant_parts.append(event.text)
             yield event
 
-        if (
-            active
-            and scope is not None
-            and assistant_parts
-            and _last_user_text(messages)
-        ):
+        if active and scope is not None and assistant_parts and _last_user_text(messages):
             self._layer.enqueue_turn(
                 user_message=_last_user_text(messages),
                 assistant_message="".join(assistant_parts),
@@ -143,9 +138,7 @@ class MemoryProvider(LLMProvider):
 
     # ── token counting ───────────────────────────────────────────────────────
 
-    async def count_tokens(
-        self, messages: list[LLMMessage], *, model: str | None = None
-    ) -> int:
+    async def count_tokens(self, messages: list[LLMMessage], *, model: str | None = None) -> int:
         return await self._inner.count_tokens(messages, model=model)
 
     def __repr__(self) -> str:

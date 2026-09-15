@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import abc
 import time
-import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -17,12 +16,13 @@ from typing import Any
 class ToolResult:
     """
     The result of executing a tool.
-    
+
     Separates structured output (for the agent) from display text (for the UI).
     """
+
     tool_name: str
     tool_call_id: str
-    output: str               # text sent back to LLM as tool_result
+    output: str  # text sent back to LLM as tool_result
     success: bool = True
     error: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -35,7 +35,7 @@ class ToolResult:
         tool_call_id: str,
         output: str,
         **metadata: Any,
-    ) -> "ToolResult":
+    ) -> ToolResult:
         return cls(
             tool_name=tool_name,
             tool_call_id=tool_call_id,
@@ -51,7 +51,7 @@ class ToolResult:
         tool_call_id: str,
         error: str,
         **metadata: Any,
-    ) -> "ToolResult":
+    ) -> ToolResult:
         return cls(
             tool_name=tool_name,
             tool_call_id=tool_call_id,
@@ -69,7 +69,7 @@ class ToolResult:
 class Tool(abc.ABC):
     """
     Abstract base class for all TRACERA tools.
-    
+
     Each tool must define:
     - name: unique identifier used by the LLM
     - description: plain English description of what the tool does
@@ -99,22 +99,21 @@ class Tool(abc.ABC):
     async def execute(self, **kwargs: Any) -> ToolResult:
         """
         Execute the tool with the given arguments.
-        
+
         Must not raise exceptions — return ToolResult.fail() on error.
         All expensive I/O should be async.
         """
 
     def to_schema(self) -> "from tracera.providers.base import ToolSchema; ToolSchema":  # type: ignore[return-value]
         from tracera.providers.base import ToolSchema
+
         return ToolSchema(
             name=self.name,
             description=self.description,
             parameters=self.parameters_schema,
         )
 
-    async def safe_execute(
-        self, tool_call_id: str, arguments: dict[str, Any]
-    ) -> ToolResult:
+    async def safe_execute(self, tool_call_id: str, arguments: dict[str, Any]) -> ToolResult:
         """
         Validate arguments and execute the tool.
         Catches all exceptions and wraps them in ToolResult.fail().

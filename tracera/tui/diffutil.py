@@ -19,7 +19,15 @@ MAX_DIFF_BYTES = 500_000
 DIFFABLE_TOOLS = ("edit_file", "write_file")
 
 _IMAGE_SUFFIXES = {
-    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".ico", ".tiff",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".webp",
+    ".bmp",
+    ".svg",
+    ".ico",
+    ".tiff",
 }
 
 
@@ -72,9 +80,7 @@ def compute_diff(before: str, after: str, path: str) -> tuple[list[tuple[str, st
     return trimmed, added, removed
 
 
-def _trim_context(
-    lines: list[tuple[str, str]], max_context: int = 3
-) -> list[tuple[str, str]]:
+def _trim_context(lines: list[tuple[str, str]], max_context: int = 3) -> list[tuple[str, str]]:
     """Keep at most *max_context* unchanged lines between changed groups."""
     result: list[tuple[str, str]] = []
     ctx_run = 0

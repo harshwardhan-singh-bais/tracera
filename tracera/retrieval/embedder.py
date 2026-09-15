@@ -49,6 +49,7 @@ class EmbeddingPipeline:
             return
         try:
             from sentence_transformers import SentenceTransformer
+
             log.info("Loading embedding model: %s on %s", self._model_name, self._device)
             self._model = SentenceTransformer(self._model_name, device=self._device)
             log.info("Embedding model loaded.")
@@ -121,8 +122,10 @@ class EmbeddingPipeline:
 
         if uncached_texts:
             self._load_model()
-            log.debug("Embedding %d uncached texts in batches of %d", len(uncached_texts), batch_size)
-            
+            log.debug(
+                "Embedding %d uncached texts in batches of %d", len(uncached_texts), batch_size
+            )
+
             all_embeddings: list[list[float]] = []
             for start in range(0, len(uncached_texts), batch_size):
                 batch = uncached_texts[start : start + batch_size]

@@ -11,14 +11,15 @@ Implements the Reason → Act → Observe cycle with:
 from __future__ import annotations
 
 import asyncio
-import uuid
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, AsyncIterator, Callable
+from typing import Any
 
 from tracera.conversation.state import ConversationMessage, ConversationState, MessageType
-from tracera.errors import AgentError, MaxIterationsError, MaxToolCallsError
+from tracera.errors import MaxIterationsError, MaxToolCallsError
 from tracera.logging import get_logger, log_agent, log_tool
+from tracera.observability import get_telemetry
 from tracera.providers.base import (
     LLMMessage,
     LLMProvider,
@@ -27,12 +28,12 @@ from tracera.providers.base import (
     ToolSchema,
 )
 from tracera.tools.registry import ToolRegistry
-from tracera.observability import get_telemetry
 
 log = get_logger("agent.react")
 
 
 # ── Agent events (for TUI streaming) ─────────────────────────────────────────
+
 
 class AgentEventType(str, Enum):
     THINKING = "thinking"
@@ -55,10 +56,11 @@ AGENT_PHASES = ("planning", "thinking", "running", "generating")
 @dataclass
 class AgentEvent:
     """A streaming event emitted by the agent loop."""
+
     type: AgentEventType
     iteration: int = 0
     text: str | None = None
-    phase: str | None = None   # PHASE_UPDATE only: one of AGENT_PHASES
+    phase: str | None = None  # PHASE_UPDATE only: one of AGENT_PHASES
     tool_name: str | None = None
     tool_args: dict[str, Any] | None = None
     tool_output: str | None = None
@@ -91,10 +93,11 @@ When you have completed the task, provide a clear summary of what was done.
 
 # ── ReAct Agent ───────────────────────────────────────────────────────────────
 
+
 class ReActAgent:
     """
     Core ReAct (Reason + Act) agent loop.
-    
+
     Flow:
         User message
             ↓
@@ -173,7 +176,7 @@ class ReActAgent:
         """
         Run the agent on *task*, yielding AgentEvents.
         This is an async generator — iterate it to drive the loop.
-        
+
         Args:
             task: The user's request.
             conversation: Existing conversation state. Creates new if None.
@@ -236,7 +239,8 @@ class ReActAgent:
                 self._active_plan = await self.decomposer.decompose(task)
                 log.info(
                     "Plan ready: %d steps for %r",
-                    len(self._active_plan.items), task[:60],
+                    len(self._active_plan.items),
+                    task[:60],
                 )
             except Exception as e:
                 log.warning("Task decomposition failed: %s", e)
@@ -362,10 +366,7 @@ class ReActAgent:
                     # Phase 9: advance the plan — mark the next pending item
                     # in_progress so todo state reflects the actual work.
                     if self._active_plan is not None:
-                        items = [
-                            i for i in self._active_plan.items
-                            if i.status.value == "pending"
-                        ]
+                        items = [i for i in self._active_plan.items if i.status.value == "pending"]
                         if items:
                             items[0].start()
                             yield AgentEvent(
@@ -472,14 +473,17 @@ class ReActAgent:
                     if session:
                         session.close(outcome="success", summary=final_text[:200])
                         # Extract memories in background (non-blocking)
-                        import asyncio
                         memories = await self._memory_extractor.extract_from_session(session)
                         if memories and hasattr(self, "_enhanced_memory"):
                             self._enhanced_memory.add_many(memories)
                         # Persist triples
                         if hasattr(self, "_triple_store") and self._triple_store is not None:
                             from pathlib import Path
-                            triples_path = Path(getattr(self, "_memory_dir", ".tracera/memory")) / "memory_triples.json"
+
+                            triples_path = (
+                                Path(getattr(self, "_memory_dir", ".tracera/memory"))
+                                / "memory_triples.json"
+                            )
                             self._triple_store.save(triples_path)
                         yield AgentEvent(
                             type=AgentEventType.MEMORY_UPDATE,
@@ -618,13 +622,10 @@ class ReActAgent:
 
     async def _execute_with_retry(self, tool_call: ToolCallRequest):
         """Execute a tool call with retry on error."""
-        from tracera.tools.base import ToolResult
 
         last_result = None
         for attempt in range(self.max_retries):
-            result = await self.registry.execute(
-                tool_call.name, tool_call.id, tool_call.arguments
-            )
+            result = await self.registry.execute(tool_call.name, tool_call.id, tool_call.arguments)
             if result.success or not self.retry_on_tool_error:
                 return result
             last_result = result

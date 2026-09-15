@@ -49,7 +49,7 @@ class SessionTurn:
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> "SessionTurn":
+    def from_dict(cls, d: dict) -> SessionTurn:
         return cls(
             role=d["role"],
             content=d["content"],
@@ -150,7 +150,7 @@ class Session:
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> "Session":
+    def from_dict(cls, d: dict) -> Session:
         session = cls(
             id=d["id"],
             task=d.get("task", ""),
@@ -245,7 +245,10 @@ class SessionManager:
             self._save()
             log.info(
                 "Closed session %s: %s (%s, %d turns)",
-                session.id[:8], outcome, summary[:40], session.turn_count,
+                session.id[:8],
+                outcome,
+                summary[:40],
+                session.turn_count,
             )
         return session
 
@@ -374,7 +377,7 @@ class SessionManager:
         if len(self._sessions) <= self.MAX_SESSIONS:
             return
         sorted_sessions = self.sessions  # most recent first
-        to_remove = sorted_sessions[self.MAX_SESSIONS:]
+        to_remove = sorted_sessions[self.MAX_SESSIONS :]
         for session in to_remove:
             del self._sessions[session.id]
         log.debug("Pruned %d old sessions", len(to_remove))

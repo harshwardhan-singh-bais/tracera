@@ -96,7 +96,7 @@ class ResourceMonitor:
         self._tokens_out = 0
 
     @classmethod
-    def from_settings(cls, settings) -> "ResourceMonitor":
+    def from_settings(cls, settings) -> ResourceMonitor:
         return cls(
             max_iterations=settings.tracera_max_iterations,
             max_tool_calls=settings.tracera_max_tool_calls,

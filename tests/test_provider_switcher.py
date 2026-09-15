@@ -19,8 +19,8 @@ from tracera.tools.base import Tool, ToolResult
 from tracera.tui.app import ProviderSwitcher
 from tracera.tui.widgets.agent_panel import MessageWidget
 
-
 # ── Fakes ─────────────────────────────────────────────────────────────────────
+
 
 class _FakeProvider:
     name = "fake"
@@ -58,6 +58,7 @@ def _make_app(tmp_path, provider=None):
 
 # ── 1. Config discovery (real source, no hardcoding) ─────────────────────────
 
+
 class TestConfigDiscovery:
     def test_list_available_providers_marks_missing_keys(self):
         """Providers without a key are flagged unavailable; ollama is always on."""
@@ -85,16 +86,24 @@ class TestConfigDiscovery:
 
 # ── 1b. Selector UI opens/closes and shows the real list ─────────────────────
 
+
 @pytest.mark.asyncio
 async def test_selector_opens_shows_config_and_closes(tmp_path, monkeypatch):
     fake_entries = [
-        {"name": "groq", "available": True, "key_env": "GROQ_API_KEY", "model": "llama-3.3-70b-versatile"},
+        {
+            "name": "groq",
+            "available": True,
+            "key_env": "GROQ_API_KEY",
+            "model": "llama-3.3-70b-versatile",
+        },
         {"name": "openai", "available": False, "key_env": "OPENAI_API_KEY", "model": "gpt-4o"},
         {"name": "ollama", "available": True, "key_env": "none", "model": "llama3.2"},
     ]
     monkeypatch.setattr("tracera.providers.list_available_providers", lambda settings: fake_entries)
 
-    app = _make_app(tmp_path, provider=_FakeProvider(name="groq", default_model="llama-3.3-70b-versatile"))
+    app = _make_app(
+        tmp_path, provider=_FakeProvider(name="groq", default_model="llama-3.3-70b-versatile")
+    )
     async with app.run_test() as pilot:
         await pilot.pause()
         await pilot.press("ctrl+p")
@@ -129,13 +138,20 @@ async def test_selecting_with_enter_actually_switches_backend(tmp_path, monkeypa
     callback got None). Enter must close the overlay AND swap the backend.
     """
     fake_entries = [
-        {"name": "groq", "available": True, "key_env": "GROQ_API_KEY", "model": "llama-3.3-70b-versatile"},
+        {
+            "name": "groq",
+            "available": True,
+            "key_env": "GROQ_API_KEY",
+            "model": "llama-3.3-70b-versatile",
+        },
         {"name": "openai", "available": False, "key_env": "OPENAI_API_KEY", "model": "gpt-4o"},
         {"name": "ollama", "available": True, "key_env": "none", "model": "llama3.2"},
     ]
     monkeypatch.setattr("tracera.providers.list_available_providers", lambda settings: fake_entries)
 
-    app = _make_app(tmp_path, provider=_FakeProvider(name="groq", default_model="llama-3.3-70b-versatile"))
+    app = _make_app(
+        tmp_path, provider=_FakeProvider(name="groq", default_model="llama-3.3-70b-versatile")
+    )
     original = app.agent.provider
 
     async with app.run_test() as pilot:
@@ -175,11 +191,14 @@ async def test_selecting_with_enter_actually_switches_backend(tmp_path, monkeypa
 
 # ── 2. Switching changes the backend for the next request ────────────────────
 
+
 @pytest.mark.asyncio
 async def test_switch_changes_backend_and_model(tmp_path):
     from tracera.providers.ollama_provider import OllamaProvider
 
-    app = _make_app(tmp_path, provider=_FakeProvider(name="groq", default_model="llama-3.3-70b-versatile"))
+    app = _make_app(
+        tmp_path, provider=_FakeProvider(name="groq", default_model="llama-3.3-70b-versatile")
+    )
     original = app.agent.provider
 
     async with app.run_test() as pilot:
@@ -197,6 +216,7 @@ async def test_switch_changes_backend_and_model(tmp_path):
 
 # ── 3. Misconfigured provider → inline warning, no silent break ──────────────
 
+
 @pytest.mark.asyncio
 async def test_switch_to_misconfigured_provider_is_rejected(tmp_path, monkeypatch):
     def _boom(name, model, settings):
@@ -204,7 +224,9 @@ async def test_switch_to_misconfigured_provider_is_rejected(tmp_path, monkeypatc
 
     monkeypatch.setattr("tracera.providers.create_provider", _boom)
 
-    app = _make_app(tmp_path, provider=_FakeProvider(name="groq", default_model="llama-3.3-70b-versatile"))
+    app = _make_app(
+        tmp_path, provider=_FakeProvider(name="groq", default_model="llama-3.3-70b-versatile")
+    )
     original = app.agent.provider
     original_model = app.agent.model
 
@@ -224,9 +246,12 @@ async def test_switch_to_misconfigured_provider_is_rejected(tmp_path, monkeypatc
 
 # ── 4. Conversation survives a mid-session switch ────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_conversation_and_session_survive_switch(tmp_path):
-    app = _make_app(tmp_path, provider=_FakeProvider(name="groq", default_model="llama-3.3-70b-versatile"))
+    app = _make_app(
+        tmp_path, provider=_FakeProvider(name="groq", default_model="llama-3.3-70b-versatile")
+    )
     conversation = app._conversation
     conversation.add_user("remember this for later")
     conversation.add_assistant("stored")
@@ -249,6 +274,7 @@ async def test_conversation_and_session_survive_switch(tmp_path):
 # must drive the SAME normalized AgentEvent schema — the loop is the single
 # normalization point, so the TUI never sees provider-specific shapes.
 
+
 class _StreamingSwitcherProvider:
     """Provider A — streaming shape: tool-call event first, then deltas."""
 
@@ -265,6 +291,7 @@ class _StreamingSwitcherProvider:
         self.stream_calls += 1
         if self.stream_calls == 1:
             from tracera.providers.base import StreamEvent, ToolCallRequest
+
             yield StreamEvent(
                 type="tool_call_complete",
                 tool_call=ToolCallRequest(
@@ -273,6 +300,7 @@ class _StreamingSwitcherProvider:
             )
         else:
             from tracera.providers.base import StreamEvent
+
             yield StreamEvent(type="text_delta", text="done from A")
         yield StreamEvent(type="done")
 
@@ -288,10 +316,12 @@ class _CompleteSwitcherProvider:
 
     async def stream(self, messages, **kwargs):
         from tracera.providers.base import StreamEvent
+
         yield StreamEvent(type="done")  # nothing usable → loop falls back to complete()
 
     async def complete(self, messages, **kwargs):
         from tracera.providers.base import LLMResponse, TokenUsage, ToolCallRequest
+
         self.complete_calls += 1
         if self.complete_calls == 1:
             return LLMResponse(

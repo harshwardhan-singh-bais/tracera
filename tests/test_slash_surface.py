@@ -47,9 +47,7 @@ def test_dedicated_commands_not_overwritten_by_alias():
 
 def test_feature_groups_cover_all_aliases():
     listed = {
-        usage.split()[0].lstrip("/")
-        for items in FEATURE_GROUPS.values()
-        for usage, _ in items
+        usage.split()[0].lstrip("/") for items in FEATURE_GROUPS.values() for usage, _ in items
     }
     reserved = {"search", "deps", "memory", "test", "review", "tools"}
     missing = set(SLASH_TOOLS) - listed - reserved

@@ -93,7 +93,7 @@ class SymbolExtractor:
                 continue
             sym_type, node = entry
 
-            symbol_name = code[name_node.start_byte:name_node.end_byte].decode("utf-8")
+            symbol_name = code[name_node.start_byte : name_node.end_byte].decode("utf-8")
 
             # Convert capture name to SymbolType
             try:
@@ -121,7 +121,9 @@ class SymbolExtractor:
             if start_line < 0 or end_line < start_line or end_line >= max_line + 5:
                 log.warning(
                     "Skipping implausible node range %d-%d (file has %d lines)",
-                    start_line, end_line, max_line,
+                    start_line,
+                    end_line,
+                    max_line,
                 )
                 continue
 
@@ -130,7 +132,7 @@ class SymbolExtractor:
             if start_line == end_line:
                 content = code_lines[start_line].decode("utf-8")
             else:
-                content = b"\n".join(code_lines[start_line:end_line+1]).decode("utf-8")
+                content = b"\n".join(code_lines[start_line : end_line + 1]).decode("utf-8")
 
             # Basic parent determination (by nesting)
             parent = None
@@ -141,7 +143,7 @@ class SymbolExtractor:
                     # but we can try to extract it from the child identifier.
                     for child in parent_node.children:
                         if child.type == "identifier":
-                            parent = code[child.start_byte:child.end_byte].decode("utf-8")
+                            parent = code[child.start_byte : child.end_byte].decode("utf-8")
                             if sym_type == "function":
                                 stype = SymbolType.METHOD
                             break

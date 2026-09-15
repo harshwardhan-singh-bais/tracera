@@ -1,124 +1,220 @@
 ---
 title: Slash Commands
-description: The complete reference for every slash command in the TRACERA TUI.
+description: The complete TRACERA command surface — organized by what you're trying to do.
+full: true
 ---
 
-Everything in the TUI is a slash command. Type `/` for autocomplete with
-descriptions, or `/features` to list the full surface grouped by category.
+TRACERA's TUI has **85 slash commands** plus `/tool <name>`, which can invoke
+any of the 58 registered tools directly. Type `/` in the input for
+autocomplete with descriptions, or run `/features` to see the live list
+grouped by capability area — it is generated from the tool registry, so it
+always matches what this build can actually do.
 
-## Sessions & help
+This page is organized the way you actually work: by use case, not by
+internal module. Each section answers one question — "how do I do X?" — and
+every command is documented with what it does and when to reach for it.
 
-| Command | Description |
+## The mental model
+
+Four kinds of work, four command families:
+
+| You want to… | Reach for |
 | --- | --- |
-| `/help` | Show all commands and keys |
-| `/features` | List every feature as a slash command |
-| `/clear` | Clear the conversation |
-| `/reset` | Reset conversation state |
-| `/dashboard` | System overview panel |
-| `/status` | Provider, model, tokens, memory status |
-| `/cost` | Session token/cost estimate |
-| `/observability` | Live telemetry (LLM/tool/retrieval/cost) |
-| `/phases` | Phase map + verified checklist |
-| `/theme` | Cycle accent theme (claude → crush → nord) |
-| `/files` | Recently touched files |
+| **Understand the codebase** | Search & discovery, structural analysis |
+| **Change it safely** | Planning, coding loops, review & regression |
+| **Never re-explain yourself** | Memory commands |
+| **Keep the system honest** | Status, cost, telemetry, audit |
 
-## Models & providers
-
-| Command | Description |
-| --- | --- |
-| `/models` | List all provider/model options |
-| `/model <id>` | Switch model |
-| `/mcp` | Show MCP status & config |
-| `/tools` | List available tools |
-| `/agents` | Sub-agent fleet overview |
-
-## Retrieval & search
-
-| Command | Description |
-| --- | --- |
-| `/search <query>` | Hybrid (BM25 + dense) code search |
-| `/debug <query>` | Compare retrieval strategies side by side |
-| `/ranked <query>` | Token-budgeted ranked context |
-| `/index` | Index the workspace (incremental) |
-
-## Structural analysis
-
-| Command | Description |
-| --- | --- |
-| `/symbol <name>` | Find a symbol by name |
-| `/symbols <query>` | Search symbols (exact/prefix/fuzzy) |
-| `/source <symbol>` | Exact source of a symbol |
-| `/refs <symbol>` | Find references |
-| `/callers <symbol>` | Call hierarchy (callers/callees) |
-| `/impls <symbol>` | Find implementations |
-| `/blast <symbol>` | Blast radius — what breaks if you change it |
-| `/importers <file>` | What imports a file |
-| `/deps <symbol>` | Symbol dependency chain |
-| `/endpoint <route>` | Trace an API route to its handler |
-
-## Quality & risk
-
-| Command | Description |
-| --- | --- |
-| `/deadcode` | Symbols unreachable from entry points |
-| `/hotspots` | Risky code by complexity × churn |
-| `/pagerank` | Symbol importance (graph centrality) |
-| `/risk <target>` | Composite change-risk score |
-| `/coupling` | Coupling metrics |
-| `/cycles` | Dependency cycles |
-| `/audit` | Agent configuration audit |
-
-## Refactoring
-
-| Command | Description |
-| --- | --- |
-| `/refactor <symbol>` | Edit-ready rename/move/extract plan |
-| `/editsafe <symbol>` | Preflight before modifying a symbol |
-| `/deletesafe <symbol>` | Preflight before deleting a symbol |
-
-## Git & provenance
-
-| Command | Description |
-| --- | --- |
-| `/changed` | Map git diff to affected symbols |
-| `/provenance <symbol>` | Git archaeology for a symbol |
-| `/git <subcommand>` | Run a git operation |
-
-## Agent tasks
-
-| Command | Description |
-| --- | --- |
-| `/plan <task>` | Decompose a task into steps |
-| `/plantask <task>` | Intent + anchors + tool-chain plan |
-| `/code <task>` | Run a coding task with full tool access |
-| `/fix <task>` | Autonomous fix loop (plan→retrieve→edit→test) |
-| `/review` | Agent review of current changes |
-| `/selfreview` | Independent LLM review of uncommitted changes |
-| `/regression` | Baseline vs current test comparison |
-| `/delegate <task>` | Delegate a task to sub-agents |
-| `/taskcontext <task>` | Full task context assembly |
-| `/planturn <query>` | Confidence-guided routing for a query |
-| `/test [pytest]` | Run the project's test suite |
-
-## Memory
-
-| Command | Description |
-| --- | --- |
-| `/memory` | Show stored memories |
-| `/memgraph` | Render the memory knowledge graph |
-| `/remember <text>` | Store a memory |
-| `/recall <query>` | Recall relevant memories |
-| `/forget <text>` | Forget a memory |
-| `/triples` | Knowledge-graph tool view |
-
-## Running any tool
-
-Every registered tool is also reachable directly:
+A typical session:
 
 ```bash
-/tool <name> [key=value ...]      # run any registry tool
+/index                    # once — build the local index
+/search "auth flow"       # explore
+/plan "add rate limiting" # scope
+/code "add rate limiting" # execute
+/review && /regression    # verify — then commit yourself
 ```
 
-Tool aliases (like `/search` → `hybrid_search`, `/blast` →
-`blast_radius`) are generated from the tool registry, so new tools appear
-in autocomplete automatically.
+---
+
+## 1. First five minutes: getting oriented
+
+New repo, new session, or just back from lunch.
+
+| Command | What it does | When to use it |
+| --- | --- | --- |
+| `/index` | Builds the hybrid index (tree-sitter → chunks → embeddings → LanceDB). Incremental — only changed files are reprocessed. | First thing in a new workspace; after huge refactors; when search results look stale. |
+| `/freshness` | Compares index timestamps against the filesystem. | Suspicious search results — is the index behind? |
+| `/dashboard` | Full system overview panel: provider, index health, memory, limits. | The one-glance health check. |
+| `/status` | Provider, model, token usage, memory status. | Responses look wrong or slow — start here. |
+| `/files` | Recently touched files. | "What was I working on?" |
+| `/inspectrepo` | Repository overview: structure, languages, entry points. | First contact with an unfamiliar codebase. |
+| `/inspect` | Interactive repository inspection (files, symbols, git). | Deeper dive than `/inspectrepo`. |
+| `/repomap` | Repository map ranked by graph centrality — the most important files first. | Know where the load-bearing code lives before changing anything. |
+| `/outline <file>` | File outline — signatures only, no bodies. | Skim a 1,000-line file in one screen. |
+| `/help` | All commands and keyboard shortcuts. | When lost. |
+| `/features` | Live command catalog grouped by capability area. | Discover what this build can do. |
+
+## 2. Finding code: search & discovery
+
+"Where is this done?" — answered with hybrid retrieval, not grep.
+
+| Command | What it does | When to use it |
+| --- | --- | --- |
+| `/search <query>` | Hybrid BM25 + dense semantic search with score breakdowns. | The workhorse. Natural-language questions ("where do we validate tokens") and symbol names both work. |
+| `/symbol <name>` | Find a symbol by exact name. | Fastest path when you know the name. |
+| `/symbols <query>` | Fuzzy/prefix symbol search. | You half-remember the name. |
+| `/source <symbol>` | Exact source of a symbol with byte/line ranges. | Read the implementation without opening the file. |
+| `/definition <name>` | Jump to a definition. | Disambiguates overloads/shadowing. |
+| `/context <symbol>` | Expanded context for a symbol — its surroundings. | Understand a symbol in place. |
+| `/grep <pattern>` | Regex search over file contents. | Literal string hunting — the one thing semantic search is worse at. |
+| `/ls <path>` | List a directory. | Quick structure checks. |
+| `/read <path>` | Read a file into the conversation. | Feed a specific file to the agent. |
+| `/assemble <task>` | One-call task context capsule: everything relevant to a task in one payload. | Prime the agent before a complex ask. |
+
+**Tuning the pipeline:** `/debug <query>` runs the same query through every
+retrieval strategy (grep / BM25 / dense / hybrid / reranker) side by side —
+use it to see *why* something ranks, or to tune. `/ranked <query>` assembles
+the best context that fits a token budget.
+
+## 3. Changing code without breaking it: structural analysis
+
+The symbol graph answers "what breaks if I touch this?" before you touch it.
+
+| Command | What it does | When to use it |
+| --- | --- | --- |
+| `/refs <symbol>` | Every reference to a symbol. | Before any rename — the mechanical check. |
+| `/callers <symbol>` | Call hierarchy, both directions. | "Who calls this?" upstream/downstream. |
+| `/blast <symbol>` | **Blast radius**: direct callers, transitive closure (depth-bounded), entry points touched. | Before every risky edit. 158 symbols across 31 files changes your plans. |
+| `/importers <file>` | What imports a file. | File-level counterpart of `/refs`. |
+| `/deps <symbol>` | Dependency chain — what this symbol pulls in. | Understand the downward cone. |
+| `/classhier <class>` | Inheritance chain. | Refactoring class hierarchies safely. |
+| `/impls <symbol>` | Find implementations. | Interface/ABC changes. |
+| `/endpoint <route>` | What breaks if an API endpoint changes. | API work — traces route → handler → callers. |
+| `/cycles` | Circular dependency detection. | Break import cycles before they metastasize. |
+| `/coupling` | Module coupling + instability metrics. | Spot modules that should be one module. |
+| `/ast <pattern>` | Cross-language AST pattern search. | Structural patterns grep can't express. |
+
+## 4. Deciding what to touch first: quality & risk
+
+Where is change most likely to hurt?
+
+| Command | What it does | When to use it |
+| --- | --- | --- |
+| `/hotspots` | Complexity × churn ranking. | Decide review depth and where tests pay off most. |
+| `/deadcode` | Symbols unreachable from any entry point. | Deletion candidates — verify with `/deletesafe` first. |
+| `/pagerank` | Global symbol importance (graph centrality). | Identify load-bearing code. |
+| `/risk <target>` | Composite change-risk score: complexity, churn, centrality, optional coverage. | Triage — which of these five bugs can I fix casually? |
+| `/prrisk` | Risk profile of the whole pending PR. | Before you ask for (or give) review. |
+| `/provenance <symbol>` | Git archaeology — who last touched this and why. | Understand *intent* before changing someone's fix. |
+| `/auditconfig` | Scan config files for token waste. | Cut prompt bloat you're paying for every call. |
+
+## 5. Planning and executing work: the agent loops
+
+From "idea" to "verified change".
+
+| Command | What it does | When to use it |
+| --- | --- | --- |
+| `/plan <task>` | Decompose a task into steps. No code touched. | Always first. Read the plan before letting anything edit. |
+| `/plantask <task>` | Richer plan: intent + anchors (files/symbols) + the tool chain it will use. | Complex tasks where you want to see the *how*, not just the *what*. |
+| `/planturn <query>` | Confidence-guided routing: does this need retrieval, the agent loop, or a direct answer? | Let the system pick its own strategy. |
+| `/taskcontext <task>` | Full task context assembly: relevant symbols, history, memories. | The heavy primer before delegating a big task. |
+| `/code <task>` | Run a coding task with full tool access. | The main act — after a `/plan` you've sanity-checked. |
+| `/fix <task>` | Autonomous fix loop: plan → retrieve → edit → test, iterating until checks pass or the budget runs out. | Point it at failing tests. It doesn't get bored. |
+| `/delegate <task>` | Split a task across the sub-agent fleet: Researcher → Coder → Tester → Reviewer. | Parallelizable, well-scoped work. |
+| `/run <command>` | Run a shell command (main agent; allowlist applies). | Quick operational checks mid-task. |
+| `/write <path>` | Write a file (content via editor). | One-off file creation. |
+| `/edit <path>` | Edit a file with the agent's edit tool. | Surgical single-file changes. |
+
+## 6. Trusting the result: review & regression
+
+The gate before anything touches `main`.
+
+| Command | What it does | When to use it |
+| --- | --- | --- |
+| `/review` | Agent review of uncommitted changes with structural context: affected symbols, callers, blast radius accompany the diff. | After every `/code` or `/fix` run. |
+| `/selfreview` | An *independent* LLM pass over uncommitted changes — separate from the authoring conversation. | Catches what the authoring context rationalized. Run before committing anything non-trivial. |
+| `/regression` | Runs the suite twice — stashed baseline vs current — and compares. | The gate before committing agent-made changes. |
+| `/test` | Run the project test suite, failures read back to you. | Continuous checks while iterating. |
+| `/tests <framework>` | Run tests with an explicit framework (pytest/unittest/npm/cargo). | Polyglot repos. |
+| `/changed` | Map the current git diff to affected symbols. | Review a diff at symbol granularity, not line granularity. |
+| `/git <subcommand>` | Run a git operation through the agent. | Status/diff/log without leaving the TUI. Mutating ops stay main-agent-only. |
+
+## 7. Multi-agent work
+
+| Command | What it does | When to use it |
+| --- | --- | --- |
+| `/delegate <task>` | Decompose across role-specialized sub-agents and aggregate the report. | Research + implement + test + review in one shot. |
+| `/agents` | Fleet overview: which roles exist, each one's tool allowlist. | Know the sandbox before you delegate. |
+
+**The sandbox:** sub-agents have no git tool at all, and `run_command`
+rejects mutating git operations (`commit`, `push`, `reset`, `rebase`,
+`checkout`, …). The main agent retains full access. Delegation runs real
+tools against your workspace — commit or stash before large runs.
+
+## 8. Memory: never re-explain yourself
+
+TRACERA persists facts, decisions, preferences and learned skills in a
+knowledge graph, and recalls them in future sessions.
+
+| Command | What it does | When to use it |
+| --- | --- | --- |
+| `/remember <text>` | Store a durable memory ("we use pytest with asyncio_mode=auto"). | The moment a decision is made — it steers all future sessions. |
+| `/recall <query>` | Retrieve relevant memories. | Check what the agent "knows" before relying on it. |
+| `/memory` | Browse everything stored. | Periodic hygiene. |
+| `/memsearch <query>` | Search the memory store (TF-IDF). | Find specific stored facts. |
+| `/memgraph` | Render the memory knowledge graph. | See how facts connect. |
+| `/memgraph2` | The same graph, tool-form. | Piping/automation. |
+| `/triples` | Raw semantic triples. | Debug the graph itself. |
+| `/memstats` | Memory statistics. | Size and composition at a glance. |
+| `/consolidate` | Merge near-duplicate memories. | The store grows noisy — consolidate occasionally. |
+| `/memworker` | Background memory-worker stats. | Debug async memory processing. |
+| `/forget <text>` | Delete matching memories. | Prune stale facts that would mislead the agent. |
+| `/sessions` | List sessions. | Orientation across time. |
+
+## 9. Refactoring with a net
+
+| Command | What it does | When to use it |
+| --- | --- | --- |
+| `/refactor <symbol>` | Edit-ready rename/move/extract plan with every affected site. | The safe starting point for mechanical refactors. |
+| `/editsafe <symbol>` | Preflight before modifying: callers, tests touching it, risk. | 30 seconds that prevent an hour of debugging. |
+| `/deletesafe <symbol>` | Preflight before deleting: proves (or refutes) that nothing references it. | Before every deletion. |
+
+## 10. Keeping the system honest: status, cost, control
+
+| Command | What it does | When to use it |
+| --- | --- | --- |
+| `/cost` | Session token/cost estimate. | Before long autonomous runs. |
+| `/observability` | Live telemetry: LLM/tool/retrieval calls, latency, estimated cost. | "What did the agent just do?" |
+| `/sessionstats` | Session economics + token savings. | Prove the index is paying for itself. |
+| `/model <id>` | Switch model mid-session. | Common loop: strong model for `/plan`, fast model for `/code`. |
+| `/models` | List every provider/model option. | Find cheaper or stronger options. |
+| `/tools` | List registered tools with descriptions. | The raw capabilities behind the aliases. |
+| `/tool <name> [k=v]` | Run **any** registry tool directly, with `key=value` args. | The escape hatch — nothing is hidden. |
+| `/mcp` | MCP status and merged external tools. | After editing `mcp_servers.json`. |
+| `/phases` | Phase map + verified checklist. `/phases done <n>` marks verified. | Track multi-step work. |
+| `/theme` | Cycle accent theme (claude → crush → nord). | Purely cosmetic. |
+| `/clear` | Clear the conversation. | Between unrelated tasks — old context bleeds. |
+| `/reset` | Hard reset of conversation state. | The agent is stuck in a bad loop. |
+
+## 11. Keyboard
+
+| Key | Action |
+| --- | --- |
+| `ctrl+q` | Quit |
+| `ctrl+l` | Clear conversation |
+| `ctrl+t` | Toggle verbose tool rows (show/hide args) |
+| `ctrl+p` | Provider/model switcher (live dropdown) |
+| `ctrl+shift+p` | Command palette |
+| `ctrl+m` | Memory panel |
+| `f1` | Help |
+| `esc` | Cancel running task |
+| `pgup` / `pgdn` | Scroll the stream |
+
+## 12. Under the hood: one registry, every surface
+
+`tracera/tui/widgets/command_registry.py` is the single source of truth:
+built-in commands merged with aliases generated from the tool registry.
+Autocomplete, `/help`, the command palette, and dispatch all read from it —
+add a tool and it becomes slash-addressable with no other change. `/features`
+always shows the live list for your build.

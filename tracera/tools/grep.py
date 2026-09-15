@@ -1,7 +1,9 @@
 """grep tool — Phase 7."""
 
 from __future__ import annotations
+
 from typing import Any
+
 from tracera.tools.base import Tool, ToolResult
 from tracera.workspace.sandbox import WorkspaceSandbox
 

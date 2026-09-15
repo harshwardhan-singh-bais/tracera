@@ -23,6 +23,7 @@ class TracerError(Exception):
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
+
 class ConfigError(TracerError):
     """Raised when configuration is invalid or missing."""
 
@@ -40,6 +41,7 @@ class MissingAPIKeyError(ConfigError):
 
 
 # ── Workspace / Filesystem ────────────────────────────────────────────────────
+
 
 class WorkspaceError(TracerError):
     """Raised for workspace filesystem errors."""
@@ -79,6 +81,7 @@ class FileSizeLimitError(WorkspaceError):
 
 # ── Git ───────────────────────────────────────────────────────────────────────
 
+
 class GitError(TracerError):
     """Raised for git operation failures."""
 
@@ -88,6 +91,7 @@ class NotAGitRepositoryError(GitError):
 
 
 # ── LLM Providers ─────────────────────────────────────────────────────────────
+
 
 class ProviderError(TracerError):
     """Raised for LLM provider communication failures."""
@@ -123,6 +127,7 @@ class ProviderUnavailableError(ProviderError):
 
 
 # ── Tools ─────────────────────────────────────────────────────────────────────
+
 
 class ToolError(TracerError):
     """Raised for tool execution failures."""
@@ -166,6 +171,7 @@ class CommandNotAllowedError(ToolError):
 
 # ── Agent ─────────────────────────────────────────────────────────────────────
 
+
 class AgentError(TracerError):
     """Raised for agent loop failures."""
 
@@ -190,6 +196,7 @@ class PlanningError(AgentError):
 
 
 # ── Memory ────────────────────────────────────────────────────────────────────
+
 
 class MemoryError(TracerError):
     """Raised for persistent memory failures."""

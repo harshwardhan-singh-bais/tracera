@@ -1,0 +1,76 @@
+# ── TRACERA — local orchestration ────────────────────────────────────────────
+#
+# The default service (`tracera`) runs MCP over stdio — the shape MCP clients
+# spawn. Profiles add the long-running/interactive variants:
+#
+#   docker compose up mcp-sse                    # MCP over SSE on :8000
+#   docker compose run --rm cli ask "explain the retrieval pipeline"
+#   docker compose run --rm cli tui              # TUI (needs a TTY)
+#   docker compose run --rm index                # (re)build the index, exit
+#
+# The workspace is mounted at /workspace; all TRACERA state (.tracera/) lives
+# inside it, so a named volume keeps the index between runs.
+
+services:
+  tracera:
+    build: .
+    image: tracera:latest
+    stdin_open: true
+    tty: false
+    environment:
+      # Provider keys pass through from .env — only the ones you set are used
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      TRACERA_LOG_LEVEL: ${TRACERA_LOG_LEVEL:-INFO}
+    volumes:
+      - tracera-data:/workspace/.tracera
+      # Mount your target repo instead when using this against real code:
+      # - /path/to/your/repo:/workspace
+
+  mcp-sse:
+    profiles: ["sse"]
+    build: .
+    image: tracera:latest
+    command: ["mcp", "serve", "-t", "sse", "--host", "0.0.0.0", "--port", "8000", "--workspace", "/workspace"]
+    ports:
+      - "8000:8000"
+    environment:
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      # Require a client key when exposed over the network:
+      TRACERA_MCP_API_KEY: ${TRACERA_MCP_API_KEY:-}
+      TRACERA_MCP_ENFORCE_WORKSPACE_BOUNDARIES: "1"
+    volumes:
+      - tracera-data:/workspace/.tracera
+
+  cli:
+    profiles: ["cli"]
+    build: .
+    image: tracera:latest
+    stdin_open: true
+    tty: true
+    environment:
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+    volumes:
+      - tracera-data:/workspace/.tracera
+    entrypoint: []
+    command: ["tracera"]
+
+  index:
+    profiles: ["cli"]
+    build: .
+    image: tracera:latest
+    volumes:
+      - tracera-data:/workspace/.tracera
+    entrypoint: []
+    command: ["tracera", "index", "--rebuild"]
+
+volumes:
+  tracera-data:

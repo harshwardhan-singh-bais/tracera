@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 _PROFILES: dict[str, dict[str, Any]] = {
     "local": {
         "tracera_log_level": "DEBUG",
@@ -44,7 +43,7 @@ _PROFILES: dict[str, dict[str, Any]] = {
         "tracera_command_timeout": 60,
         "tracera_default_provider": "openai",
         "tracera_default_model": "gpt-4o",
-        "tracera_default_temperature": 0.0,   # deterministic for benchmarks
+        "tracera_default_temperature": 0.0,  # deterministic for benchmarks
     },
 }
 

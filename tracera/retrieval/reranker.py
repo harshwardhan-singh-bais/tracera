@@ -44,6 +44,7 @@ class CrossEncoderReranker:
             return True
         try:
             from sentence_transformers import CrossEncoder
+
             log.info("Loading cross-encoder: %s", self._model_name)
             self._model = CrossEncoder(self._model_name, device=self._device)
             return True
@@ -89,9 +90,12 @@ class CrossEncoderReranker:
 
         log.debug(
             "Reranker: %d candidates → top %d (best=%.3f worst=%.3f)",
-            len(results), final_k,
+            len(results),
+            final_k,
             results[0].get("_rerank_score", 0.0) if results else 0.0,
-            results[min(final_k - 1, len(results) - 1)].get("_rerank_score", 0.0) if results else 0.0,
+            results[min(final_k - 1, len(results) - 1)].get("_rerank_score", 0.0)
+            if results
+            else 0.0,
         )
 
         return results[:final_k]

@@ -52,10 +52,17 @@ def _rich_graph() -> SymbolGraph:
     g = SymbolGraph()
     g.add_symbol("tracera/tools/base.py", _sym("Tool", SymbolType.CLASS, 1, 40))
     g.add_symbol("tracera/tools/base.py", _sym("ToolResult", SymbolType.CLASS, 41, 80))
-    g.add_symbol("tracera/tools/registry.py", _sym("ToolRegistry", SymbolType.CLASS, 1, 60, parent=None))
-    g.add_symbol("tracera/tools/registry.py", _sym("execute", SymbolType.METHOD, 20, 40, parent="ToolRegistry"))
+    g.add_symbol(
+        "tracera/tools/registry.py", _sym("ToolRegistry", SymbolType.CLASS, 1, 60, parent=None)
+    )
+    g.add_symbol(
+        "tracera/tools/registry.py",
+        _sym("execute", SymbolType.METHOD, 20, 40, parent="ToolRegistry"),
+    )
     g.add_symbol("tracera/agent/react_loop.py", _sym("ReActAgent", SymbolType.CLASS, 1, 90))
-    g.add_symbol("tracera/agent/react_loop.py", _sym("run", SymbolType.METHOD, 30, 80, parent="ReActAgent"))
+    g.add_symbol(
+        "tracera/agent/react_loop.py", _sym("run", SymbolType.METHOD, 30, 80, parent="ReActAgent")
+    )
 
     # calls: run -> execute; ReActAgent -> ToolRegistry
     agent_id = "tracera/agent/react_loop.py::ReActAgent"
@@ -97,19 +104,20 @@ def _build_registry(tmp_path: Path) -> ToolRegistry:
             return hits
 
     pipeline = (
-        _fake_indexer(),   # 0  indexer
-        FakeRetriever(),   # 1  symbol retriever
-        FakeExpander(),    # 2  expander
-        None,              # 3  reranker
-        None,              # 4  context engine
-        None,              # 5  compressor
-        None,              # 6  embedder
-        None,              # 7  vector store
-        None,              # 8  bm25
-        graph_retriever,   # 9  graph retriever
+        _fake_indexer(),  # 0  indexer
+        FakeRetriever(),  # 1  symbol retriever
+        FakeExpander(),  # 2  expander
+        None,  # 3  reranker
+        None,  # 4  context engine
+        None,  # 5  compressor
+        None,  # 6  embedder
+        None,  # 7  vector store
+        None,  # 8  bm25
+        graph_retriever,  # 9  graph retriever
     )
 
     from tracera.workspace.sandbox import WorkspaceSandbox
+
     workspace = WorkspaceSandbox(tmp_path)
     registry = create_default_registry(workspace)
     extend_registry_with_retrieval(
@@ -154,7 +162,11 @@ ARGS: dict[str, dict] = {
     "find_dead_code": {},
     "get_hotspots": {},
     "calculate_pagerank": {},
-    "plan_refactoring": {"refactor_type": "rename", "symbol": "ToolRegistry", "new_name": "ToolRegistry2"},
+    "plan_refactoring": {
+        "refactor_type": "rename",
+        "symbol": "ToolRegistry",
+        "new_name": "ToolRegistry2",
+    },
     "get_code_provenance": {"symbol": "ToolRegistry"},
     "assess_change_risk": {"symbol": "ToolRegistry"},
     "structural_search": {"pattern": "class $NAME"},
@@ -197,8 +209,7 @@ def test_every_tool_executes_successfully(tmp_path: Path) -> None:
     failures = [f for f in failures if not f.startswith("git:")]
 
     assert not failures, (
-        "Tools that failed execution against a live-shaped pipeline:\n  "
-        + "\n  ".join(failures)
+        "Tools that failed execution against a live-shaped pipeline:\n  " + "\n  ".join(failures)
     )
 
 

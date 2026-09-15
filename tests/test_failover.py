@@ -31,10 +31,15 @@ from tracera.tools.registry import ToolRegistry
 class _FakeProvider:
     """Configurable fake provider — fails N times, then returns a response."""
 
-    def __init__(self, name: str, fail_complete: bool = False,
-                 fail_stream: bool = False, fail_always: bool = False,
-                 fail_permanent: bool = False,
-                 response_text: str = "ok"):
+    def __init__(
+        self,
+        name: str,
+        fail_complete: bool = False,
+        fail_stream: bool = False,
+        fail_always: bool = False,
+        fail_permanent: bool = False,
+        response_text: str = "ok",
+    ):
         self.name = name
         self.default_model = f"{name}-model"
         self.fail_complete = fail_complete
@@ -59,8 +64,11 @@ class _FakeProvider:
         if self.fail_always or self.fail_complete or self.fail_permanent:
             self._raise("complete")
         return LLMResponse(
-            content=f"{self.name}: {self.response_text}", tool_calls=None,
-            usage=TokenUsage(), model=self.default_model, finish_reason="stop",
+            content=f"{self.name}: {self.response_text}",
+            tool_calls=None,
+            usage=TokenUsage(),
+            model=self.default_model,
+            finish_reason="stop",
         )
 
     async def stream(self, messages, model=None, **kwargs):
@@ -75,6 +83,7 @@ class _FakeProvider:
 
 
 # ── FailoverProvider ──────────────────────────────────────────────────────────
+
 
 def test_failover_falls_back_on_failure():
     from tracera.providers.failover import FailoverProvider
@@ -94,10 +103,12 @@ def test_failover_falls_back_on_failure():
 def test_failover_all_fail_raises():
     from tracera.providers.failover import FailoverProvider
 
-    provider = FailoverProvider([
-        _FakeProvider("groq", fail_always=True),
-        _FakeProvider("openai", fail_always=True),
-    ])
+    provider = FailoverProvider(
+        [
+            _FakeProvider("groq", fail_always=True),
+            _FakeProvider("openai", fail_always=True),
+        ]
+    )
     with pytest.raises(ProviderError, match="All 2 provider"):
         asyncio.run(provider.complete([LLMMessage.user("hi")]))
 
@@ -161,10 +172,12 @@ def test_failover_stream_skips_permanently_failed_provider():
 def test_failover_stream_falls_back():
     from tracera.providers.failover import FailoverProvider
 
-    provider = FailoverProvider([
-        _FakeProvider("groq", fail_stream=True),
-        _FakeProvider("gemini"),
-    ])
+    provider = FailoverProvider(
+        [
+            _FakeProvider("groq", fail_stream=True),
+            _FakeProvider("gemini"),
+        ]
+    )
     events = asyncio.run(_collect_stream(provider))
     texts = [e.text for e in events if e.type == "text_delta"]
     assert "".join(t for t in texts if t) == "gemini: ok"
@@ -207,9 +220,9 @@ def test_failover_never_forwards_global_model_to_providers():
     cerebras = _FakeProvider("cerebras")
     provider = FailoverProvider([groq, cerebras])
 
-    response = asyncio.run(provider.complete(
-        [LLMMessage.user("hi")], model="llama-3.3-70b-versatile"
-    ))
+    response = asyncio.run(
+        provider.complete([LLMMessage.user("hi")], model="llama-3.3-70b-versatile")
+    )
 
     assert response.content == "groq: ok"
     assert groq.last_model is None  # provider used its own default_model
@@ -225,9 +238,9 @@ def test_failover_fallback_provider_uses_own_model():
     cerebras = _FakeProvider("cerebras")
     provider = FailoverProvider([groq, cerebras])
 
-    response = asyncio.run(provider.complete(
-        [LLMMessage.user("hi")], model="llama-3.3-70b-versatile"
-    ))
+    response = asyncio.run(
+        provider.complete([LLMMessage.user("hi")], model="llama-3.3-70b-versatile")
+    )
 
     assert response.content == "cerebras: ok"
     assert groq.last_model is None
@@ -251,6 +264,7 @@ def test_failover_stream_never_forwards_global_model():
 
 
 # ── Conversation compaction (413 prevention) ──────────────────────────────────
+
 
 def test_compact_history_fits_budget():
     from tracera.conversation.state import ConversationState
@@ -296,19 +310,23 @@ def test_compact_history_keeps_tool_pairs_intact():
 
 # ── Agent loop error handling ─────────────────────────────────────────────────
 
+
 def test_loop_reports_error_without_bogus_max_iterations():
     from tracera.agent.react_loop import AgentEventType, ReActAgent
 
-    agent = ReActAgent(provider=_FakeProvider("groq", fail_always=True),
-                       registry=ToolRegistry(), streaming=True)
+    agent = ReActAgent(
+        provider=_FakeProvider("groq", fail_always=True), registry=ToolRegistry(), streaming=True
+    )
 
     errors = []
     types = []
+
     async def _run():
         async for ev in await agent.run("hello"):
             types.append(ev.type)
             if ev.type == AgentEventType.ERROR:
                 errors.append(ev.text)
+
     asyncio.run(_run())
 
     assert any("LLM call failed" in e for e in errors)
@@ -318,7 +336,7 @@ def test_loop_reports_error_without_bogus_max_iterations():
 
 
 def test_loop_compacts_conversation_before_call():
-    from tracera.agent.react_loop import AgentEventType, ReActAgent
+    from tracera.agent.react_loop import ReActAgent
     from tracera.conversation.state import ConversationState
 
     provider = _FakeProvider("openai")
@@ -327,8 +345,9 @@ def test_loop_compacts_conversation_before_call():
         conv.add_user(f"old turn {i} " + "x" * 200)
         conv.add_assistant("y" * 200)
 
-    agent = ReActAgent(provider=provider, registry=ToolRegistry(),
-                       streaming=True, context_budget_tokens=100)
+    agent = ReActAgent(
+        provider=provider, registry=ToolRegistry(), streaming=True, context_budget_tokens=100
+    )
     asyncio.run(_drain(agent, conv))
 
     # The provider saw a compacted history (not all 21 pre-run messages)
@@ -342,13 +361,18 @@ async def _drain(agent, conv):
 
 # ── main._build_provider wiring ───────────────────────────────────────────────
 
+
 def test_build_provider_returns_failover(monkeypatch):
     from tracera.main import _build_provider
     from tracera.providers.failover import FailoverProvider
 
-    settings = type("S", (), {
-        "tracera_default_model": "",
-    })()
+    settings = type(
+        "S",
+        (),
+        {
+            "tracera_default_model": "",
+        },
+    )()
 
     created = []
 
@@ -382,10 +406,14 @@ def test_build_provider_does_not_apply_wrong_default_model(monkeypatch):
     """
     from tracera.main import _build_provider
 
-    settings = type("S", (), {
-        "tracera_default_provider": "auto",
-        "tracera_default_model": "openai/gpt-oss-120b",  # a Groq model
-    })()
+    settings = type(
+        "S",
+        (),
+        {
+            "tracera_default_provider": "auto",
+            "tracera_default_model": "openai/gpt-oss-120b",  # a Groq model
+        },
+    )()
 
     created = {}
 
@@ -415,10 +443,14 @@ def test_build_provider_explicit_provider_honours_default_model(monkeypatch):
     that provider still receives TRACERA_DEFAULT_MODEL."""
     from tracera.main import _build_provider
 
-    settings = type("S", (), {
-        "tracera_default_provider": "groq",
-        "tracera_default_model": "llama-3.3-70b-versatile",
-    })()
+    settings = type(
+        "S",
+        (),
+        {
+            "tracera_default_provider": "groq",
+            "tracera_default_model": "llama-3.3-70b-versatile",
+        },
+    )()
 
     created = {}
 

@@ -37,6 +37,7 @@ def _resolve_symbol(graph, name: str) -> str | None:
 
 # ── get_symbol_provenance ────────────────────────────────────────────────────
 
+
 class GetSymbolProvenanceTool(Tool):
     """Git archaeology — trace every commit that touched a symbol."""
 
@@ -83,19 +84,24 @@ class GetSymbolProvenanceTool(Tool):
         try:
             result = subprocess.run(
                 ["git", "log", "--format=%H|%s|%an|%ai", "--follow", "--", file_path],
-                cwd=workspace_root, capture_output=True, text=True, timeout=15,
+                cwd=workspace_root,
+                capture_output=True,
+                text=True,
+                timeout=15,
             )
             commits = []
             for line in result.stdout.strip().split("\n"):
                 if "|" in line:
                     parts = line.split("|", 3)
                     if len(parts) >= 4:
-                        commits.append({
-                            "hash": parts[0][:8],
-                            "message": parts[1],
-                            "author": parts[2],
-                            "date": parts[3],
-                        })
+                        commits.append(
+                            {
+                                "hash": parts[0][:8],
+                                "message": parts[1],
+                                "author": parts[2],
+                                "date": parts[3],
+                            }
+                        )
         except Exception:
             commits = []
 
@@ -127,14 +133,12 @@ class GetSymbolProvenanceTool(Tool):
             lines.append(f"**Commit history ({len(commits)} commits):**\n")
             for c in commits[:20]:
                 category = classify(c["message"])
-                lines.append(
-                    f"- `{c['hash']}` {category} — {c['message'][:80]}"
-                )
+                lines.append(f"- `{c['hash']}` {category} — {c['message'][:80]}")
                 lines.append(f"  _by {c['author']} on {c['date'][:10]}_")
 
             # Evolution narrative
             if len(commits) >= 2:
-                lines.append(f"\n### Evolution Summary")
+                lines.append("\n### Evolution Summary")
                 categories = defaultdict(int)
                 for c in commits:
                     cat = classify(c["message"])
@@ -145,17 +149,14 @@ class GetSymbolProvenanceTool(Tool):
 
                 first = commits[-1]
                 latest = commits[0]
-                lines.append(
-                    f"\n**Created:** {first['date'][:10]} by {first['author']}"
-                )
-                lines.append(
-                    f"**Last modified:** {latest['date'][:10]} by {latest['author']}"
-                )
+                lines.append(f"\n**Created:** {first['date'][:10]} by {first['author']}")
+                lines.append(f"**Last modified:** {latest['date'][:10]} by {latest['author']}")
 
         return ToolResult.ok(self.name, "", "\n".join(lines), symbol=symbol, commits=len(commits))
 
 
 # ── audit_agent_config ───────────────────────────────────────────────────────
+
 
 class AuditAgentConfigTool(Tool):
     """Scan agent config files for token waste and stale references."""
@@ -190,9 +191,13 @@ class AuditAgentConfigTool(Tool):
 
         # Config files to scan
         config_names = [
-            "CLAUDE.md", ".cursorrules", "copilot-instructions.md",
-            ".github/copilot-instructions.md", ".tracera/config.json",
-            ".tracera/AGENTS.md", "AGENTS.md",
+            "CLAUDE.md",
+            ".cursorrules",
+            "copilot-instructions.md",
+            ".github/copilot-instructions.md",
+            ".tracera/config.json",
+            ".tracera/AGENTS.md",
+            "AGENTS.md",
         ]
 
         if config_path:
@@ -216,7 +221,8 @@ class AuditAgentConfigTool(Tool):
 
             # Check for stale file references
             import re
-            file_refs = re.findall(r'`([^`]+\.(py|js|ts|go|rs|java|cpp))`', content)
+
+            file_refs = re.findall(r"`([^`]+\.(py|js|ts|go|rs|java|cpp))`", content)
             for ref, ext in file_refs:
                 ref_path = workspace_root / ref
                 if not ref_path.exists():
@@ -225,7 +231,7 @@ class AuditAgentConfigTool(Tool):
 
             # Check for stale symbol references (if graph available)
             if graph:
-                symbol_refs = re.findall(r'`([A-Z][a-zA-Z]+)`', content)
+                symbol_refs = re.findall(r"`([A-Z][a-zA-Z]+)`", content)
                 for sym in symbol_refs[:20]:
                     node_ids = graph.find_by_name(sym)
                     if not node_ids:
@@ -253,12 +259,16 @@ class AuditAgentConfigTool(Tool):
             lines.append("\n### ✅ No issues found")
 
         return ToolResult.ok(
-            self.name, "", "\n".join(lines),
-            total_tokens=total_tokens, issues=len(issues),
+            self.name,
+            "",
+            "\n".join(lines),
+            total_tokens=total_tokens,
+            issues=len(issues),
         )
 
 
 # ── get_endpoint_impact ──────────────────────────────────────────────────────
+
 
 class GetEndpointImpactTool(Tool):
     """What breaks if you change an HTTP endpoint handler."""
@@ -274,9 +284,7 @@ class GetEndpointImpactTool(Tool):
         "properties": {
             "endpoint": {
                 "type": "string",
-                "description": (
-                    "HTTP endpoint path (e.g. '/api/users') or handler symbol name."
-                ),
+                "description": ("HTTP endpoint path (e.g. '/api/users') or handler symbol name."),
             },
         },
         "required": ["endpoint"],
@@ -308,7 +316,8 @@ class GetEndpointImpactTool(Tool):
 
         if not node_id:
             return ToolResult.ok(
-                self.name, "",
+                self.name,
+                "",
                 f"Endpoint '{endpoint}' not found in the graph. "
                 "Try the handler function name instead.",
             )
@@ -329,14 +338,18 @@ class GetEndpointImpactTool(Tool):
             for cid in callers[:15]:
                 n = graph.get_node(cid)
                 if n:
-                    lines.append(f"- `{n.get('name', '?')}` ({n.get('symbol_type', '?')}) in `{n.get('file_path', '?')}`:{n.get('start_line', '?')}")
+                    lines.append(
+                        f"- `{n.get('name', '?')}` ({n.get('symbol_type', '?')}) in `{n.get('file_path', '?')}`:{n.get('start_line', '?')}"
+                    )
 
         if callees:
             lines.append("\n### Dependencies (this endpoint calls):")
             for cid in callees[:15]:
                 n = graph.get_node(cid)
                 if n:
-                    lines.append(f"- `{n.get('name', '?')}` ({n.get('symbol_type', '?')}) in `{n.get('file_path', '?')}`:{n.get('start_line', '?')}")
+                    lines.append(
+                        f"- `{n.get('name', '?')}` ({n.get('symbol_type', '?')}) in `{n.get('file_path', '?')}`:{n.get('start_line', '?')}"
+                    )
 
         total_impact = len(callers) + len(callees)
         if total_impact > 10:
@@ -347,12 +360,17 @@ class GetEndpointImpactTool(Tool):
             lines.append(f"\n🟢 **Low impact** — {total_impact} symbols affected.")
 
         return ToolResult.ok(
-            self.name, "", "\n".join(lines),
-            endpoint=endpoint, callers=len(callers), callees=len(callees),
+            self.name,
+            "",
+            "\n".join(lines),
+            endpoint=endpoint,
+            callers=len(callers),
+            callees=len(callees),
         )
 
 
 # ── get_dependency_cycles ────────────────────────────────────────────────────
+
 
 class GetDependencyCyclesTool(Tool):
     """Detect circular imports in the codebase."""
@@ -388,11 +406,12 @@ class GetDependencyCyclesTool(Tool):
 
         try:
             import networkx as nx
+
             cycles = list(nx.simple_cycles(graph._g))
         except Exception as e:
             return ToolResult.ok(self.name, "", f"Cycle detection failed: {e}")
 
-        lines = [f"## Dependency Cycles\n"]
+        lines = ["## Dependency Cycles\n"]
         lines.append(f"**Cycles found:** {len(cycles)}\n")
 
         if not cycles:
@@ -420,6 +439,7 @@ class GetDependencyCyclesTool(Tool):
 
 
 # ── get_coupling_metrics ─────────────────────────────────────────────────────
+
 
 class GetCouplingMetricsTool(Tool):
     """Measure module coupling and instability."""
@@ -476,18 +496,20 @@ class GetCouplingMetricsTool(Tool):
         for fp, m in files.items():
             total = m["ca"] + m["ce"]
             instability = m["ce"] / total if total > 0 else 0
-            metrics.append({
-                "file": fp,
-                "ca": m["ca"],
-                "ce": m["ce"],
-                "instability": instability,
-                "symbols": m["symbols"],
-                "risk": m["ca"] + m["ce"],
-            })
+            metrics.append(
+                {
+                    "file": fp,
+                    "ca": m["ca"],
+                    "ce": m["ce"],
+                    "instability": instability,
+                    "symbols": m["symbols"],
+                    "risk": m["ca"] + m["ce"],
+                }
+            )
 
         metrics.sort(key=lambda m: -m["risk"])
 
-        lines = [f"## Coupling Metrics\n"]
+        lines = ["## Coupling Metrics\n"]
         lines.append(f"**Modules analyzed:** {len(metrics)}\n")
 
         for m in metrics[:top_n]:

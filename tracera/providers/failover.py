@@ -17,7 +17,7 @@ Used by ``_build_agent`` when more than one provider key is configured.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
 
 from tracera.errors import ProviderError, ProviderUnavailableError
 from tracera.logging import get_logger
@@ -48,7 +48,9 @@ class FailoverProvider(LLMProvider):
     rest of the session.
     """
 
-    def __init__(self, providers: list[LLMProvider], *, delay: float = _FALLBACK_DELAY_SECONDS) -> None:
+    def __init__(
+        self, providers: list[LLMProvider], *, delay: float = _FALLBACK_DELAY_SECONDS
+    ) -> None:
         if not providers:
             raise ProviderError("FailoverProvider requires at least one provider.")
         self._providers = list(providers)
@@ -104,7 +106,8 @@ class FailoverProvider(LLMProvider):
             self.failover_count += 1
             log.warning(
                 "Provider failover: switched to %s (failover #%d)",
-                self._providers[index].name, self.failover_count,
+                self._providers[index].name,
+                self.failover_count,
             )
         self._active_index = index
 
@@ -113,7 +116,8 @@ class FailoverProvider(LLMProvider):
             self._dead.add(index)
             log.warning(
                 "Provider %s marked permanently unavailable: %s",
-                self._providers[index].name, str(error)[:200],
+                self._providers[index].name,
+                str(error)[:200],
             )
 
     def _all_failed_error(self, last_error: Exception | None) -> ProviderError:
@@ -168,7 +172,8 @@ class FailoverProvider(LLMProvider):
                 self._errors[provider.name] = str(e)
                 log.warning(
                     "Provider %s failed: %s — trying next available",
-                    provider.name, str(e)[:200],
+                    provider.name,
+                    str(e)[:200],
                 )
                 if isinstance(e, ProviderUnavailableError):
                     self._mark_dead(index, e)
@@ -211,7 +216,8 @@ class FailoverProvider(LLMProvider):
                 self._errors[provider.name] = str(e)
                 log.warning(
                     "Provider %s stream failed: %s — trying next available",
-                    provider.name, str(e)[:200],
+                    provider.name,
+                    str(e)[:200],
                 )
                 if isinstance(e, ProviderUnavailableError):
                     self._mark_dead(index, e)

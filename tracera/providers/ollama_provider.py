@@ -7,7 +7,6 @@ Connects to a local Ollama instance via the OpenAI-compatible endpoint.
 from __future__ import annotations
 
 from tracera.logging import get_logger
-from tracera.providers.base import ToolSchema
 from tracera.providers.openai_provider import OpenAIProvider
 
 log = get_logger("providers.ollama")
@@ -43,6 +42,7 @@ class OllamaProvider(OpenAIProvider):
         """Check if Ollama is running."""
         try:
             import httpx
+
             async with httpx.AsyncClient(timeout=3.0) as client:
                 resp = await client.get(
                     self._client.base_url.copy_with(path="/api/tags")  # type: ignore

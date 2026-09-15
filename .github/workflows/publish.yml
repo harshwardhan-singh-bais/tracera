@@ -1,0 +1,28 @@
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # OIDC trusted publishing — no token stored
+    environment: pypi
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv build
+      - name: Verify wheel is clean before publishing
+        run: |
+          python3 - <<'EOF'
+          import zipfile, glob
+          w = glob.glob("dist/*.whl")[0]
+          bad = [n for n in zipfile.ZipFile(w).namelist() if "__pycache__" in n]
+          assert not bad, f"junk in wheel: {bad[:5]}"
+          print(f"wheel OK: {w}")
+          EOF
+      - run: uv publish

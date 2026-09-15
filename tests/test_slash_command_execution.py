@@ -10,8 +10,6 @@ on malformed input or missing prerequisites, only shows error messages.
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -101,6 +99,7 @@ def app(mock_agent, mock_memory, tmp_path):
     async def _inline_worker(coro, **kwargs):
         # ``coro`` may be a functools.partial wrapping the real coroutine.
         import functools
+
         if isinstance(coro, functools.partial):
             coro = coro.func(*coro.args, **coro.keywords)
         if asyncio.iscoroutine(coro) or asyncio.isfuture(coro):
@@ -222,12 +221,10 @@ async def test_tool_aliases_dispatch_without_crash(app):
 
     source = inspect.getsource(app._handle_command)
     explicit = set(re.findall(r'cmd == "\(/?([^"]+)"\)', source))
-    for group in re.findall(r'cmd in \(([^)]*)\)', source):
+    for group in re.findall(r"cmd in \(([^)]*)\)", source):
         explicit.update(re.findall(r'"([^"]+)"', group))
 
-    aliases_without_explicit_branch = sorted(
-        name for name in SLASH_TOOLS if name not in explicit
-    )
+    aliases_without_explicit_branch = sorted(name for name in SLASH_TOOLS if name not in explicit)
     assert aliases_without_explicit_branch, (
         "Expected some SLASH_TOOLS aliases to lack an explicit branch; "
         "if this fails, either all aliases have explicit handlers (good!) "

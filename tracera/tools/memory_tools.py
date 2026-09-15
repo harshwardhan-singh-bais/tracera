@@ -61,21 +61,29 @@ class RecallMemoryTool(Tool):
     def parameters_schema(self) -> dict[str, Any]:
         return self.parameters
 
-    async def execute(self, query: str, k: int = 10, use_graph_expansion: bool = True) -> ToolResult:
+    async def execute(
+        self, query: str, k: int = 10, use_graph_expansion: bool = True
+    ) -> ToolResult:
         try:
             context = self._recall.recall(
-                query, k=k, max_chars=8000,
-                include_sessions=True, include_triples=True, include_legacy=True,
+                query,
+                k=k,
+                max_chars=8000,
+                include_sessions=True,
+                include_triples=True,
+                include_legacy=True,
                 use_graph_expansion=use_graph_expansion,
             )
             if not context:
                 return ToolResult.ok(
-                    tool_name=self.name, tool_call_id="",
+                    tool_name=self.name,
+                    tool_call_id="",
                     output="No relevant memories found for this query.",
                     query=query,
                 )
             return ToolResult.ok(
-                tool_name=self.name, tool_call_id="",
+                tool_name=self.name,
+                tool_call_id="",
                 output=context,
                 query=query,
             )
@@ -101,8 +109,19 @@ class RememberMemoryTool(Tool):
             },
             "memory_type": {
                 "type": "string",
-                "enum": ["fact", "rule", "preference", "relationship", "skill", "event",
-                         "decision", "goal", "constraint", "experience", "attribute"],
+                "enum": [
+                    "fact",
+                    "rule",
+                    "preference",
+                    "relationship",
+                    "skill",
+                    "event",
+                    "decision",
+                    "goal",
+                    "constraint",
+                    "experience",
+                    "attribute",
+                ],
                 "description": "Type of memory (default: fact).",
                 "default": "fact",
             },
@@ -135,14 +154,19 @@ class RememberMemoryTool(Tool):
         confidence: float = 0.8,
     ) -> ToolResult:
         try:
-            from tracera.memory.taxonomy import MemoryType, create_fact
             from tracera.memory.taxonomy import (
-                create_rule, create_preference, create_relationship,
-                create_skill, create_event,
+                MemoryAttribute,
+                MemoryConstraint,
+                MemoryDecision,
+                MemoryExperience,
+                MemoryGoal,
+                create_event,
+                create_fact,
+                create_preference,
+                create_relationship,
+                create_rule,
+                create_skill,
             )
-            from tracera.memory.taxonomy import MemoryRule, MemoryPreference
-            from tracera.memory.taxonomy import MemoryDecision, MemoryGoal
-            from tracera.memory.taxonomy import MemoryConstraint, MemoryExperience, MemoryAttribute
 
             # Factory functions for types that have dedicated creators
             factories = {
@@ -159,15 +183,25 @@ class RememberMemoryTool(Tool):
                 factory = factories[memory_type]
                 memory = factory(content, importance=importance)
             elif memory_type == "decision":
-                memory = MemoryDecision(content=content, importance=importance, session_id="", source="tool")
+                memory = MemoryDecision(
+                    content=content, importance=importance, session_id="", source="tool"
+                )
             elif memory_type == "goal":
-                memory = MemoryGoal(content=content, importance=importance, session_id="", source="tool")
+                memory = MemoryGoal(
+                    content=content, importance=importance, session_id="", source="tool"
+                )
             elif memory_type == "constraint":
-                memory = MemoryConstraint(content=content, importance=importance, session_id="", source="tool")
+                memory = MemoryConstraint(
+                    content=content, importance=importance, session_id="", source="tool"
+                )
             elif memory_type == "experience":
-                memory = MemoryExperience(content=content, importance=importance, session_id="", source="tool")
+                memory = MemoryExperience(
+                    content=content, importance=importance, session_id="", source="tool"
+                )
             elif memory_type == "attribute":
-                memory = MemoryAttribute(content=content, importance=importance, session_id="", source="tool")
+                memory = MemoryAttribute(
+                    content=content, importance=importance, session_id="", source="tool"
+                )
             else:
                 memory = create_fact(content, importance=importance)
 
@@ -175,7 +209,8 @@ class RememberMemoryTool(Tool):
             self._memory.add(memory)
 
             return ToolResult.ok(
-                tool_name=self.name, tool_call_id="",
+                tool_name=self.name,
+                tool_call_id="",
                 output=f"Memory stored ({memory_type}): {content[:100]}",
                 memory_id=memory.id,
                 memory_type=memory_type,
@@ -223,11 +258,13 @@ class ForgetMemoryTool(Tool):
                 deleted = self._memory.delete(memory_id)
                 if deleted:
                     return ToolResult.ok(
-                        tool_name=self.name, tool_call_id="",
+                        tool_name=self.name,
+                        tool_call_id="",
                         output=f"Memory {memory_id[:8]} deleted.",
                     )
                 return ToolResult.ok(
-                    tool_name=self.name, tool_call_id="",
+                    tool_name=self.name,
+                    tool_call_id="",
                     output=f"Memory {memory_id[:8]} not found.",
                 )
 
@@ -240,12 +277,14 @@ class ForgetMemoryTool(Tool):
                         self._memory.delete(mem.id)
                         deleted_count += 1
                 return ToolResult.ok(
-                    tool_name=self.name, tool_call_id="",
+                    tool_name=self.name,
+                    tool_call_id="",
                     output=f"Deleted {deleted_count} memory matching '{content_match[:50]}'.",
                 )
 
             return ToolResult.fail(
-                self.name, "",
+                self.name,
+                "",
                 "Provide either memory_id or content_match.",
             )
         except Exception as e:
@@ -283,7 +322,8 @@ class ListSessionsTool(Tool):
             sessions = self._sessions.sessions[:k]
             if not sessions:
                 return ToolResult.ok(
-                    tool_name=self.name, tool_call_id="",
+                    tool_name=self.name,
+                    tool_call_id="",
                     output="No past sessions found.",
                 )
 
@@ -293,13 +333,13 @@ class ListSessionsTool(Tool):
                 if session.duration_seconds:
                     mins = int(session.duration_seconds / 60)
                     duration = f" ({mins}m)" if mins > 0 else f" ({int(session.duration_seconds)}s)"
-                icon = {"success": "✅", "failure": "❌", "partial": "⚠️"}.get(
-                    session.outcome, "📋"
-                )
+                icon = {"success": "✅", "failure": "❌", "partial": "⚠️"}.get(session.outcome, "📋")
                 files = f", {len(session.files_touched)} files" if session.files_touched else ""
-                tools = ", ".join(
-                    f"{name}×{count}" for name, count in session.tools_used.items()
-                ) if session.tools_used else "no tools"
+                tools = (
+                    ", ".join(f"{name}×{count}" for name, count in session.tools_used.items())
+                    if session.tools_used
+                    else "no tools"
+                )
                 lines.append(
                     f"{i}. {icon} [{session.outcome}] {session.task[:70]}{duration}{files}"
                 )
@@ -309,7 +349,8 @@ class ListSessionsTool(Tool):
                 lines.append("")
 
             return ToolResult.ok(
-                tool_name=self.name, tool_call_id="",
+                tool_name=self.name,
+                tool_call_id="",
                 output="\n".join(lines),
                 session_count=len(sessions),
             )
@@ -358,13 +399,14 @@ class MemoryStatsTool(Tool):
                         lines.append(f"  {mtype}: {count}")
 
             if self._triple_store:
-                lines.append(f"\n**Knowledge Graph**:")
+                lines.append("\n**Knowledge Graph**:")
                 lines.append(f"  Triples: {self._triple_store.triple_count}")
                 lines.append(f"  Nodes: {self._triple_store.node_count}")
                 lines.append(f"  Edges: {self._triple_store.edge_count}")
 
             return ToolResult.ok(
-                tool_name=self.name, tool_call_id="",
+                tool_name=self.name,
+                tool_call_id="",
                 output="\n".join(lines),
                 stats=stats,
             )
@@ -415,7 +457,8 @@ class MemoryConsolidateTool(Tool):
             lines.append(f"**Errors**: {result['errors']}")
 
             return ToolResult.ok(
-                tool_name=self.name, tool_call_id="",
+                tool_name=self.name,
+                tool_call_id="",
                 output="\n".join(lines),
                 stats=result,
             )
@@ -492,11 +535,15 @@ class MemoryGraphTool(Tool):
                 if subgraph["outgoing"]:
                     lines.append(f"**Outgoing ({len(subgraph['outgoing'])})**:")
                     for t in subgraph["outgoing"][:15]:
-                        lines.append(f"  {concept} → {t.predicate} → {t.object} (conf: {t.confidence:.2f})")
+                        lines.append(
+                            f"  {concept} → {t.predicate} → {t.object} (conf: {t.confidence:.2f})"
+                        )
                 if subgraph["incoming"]:
                     lines.append(f"\n**Incoming ({len(subgraph['incoming'])})**:")
                     for t in subgraph["incoming"][:15]:
-                        lines.append(f"  {t.subject} → {t.predicate} → {concept} (conf: {t.confidence:.2f})")
+                        lines.append(
+                            f"  {t.subject} → {t.predicate} → {concept} (conf: {t.confidence:.2f})"
+                        )
 
             elif action == "paths" and target:
                 paths = self._store.find_paths(concept, target, max_depth=depth)
@@ -525,7 +572,8 @@ class MemoryGraphTool(Tool):
                 return ToolResult.fail(self.name, "", f"Unknown action: {action}")
 
             return ToolResult.ok(
-                tool_name=self.name, tool_call_id="",
+                tool_name=self.name,
+                tool_call_id="",
                 output="\n".join(lines),
             )
         except Exception as e:
@@ -551,9 +599,10 @@ class MemoryWorkerStatusTool(Tool):
 
     async def execute(self) -> ToolResult:
         try:
-            if not hasattr(self._layer, '_worker') or not self._layer._worker:
+            if not hasattr(self._layer, "_worker") or not self._layer._worker:
                 return ToolResult.ok(
-                    tool_name=self.name, tool_call_id="",
+                    tool_name=self.name,
+                    tool_call_id="",
                     output="Memory worker not running.",
                 )
 
@@ -563,7 +612,8 @@ class MemoryWorkerStatusTool(Tool):
                 lines.append(f"  {key.replace('_', ' ').title()}: {value}")
 
             return ToolResult.ok(
-                tool_name=self.name, tool_call_id="",
+                tool_name=self.name,
+                tool_call_id="",
                 output="\n".join(lines),
                 stats=stats,
             )

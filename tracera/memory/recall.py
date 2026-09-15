@@ -121,7 +121,9 @@ class ContextRecall:
         result = "## Agent Memory\n\n" + "\n\n".join(parts)
         log.debug(
             "Recalled memories for %r: %d chars across %d sources",
-            query[:40], len(result), len(parts),
+            query[:40],
+            len(result),
+            len(parts),
         )
         return result[:max_chars]
 
@@ -153,9 +155,7 @@ class ContextRecall:
                 duration = f" ({mins}m)" if mins > 0 else ""
             files = f", {len(session.files_touched)} files" if session.files_touched else ""
             summary = session.summary[:80] if session.summary else session.task[:80]
-            lines.append(
-                f"- [{session.outcome}] {summary}{duration}{files}"
-            )
+            lines.append(f"- [{session.outcome}] {summary}{duration}{files}")
         return "\n".join(lines)
 
     def _format_triples(self, triples: list) -> str:
@@ -185,6 +185,7 @@ class EnhancedMemoryStore:
 
     def __init__(self, memory_dir: Any) -> None:
         from pathlib import Path
+
         self._dir = Path(memory_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
         self._file = self._dir / self.MEMORY_FILE
@@ -195,6 +196,7 @@ class EnhancedMemoryStore:
         if self._file.exists():
             try:
                 import json
+
                 data = json.loads(self._file.read_text(encoding="utf-8"))
                 for d in data.get("memories", []):
                     mem = _memory_from_dict(d)
@@ -207,9 +209,8 @@ class EnhancedMemoryStore:
     def _save(self) -> None:
         try:
             import json
-            data = {
-                "memories": [m.to_dict() for m in self._memories.values()]
-            }
+
+            data = {"memories": [m.to_dict() for m in self._memories.values()]}
             self._file.write_text(json.dumps(data, indent=2), encoding="utf-8")
         except Exception as e:
             log.error("Failed to save enhanced memory: %s", e)
@@ -248,14 +249,15 @@ class EnhancedMemoryStore:
         min_confidence: float = 0.3,
     ) -> list[StructuredMemory]:
         """Retrieve the most relevant memories for a query using TF-IDF."""
-        from tracera.agent.memory import _tokenize, _tfidf_score
+        from tracera.agent.memory import _tfidf_score, _tokenize
 
         query_tokens = _tokenize(query)
         if not query_tokens:
             return list(self._memories.values())[:k]
 
         candidates = [
-            m for m in self._memories.values()
+            m
+            for m in self._memories.values()
             if m.confidence >= min_confidence
             and (memory_type is None or m.memory_type == memory_type)
         ]
@@ -302,6 +304,7 @@ class EnhancedMemoryStore:
 
     def stats(self) -> dict:
         from collections import Counter
+
         by_type = Counter(m.memory_type.value for m in self._memories.values())
         return {
             "total": self.count,
@@ -311,6 +314,7 @@ class EnhancedMemoryStore:
     def _find_duplicate(self, memory: StructuredMemory) -> StructuredMemory | None:
         """Find a very similar existing memory."""
         from tracera.agent.memory import _tokenize
+
         query_tokens = set(_tokenize(memory.content))
         for existing in self._memories.values():
             if existing.memory_type != memory.memory_type:

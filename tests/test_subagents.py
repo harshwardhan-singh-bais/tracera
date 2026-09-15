@@ -5,8 +5,6 @@ and result aggregation.
 
 from __future__ import annotations
 
-import pytest
-
 from tracera.agent.orchestrator import (
     AgentResult,
     AgentStatus,
@@ -23,7 +21,6 @@ from tracera.agent.subagents import (
     role_spec,
 )
 from tracera.tools.registry import ToolRegistry
-
 
 # ════════════════════════════════════════════════════════════════════════════
 # Phase 42 — sub-agent framework
@@ -48,6 +45,7 @@ def _dummy_tool(name: str):
 
         async def execute(self, **kwargs):
             from tracera.tools.base import ToolResult
+
             return ToolResult.ok(name, "", "ok")
 
     return _T()
@@ -218,6 +216,7 @@ class _FakeDecomposer:
 
     async def decompose(self, task: str):
         from tracera.agent.planner import Plan
+
         plan = Plan(task)
         for title in self.titles:
             plan.add_item(title=title)
@@ -231,10 +230,12 @@ async def test_orchestrator_delegates_and_aggregates():
     }
     orch = TaskOrchestrator(
         fleet,
-        decomposer=_FakeDecomposer([
-            "explain the login flow",
-            "implement the login page",
-        ]),
+        decomposer=_FakeDecomposer(
+            [
+                "explain the login flow",
+                "implement the login page",
+            ]
+        ),
     )
 
     events = []

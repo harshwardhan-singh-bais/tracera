@@ -7,13 +7,11 @@ Supports multiple profiles: local | development | production | evaluation.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
 
 Profile = Literal["local", "development", "production", "evaluation"]
 
@@ -27,7 +25,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        env_prefix="",          # prefixed fields use explicit names below
+        env_prefix="",  # prefixed fields use explicit names below
         extra="ignore",
         case_sensitive=False,
     )
@@ -55,9 +53,7 @@ class Settings(BaseSettings):
     # Budget for conversation history sent per LLM call. Old turns are
     # compacted to stay under this — prevents "request too large" (413)
     # errors on low-TPM tiers such as Groq's free plan.
-    tracera_context_budget_tokens: int = Field(
-        12_000, alias="TRACERA_CONTEXT_BUDGET_TOKENS"
-    )
+    tracera_context_budget_tokens: int = Field(12_000, alias="TRACERA_CONTEXT_BUDGET_TOKENS")
     tracera_command_timeout: int = Field(30, alias="TRACERA_COMMAND_TIMEOUT")
     # Cap for /test //tests runs. The default 120s is too short for this
     # repo's own suite (~150s); raise via TRACERA_TEST_TIMEOUT when needed.
@@ -76,14 +72,15 @@ class Settings(BaseSettings):
     tracera_require_confirmation_for: str = Field(
         "delete", alias="TRACERA_REQUIRE_CONFIRMATION_FOR"
     )
-    
+
     # ── MCP Server Security (Phase 4) ────────────────────────────────────────
     # API keys for authenticating remote MCP clients (SSE/streamable-http)
     tracera_mcp_api_key: str | None = Field(None, alias="TRACERA_MCP_API_KEY")
     tracera_mcp_api_keys: list[str] = Field(default_factory=list, alias="TRACERA_MCP_API_KEYS")
     # Enforce workspace boundary restrictions - block all file operations outside the configured workspace
-    tracera_mcp_enforce_workspace_boundaries: bool = Field(True, alias="TRACERA_MCP_ENFORCE_WORKSPACE_BOUNDARIES")
-
+    tracera_mcp_enforce_workspace_boundaries: bool = Field(
+        True, alias="TRACERA_MCP_ENFORCE_WORKSPACE_BOUNDARIES"
+    )
 
     # ── LLM Providers ─────────────────────────────────────────────────────────
 
@@ -100,15 +97,12 @@ class Settings(BaseSettings):
     together_api_key: str | None = Field(None, alias="TOGETHER_API_KEY")
     cohere_api_key: str | None = Field(None, alias="COHERE_API_KEY")
 
-    ollama_base_url: str = Field(
-        "http://localhost:11434", alias="OLLAMA_BASE_URL"
-    )
+    ollama_base_url: str = Field("http://localhost:11434", alias="OLLAMA_BASE_URL")
 
     # ── Embedding ─────────────────────────────────────────────────────────────
 
     tracera_embedding_model: str = Field(
-        "sentence-transformers/all-MiniLM-L6-v2",
-        alias="TRACERA_EMBEDDING_MODEL"
+        "sentence-transformers/all-MiniLM-L6-v2", alias="TRACERA_EMBEDDING_MODEL"
     )
 
     # ── Code Intelligence (Steps 21-41) ───────────────────────────────────────
@@ -119,7 +113,7 @@ class Settings(BaseSettings):
     )
     code_intelligence_ignore_patterns: str = Field(
         "__pycache__,*.pyc,node_modules,.git,.venv,.idea,.vscode,*.min.js,*.log",
-        alias="CODE_INTELLIGENCE_IGNORE_PATTERNS"
+        alias="CODE_INTELLIGENCE_IGNORE_PATTERNS",
     )
     code_intelligence_max_files: int = Field(10000, alias="CODE_INTELLIGENCE_MAX_FILES")
     code_intelligence_parser: str = Field("tree-sitter", alias="CODE_INTELLIGENCE_PARSER")
@@ -130,7 +124,9 @@ class Settings(BaseSettings):
     code_intelligence_tool_profile: str = Field("standard", alias="CODE_INTELLIGENCE_TOOL_PROFILE")
     code_intelligence_token_budget: int = Field(4000, alias="CODE_INTELLIGENCE_TOKEN_BUDGET")
     code_intelligence_watcher: bool = Field(False, alias="CODE_INTELLIGENCE_WATCHER")
-    code_intelligence_memory_integration: bool = Field(True, alias="CODE_INTELLIGENCE_MEMORY_INTEGRATION")
+    code_intelligence_memory_integration: bool = Field(
+        True, alias="CODE_INTELLIGENCE_MEMORY_INTEGRATION"
+    )
 
     tracera_embedding_device: Literal["cpu", "cuda", "mps"] = Field(
         "cpu", alias="TRACERA_EMBEDDING_DEVICE"
@@ -141,23 +137,38 @@ class Settings(BaseSettings):
 
     tracera_memory_enabled: bool = Field(True, alias="TRACERA_MEMORY_ENABLED")
     # Comma-separated process allow-list. Empty = all processes enabled.
-    tracera_memory_enabled_processes: str = Field(
-        "", alias="TRACERA_MEMORY_ENABLED_PROCESSES"
-    )
+    tracera_memory_enabled_processes: str = Field("", alias="TRACERA_MEMORY_ENABLED_PROCESSES")
     tracera_memory_top_k: int = Field(5, alias="TRACERA_MEMORY_TOP_K")
-    tracera_memory_dedup_threshold: float = Field(
-        0.9, alias="TRACERA_MEMORY_DEDUP_THRESHOLD"
-    )
-    tracera_memory_min_recall_score: float = Field(
-        0.3, alias="TRACERA_MEMORY_MIN_RECALL_SCORE"
-    )
+    tracera_memory_dedup_threshold: float = Field(0.9, alias="TRACERA_MEMORY_DEDUP_THRESHOLD")
+    tracera_memory_min_recall_score: float = Field(0.3, alias="TRACERA_MEMORY_MIN_RECALL_SCORE")
     tracera_memory_entity: str = Field("user", alias="TRACERA_MEMORY_ENTITY")
     tracera_memory_db: str | None = Field(None, alias="TRACERA_MEMORY_DB")
-    tracera_memory_extraction_model: str = Field(
-        "", alias="TRACERA_MEMORY_EXTRACTION_MODEL"
+    tracera_memory_extraction_model: str = Field("", alias="TRACERA_MEMORY_EXTRACTION_MODEL")
+    tracera_memory_worker_enabled: bool = Field(True, alias="TRACERA_MEMORY_WORKER_ENABLED")
+
+    # ── Memory Layer v2: reconciliation, temporal recall, maintenance ─────────
+    # Ask the LLM to decide ADD/UPDATE/DELETE/NOOP for each extracted memory
+    # instead of only appending. Falls back to deterministic rules when off.
+    tracera_memory_reconciliation: bool = Field(True, alias="TRACERA_MEMORY_RECONCILIATION")
+    # Number of near-neighbour memories shown to the reconciler.
+    tracera_memory_reconciliation_candidates: int = Field(
+        5, alias="TRACERA_MEMORY_RECONCILIATION_CANDIDATES"
     )
-    tracera_memory_worker_enabled: bool = Field(
-        True, alias="TRACERA_MEMORY_WORKER_ENABLED"
+    # Pull in graph neighbours of the top recall hits (recovers facts phrased
+    # around an entity the query never names).
+    tracera_memory_graph_expansion: bool = Field(False, alias="TRACERA_MEMORY_GRAPH_EXPANSION")
+    tracera_memory_graph_hops: int = Field(1, alias="TRACERA_MEMORY_GRAPH_HOPS")
+    # Forgetting: exponential decay half-life and hard retention window.
+    tracera_memory_decay_half_life_days: float = Field(
+        90.0, alias="TRACERA_MEMORY_DECAY_HALF_LIFE_DAYS"
+    )
+    tracera_memory_retention_days: int = Field(365, alias="TRACERA_MEMORY_RETENTION_DAYS")
+    # Run maintenance (decay + GC + consolidation) automatically on the worker.
+    tracera_memory_auto_maintenance: bool = Field(
+        False, alias="TRACERA_MEMORY_AUTO_MAINTENANCE"
+    )
+    tracera_memory_maintenance_interval_hours: int = Field(
+        24, alias="TRACERA_MEMORY_MAINTENANCE_INTERVAL_HOURS"
     )
 
     # ── Vector DB ─────────────────────────────────────────────────────────────
@@ -168,9 +179,7 @@ class Settings(BaseSettings):
 
     langfuse_public_key: str | None = Field(None, alias="LANGFUSE_PUBLIC_KEY")
     langfuse_secret_key: str | None = Field(None, alias="LANGFUSE_SECRET_KEY")
-    langfuse_host: str = Field(
-        "https://cloud.langfuse.com", alias="LANGFUSE_HOST"
-    )
+    langfuse_host: str = Field("https://cloud.langfuse.com", alias="LANGFUSE_HOST")
 
     # ── Derived properties ────────────────────────────────────────────────────
 
@@ -190,7 +199,7 @@ class Settings(BaseSettings):
         return str(v).upper()
 
     @model_validator(mode="after")
-    def resolve_data_dir_relative(self) -> "Settings":
+    def resolve_data_dir_relative(self) -> Settings:
         """Make data_dir absolute relative to workspace if not absolute."""
         if not self.tracera_data_dir.is_absolute():
             object.__setattr__(
@@ -224,11 +233,7 @@ class Settings(BaseSettings):
     @property
     def memory_layer_processes(self) -> list[str]:
         """Process allow-list for the memory layer ([] = all)."""
-        return [
-            p.strip()
-            for p in self.tracera_memory_enabled_processes.split(",")
-            if p.strip()
-        ]
+        return [p.strip() for p in self.tracera_memory_enabled_processes.split(",") if p.strip()]
 
     @property
     def logs_dir(self) -> Path:

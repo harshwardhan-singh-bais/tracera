@@ -82,7 +82,9 @@ class ContextAssemblyEngine:
         unique_chunks.sort(key=_sort_key)
 
         # 3. Assemble with token budget
-        header = f"# Retrieved Code Context\n*Query: {query}*\n\n" if query else "# Code Context\n\n"
+        header = (
+            f"# Retrieved Code Context\n*Query: {query}*\n\n" if query else "# Code Context\n\n"
+        )
         parts = [header]
         total_chars = len(header)
 
@@ -103,7 +105,7 @@ class ContextAssemblyEngine:
             language = chunk.get("language") or ""
             expansion_reason = chunk.get("_expansion_reason", "")
 
-            title = f"### `{symbol}`" if symbol else f"### Chunk"
+            title = f"### `{symbol}`" if symbol else "### Chunk"
             if sym_type:
                 title += f" ({sym_type})"
             title += f"\n**File:** `{file_path}`"
@@ -130,6 +132,8 @@ class ContextAssemblyEngine:
         result = "".join(parts)
         log.debug(
             "Context assembled: %d chunks + memory → %d chars (~%d tokens)",
-            len(parts) - 1 - (1 if memory_context else 0), len(result), self._estimate_tokens(result),
+            len(parts) - 1 - (1 if memory_context else 0),
+            len(result),
+            self._estimate_tokens(result),
         )
         return result

@@ -6,8 +6,6 @@ Tests for Phases 51-55 — security:
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from tracera.security.command_safety import (
@@ -22,14 +20,13 @@ from tracera.security.injection import (
     sanitize_content,
 )
 from tracera.security.mcp_security import (
-    MCPToolPolicy,
     MCPSecurityManager,
+    MCPToolPolicy,
     ServerTrust,
     validate_mcp_output,
 )
 from tracera.security.resources import ResourceMonitor
-from tracera.security.secrets import SecretRedactor, redact_text, scan_text
-
+from tracera.security.secrets import SecretRedactor, redact_text
 
 # ════════════════════════════════════════════════════════════════════════════
 # Phase 51 — prompt-injection defenses
@@ -225,6 +222,7 @@ def test_resource_monitor_reset():
 
 def test_resource_monitor_from_settings(tmp_path, monkeypatch):
     from tracera.config.settings import Settings
+
     monkeypatch.setenv("TRACERA_WORKSPACE", str(tmp_path))
     monkeypatch.setenv("TRACERA_MAX_ITERATIONS", "7")
     monitor = ResourceMonitor.from_settings(Settings())

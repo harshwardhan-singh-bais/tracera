@@ -1,0 +1,92 @@
+---
+title: Installation
+description: Install TRACERA from PyPI, from GitHub, or run it straight from source with uv.
+---
+
+TRACERA is a Python 3.12+ package distributed on
+[PyPI](https://pypi.org/project/tracera/) as `tracera`. One install gives you
+the TUI, the headless CLI, and the MCP server (`tracera mcp serve`).
+
+## From PyPI (recommended)
+
+```bash
+# isolated tool install — keeps your global Python clean (recommended)
+uv tool install tracera
+
+# or plain pip / pipx
+pip install tracera
+pipx install tracera
+```
+
+Then launch:
+
+```bash
+tracera                # opens the TUI
+tracera --version
+tracera ask "explain the retrieval pipeline"
+```
+
+## From GitHub (no PyPI account needed)
+
+Install directly from the repository — pip builds from source:
+
+```bash
+pip install git+https://github.com/<you>/tracera.git
+```
+
+Pin a commit or tag for reproducibility:
+
+```bash
+pip install git+https://github.com/<you>/tracera.git@v0.1.0
+```
+
+## From source (development)
+
+```bash
+git clone https://github.com/<you>/tracera.git
+cd tracera
+uv sync                      # creates .venv and installs everything
+uv run tracera               # run from source
+```
+
+Build the package yourself (produces `dist/tracera-<version>.whl`):
+
+```bash
+uv build
+pip install dist/tracera-0.1.0-py3-none-any.whl
+```
+
+## Next steps after install
+
+1. **Set a provider key** (any one is enough — see [Configuration](/docs/configuration)):
+
+   ```bash
+   # .env in your workspace
+   GROQ_API_KEY=gsk_...
+   ```
+
+2. **Register with your MCP client** (Cursor, Claude, VS Code, Codex, …):
+
+   ```bash
+   tracera mcp install cursor        # or claude-desktop, vscode, codex, all
+   ```
+
+   See [MCP Integration](/docs/mcp) for the full host list.
+
+3. **Index your workspace and explore**:
+
+   ```bash
+   tracera tui        # then: /index, /search "main entry point", /repomap
+   ```
+
+## What gets installed
+
+- the `tracera` console command (TUI + CLI + MCP server)
+- local embedding model downloaded on first index (`sentence-transformers/all-MiniLM-L6-v2`)
+- all data stays local: index and memory live in `.tracera/` per workspace
+
+## Requirements
+
+- Python 3.12+
+- Git (for change mapping, provenance, and regression baselines)
+- ~1 GB disk for the embedding model and index

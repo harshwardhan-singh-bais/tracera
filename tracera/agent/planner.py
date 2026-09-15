@@ -20,6 +20,7 @@ log = get_logger("agent.planner")
 
 # ── Todo item ─────────────────────────────────────────────────────────────────
 
+
 class TodoStatus(str, Enum):
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
@@ -31,12 +32,13 @@ class TodoStatus(str, Enum):
 @dataclass
 class TodoItem:
     """A single actionable step in a plan."""
+
     id: str
     title: str
     description: str = ""
     status: TodoStatus = TodoStatus.PENDING
-    priority: int = 0          # lower = higher priority
-    depends_on: list[str] = field(default_factory=list)   # IDs of prerequisite items
+    priority: int = 0  # lower = higher priority
+    depends_on: list[str] = field(default_factory=list)  # IDs of prerequisite items
     created_at: float = field(default_factory=time.time)
     started_at: float | None = None
     completed_at: float | None = None
@@ -88,10 +90,11 @@ class TodoItem:
 
 # ── Plan ──────────────────────────────────────────────────────────────────────
 
+
 class Plan:
     """
     An ordered list of TodoItems representing a decomposed task.
-    
+
     Supports:
     - Item lifecycle management (start/complete/fail)
     - Progress tracking
@@ -183,10 +186,7 @@ class Plan:
 
     @property
     def is_complete(self) -> bool:
-        return all(
-            i.status in (TodoStatus.DONE, TodoStatus.SKIPPED)
-            for i in self.items
-        )
+        return all(i.status in (TodoStatus.DONE, TodoStatus.SKIPPED) for i in self.items)
 
     @property
     def has_failures(self) -> bool:
@@ -240,7 +240,7 @@ class Plan:
         return "\n".join(lines)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "Plan":
+    def from_dict(cls, data: dict) -> Plan:
         """Rebuild a Plan (with its todo states) from ``to_dict()`` output."""
         plan = cls(data.get("task", ""), plan_id=data.get("id"))
         plan.created_at = data.get("created_at", plan.created_at)
@@ -299,7 +299,7 @@ class TaskDecomposer:
     async def decompose(self, task: str) -> Plan:
         """
         Decompose *task* into a Plan.
-        
+
         Returns a Plan with TodoItems ordered by priority.
         """
         from tracera.providers.base import LLMMessage
@@ -328,7 +328,7 @@ class TaskDecomposer:
 
             for i, step in enumerate(steps):
                 plan.add_item(
-                    title=step.get("title", f"Step {i+1}"),
+                    title=step.get("title", f"Step {i + 1}"),
                     description=step.get("description", ""),
                     priority=step.get("priority", i),
                 )
@@ -370,7 +370,7 @@ class TaskDecomposer:
             steps = json.loads(raw)
             for i, step in enumerate(steps):
                 plan.add_item(
-                    title=f"[Recovery] {step.get('title', f'Step {i+1}')}",
+                    title=f"[Recovery] {step.get('title', f'Step {i + 1}')}",
                     description=step.get("description", ""),
                     priority=100 + i,
                 )

@@ -12,8 +12,10 @@ call site — the wrapper handles everything.
 
 from __future__ import annotations
 
-import math
-from typing import Any, Callable
+import time
+from collections.abc import Callable
+from dataclasses import replace
+from typing import Any
 
 from tracera.logging import get_logger
 from tracera.memory.layer.attribution import Attribution
@@ -48,8 +50,19 @@ def format_memories_grouped(results: list[tuple[MemoryRecord, float]]) -> str:
     for record, score in results:
         by_kind.setdefault(record.kind, []).append((record, score))
 
-    kind_order = ["fact", "preference", "rule", "decision", "constraint", "skill",
-                  "attribute", "relationship", "event", "goal", "experience"]
+    kind_order = [
+        "fact",
+        "preference",
+        "rule",
+        "decision",
+        "constraint",
+        "skill",
+        "attribute",
+        "relationship",
+        "event",
+        "goal",
+        "experience",
+    ]
     for kind in kind_order:
         if kind not in by_kind:
             continue
@@ -93,6 +106,9 @@ class RecallInjector:
         token_budget: int = 2000,
         grouped: bool = True,
         debug: bool = False,
+        as_of: float | None = None,
+        graph_expansion: bool = False,
+        graph_hops: int = 1,
     ) -> None:
         self._store = store
         self._embed = embed_fn
@@ -102,6 +118,9 @@ class RecallInjector:
         self._token_budget = token_budget
         self._grouped = grouped
         self._debug = debug
+        self._as_of = as_of
+        self._graph_expansion = graph_expansion
+        self._graph_hops = graph_hops
 
     def inject(
         self,
@@ -117,24 +136,8 @@ class RecallInjector:
         if not query:
             return messages, system
 
-        query_embedding = self._embed(query)
-
         try:
-            if self._use_hybrid and hasattr(self._store, "recall_hybrid"):
-                results = self._store.recall_hybrid(
-                    scope.entity_id,
-                    query,
-                    query_embedding,
-                    k=self._top_k,
-                    min_score=self._min_score,
-                )
-            else:
-                results = self._store.recall(
-                    scope.entity_id,
-                    query_embedding,
-                    k=self._top_k,
-                    min_score=self._min_score,
-                )
+            results = self.search(query, scope, k=self._top_k)
         except Exception as e:  # noqa: BLE001
             log.warning("Memory recall failed, skipping injection: %s", e)
             return messages, system
@@ -142,7 +145,8 @@ class RecallInjector:
         if not results:
             return messages, system
 
-        # Apply token budget
+        # Apply token budget — the block must fit, so records that overflow are
+        # truncated (or dropped) rather than injected whole.
         results = self._apply_token_budget(results)
 
         if not results:
@@ -157,6 +161,45 @@ class RecallInjector:
         )
         return self._attach(messages, system, block)
 
+    def search(
+        self,
+        query: str,
+        scope: Attribution,
+        *,
+        k: int | None = None,
+        min_score: float | None = None,
+        as_of: float | None = None,
+    ) -> list[tuple[MemoryRecord, float]]:
+        """
+        Run the recall query against the store.
+
+        This is the single entry point for both prompt injection and the debug
+        surface, so the two can never drift apart.
+        """
+        k = k or self._top_k
+        threshold = self._min_score if min_score is None else min_score
+        point_in_time = self._as_of if as_of is None else as_of
+        query_embedding = self._embed(query)
+
+        if self._use_hybrid and hasattr(self._store, "recall_hybrid"):
+            return self._store.recall_hybrid(
+                scope.entity_id,
+                query,
+                query_embedding,
+                k=k,
+                min_score=threshold,
+                as_of=point_in_time,
+                graph_expansion=self._graph_expansion,
+                graph_hops=self._graph_hops,
+            )
+        return self._store.recall(
+            scope.entity_id,
+            query_embedding,
+            k=k,
+            min_score=threshold,
+            as_of=point_in_time,
+        )
+
     def debug_recall(
         self,
         query: str,
@@ -165,104 +208,124 @@ class RecallInjector:
         k: int | None = None,
     ) -> dict[str, Any]:
         """
-        Debug version of recall that returns detailed scoring breakdown.
+        Debug version of recall that returns the full scoring breakdown.
 
-        Returns a dict with:
-        - query: the input query
-        - results: list of dicts with memory details and score breakdown
-        - total_candidates: number of memories considered
-        - timing_ms: how long the recall took
+        Returns the query, the candidate memories with every scoring component,
+        how many rows were considered, and how long it took.
         """
-        import time as _time
         k = k or self._top_k
+        start = time.perf_counter()
+        # Floor at -1 (the true minimum of cosine similarity) rather than 0:
+        # the point of the debug view is to show what was *rejected* and why,
+        # including anti-correlated candidates. `above_threshold` then reports
+        # what the live recall path would actually have injected.
+        results = self.search(query, scope, k=k * 3, min_score=-1.0)
+        elapsed_ms = (time.perf_counter() - start) * 1000
 
-        start = _time.perf_counter()
-        query_embedding = self._embed(query)
-
-        if self._use_hybrid and hasattr(self._store, "recall_hybrid"):
-            results = self._store.recall_hybrid(
-                scope.entity_id,
-                query,
-                query_embedding,
-                k=k * 3,  # Get more for debug
-                min_score=0.0,  # No threshold for debug
-            )
-        else:
-            # For debug, we need to call the underlying store directly
-            entity_pk = self._store.register_entity(scope.entity_id)
-            with self._store._lock:
-                conn = self._store._conn()
-                rows = conn.execute(
-                    "SELECT * FROM memories WHERE entity_id = ? AND status = 'active'",
-                    (entity_pk,),
-                ).fetchall()
-
-            results = []
-            for row in rows:
-                try:
-                    other = json.loads(row["embedding"])
-                except (TypeError, ValueError):
-                    continue
-                score = self._store.cosine_similarity(query_embedding, other)
-                if score >= 0.0:
-                    record = self._store._record_from_row(conn, row)
-                    results.append((record, score))
-
-            results.sort(key=lambda x: x[1], reverse=True)
-
-        elapsed_ms = (_time.perf_counter() - start) * 1000
-
-        # Build detailed breakdown
+        breakdown = (
+            self._store.last_score_breakdown()
+            if hasattr(self._store, "last_score_breakdown")
+            else {}
+        )
         detailed = []
-        for record, score in results[:k]:
-            # Get hybrid score components if available
-            detail = {
-                "memory_id": record.id,
-                "kind": record.kind,
-                "text": record.text,
-                "triple": f"{record.subject} → {record.predicate} → {record.object}",
-                "final_score": round(score, 4),
-                "mention_count": record.mention_count,
-                "confidence": record.confidence,
-                "importance": record.importance,
-                "first_seen": record.first_seen_at,
-                "last_seen": record.last_seen_at,
-                "source_event": record.source_event,
-            }
-            if hasattr(self._store, "recall_hybrid") and self._use_hybrid:
-                # Try to compute hybrid components
-                detail["note"] = "Hybrid scoring active (vector + keyword + recency + importance + mentions)"
-            detailed.append(detail)
+        for record, score in results[: k * 3]:
+            components = breakdown.get(record.id, {})
+            detailed.append(
+                {
+                    "memory_id": record.id,
+                    "kind": record.kind,
+                    "text": record.text,
+                    "triple": f"{record.subject} → {record.predicate} → {record.object}",
+                    "final_score": round(score, 4),
+                    "above_threshold": score >= self._min_score,
+                    "components": components,
+                    "mention_count": record.mention_count,
+                    "confidence": record.confidence,
+                    "importance": record.importance,
+                    "valid_window": record.valid_window(),
+                    "first_seen": record.first_seen_at,
+                    "last_seen": record.last_seen_at,
+                    "source_event": record.source_event,
+                    "why_recalled": self._explain(record, score, components),
+                }
+            )
 
         return {
             "query": query,
             "entity_id": scope.entity_id,
             "process_id": scope.process_id,
             "total_candidates": len(results),
+            # `returned` is everything inspected (this is a debug surface, so
+            # rejected candidates are shown too, with the reason they lost).
             "returned": len(detailed),
+            # `would_inject` is what the real recall path would actually send.
+            "would_inject": len([d for d in detailed if d["above_threshold"]]),
             "timing_ms": round(elapsed_ms, 2),
             "results": detailed,
             "min_score_threshold": self._min_score,
             "top_k": k,
+            "as_of": self._as_of,
         }
 
-    def _apply_token_budget(self, results: list[tuple[MemoryRecord, float]]) -> list[tuple[MemoryRecord, float]]:
-        """Trim results to fit within token budget."""
-        budget = self._token_budget
-        kept = []
+    @staticmethod
+    def _explain(
+        record: MemoryRecord, score: float, components: dict[str, float]
+    ) -> str:
+        """Human-readable reason this memory ranked where it did."""
+        if components:
+            parts = []
+            if components.get("vector", 0) >= 0.5:
+                parts.append(f"strong semantic match ({components['vector']:.2f})")
+            elif components.get("vector", 0) > 0:
+                parts.append(f"weak semantic match ({components['vector']:.2f})")
+            if components.get("keyword", 0) > 0:
+                parts.append(f"keyword overlap ({components['keyword']:.2f})")
+            if components.get("exact_boost", 0) > 0:
+                parts.append("exact triple match in query")
+            if components.get("quality", 0) >= 0.7:
+                parts.append("high quality (recent / important / reinforced)")
+            if not parts:
+                parts.append("matched on metadata only")
+            return "; ".join(parts)
+        if score >= 0.7:
+            return "high overall relevance"
+        if score >= 0.4:
+            return "moderate relevance"
+        return "low relevance"
+
+    def _apply_token_budget(
+        self, results: list[tuple[MemoryRecord, float]]
+    ) -> list[tuple[MemoryRecord, float]]:
+        """
+        Trim results to fit the token budget.
+
+        The header counts against the budget, and a memory that would overflow
+        is truncated in place (its *text* is shortened, and the shortened record
+        is what gets injected) rather than silently kept at full length — the
+        previous version computed a truncated line and then threw it away.
+        """
+        budget = self._token_budget - estimate_tokens(INJECTION_HEADER)
+        if budget <= 0:
+            return []
+        kept: list[tuple[MemoryRecord, float]] = []
         for record, score in results:
-            line = record.to_line()
-            line_tokens = estimate_tokens(line)
-            if line_tokens > budget:
-                # Truncate the line
-                max_chars = budget * CHARS_PER_TOKEN
-                line = line[:max_chars] + "..."
-                line_tokens = estimate_tokens(line)
+            line_tokens = estimate_tokens(record.to_line())
             if line_tokens <= budget:
                 kept.append((record, score))
                 budget -= line_tokens
-            else:
-                break
+                continue
+            # Truncate this record to whatever budget remains, then stop.
+            # The "[kind] " prefix and the ellipsis both count against the
+            # budget, so the text is trimmed until the *rendered* line fits.
+            prefix_len = len(f"[{record.kind}] ")
+            available = max(8, budget * CHARS_PER_TOKEN - prefix_len - 1)
+            trimmed = replace(record, text=record.text[:available])
+            while estimate_tokens(trimmed.to_line() + "…") > budget and len(trimmed.text) > 8:
+                trimmed = replace(trimmed, text=trimmed.text[: max(4, len(trimmed.text) - 8)])
+            if estimate_tokens(trimmed.to_line() + "…") > budget:
+                break  # no room left for even a stub
+            kept.append((replace(trimmed, text=trimmed.text.rstrip() + "…"), score))
+            break
         return kept
 
     @staticmethod
@@ -280,9 +343,7 @@ class RecallInjector:
         for i, message in enumerate(messages):
             if message.role == Role.SYSTEM:
                 merged = list(messages)
-                merged[i] = LLMMessage.system(
-                    f"{message.content or ''}\n\n{block}"
-                )
+                merged[i] = LLMMessage.system(f"{message.content or ''}\n\n{block}")
                 return merged, None
         return [LLMMessage.system(block), *messages], None
 
@@ -298,6 +359,9 @@ class RecallConfig:
         token_budget: int = 2000,
         grouped: bool = True,
         enabled: bool = True,
+        as_of: float | None = None,
+        graph_expansion: bool = False,
+        graph_hops: int = 1,
     ) -> None:
         self.top_k = top_k
         self.min_score = min_score
@@ -305,3 +369,6 @@ class RecallConfig:
         self.token_budget = token_budget
         self.grouped = grouped
         self.enabled = enabled
+        self.as_of = as_of
+        self.graph_expansion = graph_expansion
+        self.graph_hops = graph_hops

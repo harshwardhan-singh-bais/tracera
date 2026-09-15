@@ -1,10 +1,5 @@
 """Tests for the enhanced memory system (session, taxonomy, extractor, triples, recall)."""
 
-import pytest
-import time
-import tempfile
-from pathlib import Path
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SESSION MANAGER
@@ -13,7 +8,7 @@ from pathlib import Path
 
 def test_session_lifecycle(tmp_path):
     """Create, populate, and close a session."""
-    from tracera.memory.session import SessionManager, SessionTurn
+    from tracera.memory.session import SessionManager
 
     mgr = SessionManager(tmp_path / "mem")
     session = mgr.new_session(task="Fix login bug", entity_id="user1")
@@ -22,7 +17,9 @@ def test_session_lifecycle(tmp_path):
     assert mgr.active_session is session
 
     mgr.record_user_message("Fix the login bug")
-    mgr.record_tool_call("read_file", {"path": "auth.py"}, "def login(): ...", True, file_path="auth.py")
+    mgr.record_tool_call(
+        "read_file", {"path": "auth.py"}, "def login(): ...", True, file_path="auth.py"
+    )
     mgr.record_agent_response("I found the bug in auth.py")
 
     assert session.turn_count == 3
@@ -89,9 +86,13 @@ def test_session_conversation_text(tmp_path):
 def test_memory_types_create_and_serialize():
     """All memory types can be created and serialized."""
     from tracera.memory.taxonomy import (
-        create_fact, create_rule, create_relationship,
-        create_skill, create_preference, create_event,
         MemoryType,
+        create_event,
+        create_fact,
+        create_preference,
+        create_relationship,
+        create_rule,
+        create_skill,
     )
 
     fact = create_fact("Project uses pytest", symbol="pytest", file_path="pyproject.toml")
@@ -133,7 +134,7 @@ def test_memory_observe_increases_frequency():
 
 def test_memory_serialization_roundtrip():
     """Memory entries survive serialization roundtrip."""
-    from tracera.memory.taxonomy import create_fact, MemoryType, StructuredMemory
+    from tracera.memory.taxonomy import MemoryType, StructuredMemory, create_fact
 
     fact = create_fact("Roundtrip test", confidence=0.9)
     d = fact.to_dict()
@@ -162,6 +163,7 @@ def test_rule_based_extraction():
     )
 
     import asyncio
+
     memories = asyncio.run(extractor.extract(conversation, session_id="test"))
     assert len(memories) >= 2
     types = {m.memory_type for m in memories}
@@ -175,6 +177,7 @@ def test_empty_conversation_returns_nothing():
 
     extractor = ConversationExtractor(provider=None)
     import asyncio
+
     memories = asyncio.run(extractor.extract(""))
     assert memories == []
 
@@ -186,7 +189,7 @@ def test_empty_conversation_returns_nothing():
 
 def test_triple_store_add_and_query():
     """Add triples and query by subject/object."""
-    from tracera.memory.triples import TripleStore, Triple
+    from tracera.memory.triples import Triple, TripleStore
 
     store = TripleStore()
     store.add_triple(Triple("AuthMiddleware", "calls", "UserService"))
@@ -207,7 +210,7 @@ def test_triple_store_add_and_query():
 
 def test_triple_store_dedup():
     """Duplicate triples increment frequency instead of creating new ones."""
-    from tracera.memory.triples import TripleStore, Triple
+    from tracera.memory.triples import Triple, TripleStore
 
     store = TripleStore()
     store.add_triple(Triple("A", "calls", "B"))
@@ -219,7 +222,7 @@ def test_triple_store_dedup():
 
 def test_triple_store_neighbors():
     """Graph traversal finds multi-hop neighbors."""
-    from tracera.memory.triples import TripleStore, Triple
+    from tracera.memory.triples import Triple, TripleStore
 
     store = TripleStore()
     store.add_triple(Triple("A", "calls", "B"))
@@ -237,7 +240,7 @@ def test_triple_store_neighbors():
 
 def test_triple_store_persistence(tmp_path):
     """Triples persist to disk and reload."""
-    from tracera.memory.triples import TripleStore, Triple
+    from tracera.memory.triples import Triple, TripleStore
 
     path = tmp_path / "triples.json"
     store1 = TripleStore()
@@ -251,7 +254,7 @@ def test_triple_store_persistence(tmp_path):
 
 def test_triple_store_to_text():
     """Triples render as readable text."""
-    from tracera.memory.triples import TripleStore, Triple
+    from tracera.memory.triples import Triple, TripleStore
 
     store = TripleStore()
     store.add_triple(Triple("A", "calls", "B"))
@@ -268,11 +271,11 @@ def test_triple_store_to_text():
 
 def test_context_recall_assembles_from_multiple_sources(tmp_path):
     """Context recall gathers from memory store, sessions, triples, and legacy."""
+    from tracera.agent.memory import AgentMemory, MemoryCategory
     from tracera.memory.recall import ContextRecall, EnhancedMemoryStore
     from tracera.memory.session import SessionManager
-    from tracera.memory.triples import TripleStore, Triple
     from tracera.memory.taxonomy import create_fact
-    from tracera.agent.memory import AgentMemory, MemoryCategory
+    from tracera.memory.triples import Triple, TripleStore
 
     # Set up each source
     enhanced = EnhancedMemoryStore(tmp_path / "mem")
@@ -378,6 +381,7 @@ def test_enhanced_memory_stats(tmp_path):
 def test_remember_memory_tool(tmp_path):
     """RememberMemoryTool stores memories."""
     import asyncio
+
     from tracera.memory.recall import EnhancedMemoryStore
     from tracera.tools.memory_tools import RememberMemoryTool
 
@@ -392,6 +396,7 @@ def test_remember_memory_tool(tmp_path):
 def test_recall_memory_tool(tmp_path):
     """RecallMemoryTool retrieves memories."""
     import asyncio
+
     from tracera.memory.recall import ContextRecall, EnhancedMemoryStore
     from tracera.memory.taxonomy import create_fact
     from tracera.tools.memory_tools import RecallMemoryTool
@@ -410,6 +415,7 @@ def test_recall_memory_tool(tmp_path):
 def test_forget_memory_tool(tmp_path):
     """ForgetMemoryTool deletes memories."""
     import asyncio
+
     from tracera.memory.recall import EnhancedMemoryStore
     from tracera.memory.taxonomy import create_fact
     from tracera.tools.memory_tools import ForgetMemoryTool
@@ -428,6 +434,7 @@ def test_forget_memory_tool(tmp_path):
 def test_list_sessions_tool(tmp_path):
     """ListSessionsTool shows past sessions."""
     import asyncio
+
     from tracera.memory.session import SessionManager
     from tracera.tools.memory_tools import ListSessionsTool
 

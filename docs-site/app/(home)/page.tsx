@@ -287,8 +287,9 @@ export default function HomePage() {
                 Every capability is a slash command
               </h2>
               <p className="mt-3 text-fd-muted-foreground">
-                61 commands with autocomplete, grouped from search to
-                autonomous fix loops. Every registry tool is also reachable as{' '}
+                85 commands with autocomplete, organized from code search to
+                autonomous fix loops. Every one of the 58 registry tools is
+                also reachable as{' '}
                 <code className="rounded bg-fd-muted px-1 py-0.5 font-mono text-[13px]">
                   /tool &lt;name&gt;
                 </code>

@@ -65,7 +65,10 @@ class DangerousCommandError(Exception):
 
 #: Patterns that are never safe to run from an agent.
 BLOCK_PATTERNS: list[tuple[str, str]] = [
-    (r"(^|\s)(rm|rmdir)\s+(-[a-z]*f[a-z]*\s+)?(/\s*$|/\*|\.\s*$|~?\s*$)", "recursive force delete of root/home"),
+    (
+        r"(^|\s)(rm|rmdir)\s+(-[a-z]*f[a-z]*\s+)?(/\s*$|/\*|\.\s*$|~?\s*$)",
+        "recursive force delete of root/home",
+    ),
     (r"(^|\s)mkfs(\s|\.)", "filesystem format"),
     (r"(^|\s)dd\s+.*of=/dev/", "raw device write"),
     (r"(^|\s):\(\)\s*\{\s*:\|:&\s*\};:", "fork bomb"),
@@ -90,7 +93,10 @@ CONFIRM_PATTERNS: list[tuple[str, str]] = [
     (r"(^|\s)git\s+rebase\b", "git rebase"),
     (r"(^|\s)git\s+checkout\s+(-f|--force)", "git checkout force"),
     (r"(^|\s)(npm|pip|pip3|uv)\s+(uninstall|publish|login)\b", "registry mutation"),
-    (r"(^|\s)(python|python3|pip|npm|npx)\s+(-m\s+)?(http\.server|SimpleHTTPServer)\b", "starts a server"),
+    (
+        r"(^|\s)(python|python3|pip|npm|npx)\s+(-m\s+)?(http\.server|SimpleHTTPServer)\b",
+        "starts a server",
+    ),
     (r"(^|\s)curl\s+.*\|\s*(ba)?sh", "pipe to shell"),
     (r"(^|\s)(sudo|su)\s", "privilege escalation"),
     (r"(^|\s)tar\s+.*-C\s+/\s", "extract to root"),
@@ -183,6 +189,4 @@ def check_command(
     workspace: Path | None = None,
 ) -> CommandVerdict:
     """Module-level convenience."""
-    return CommandSafety(
-        allowed_commands=allowed_commands, workspace=workspace
-    ).check(command)
+    return CommandSafety(allowed_commands=allowed_commands, workspace=workspace).check(command)

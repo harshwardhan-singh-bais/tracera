@@ -5,11 +5,14 @@ retrieval benchmark, agent benchmark, ablation framework.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
-from tracera.evaluation.agent_benchmark import AgentBenchmark, AgentTaskResult
+from tracera.evaluation.ablation import (
+    AblationConfig,
+    AblationFramework,
+    default_ablation_configs,
+)
+from tracera.evaluation.agent_benchmark import AgentBenchmark
 from tracera.evaluation.dataset import EvalQuery, EvaluationDataset, example_dataset
 from tracera.evaluation.metrics import (
     mean_reciprocal_rank,
@@ -24,12 +27,6 @@ from tracera.evaluation.strategies import (
     RetrievalHit,
     build_strategies,
 )
-from tracera.evaluation.ablation import (
-    AblationConfig,
-    AblationFramework,
-    default_ablation_configs,
-)
-
 
 # ════════════════════════════════════════════════════════════════════════════
 # Phase 45 — dataset
@@ -99,9 +96,9 @@ def test_ndcg_at_k():
 
 def test_mrr_mean():
     rankings = [
-        (_hits("a.py", "b.py"), ["b.py"]),   # RR 0.5
-        (_hits("a.py"), ["a.py"]),           # RR 1.0
-        (_hits("a.py"), ["zzz.py"]),         # RR 0.0
+        (_hits("a.py", "b.py"), ["b.py"]),  # RR 0.5
+        (_hits("a.py"), ["a.py"]),  # RR 1.0
+        (_hits("a.py"), ["zzz.py"]),  # RR 0.0
     ]
     assert mean_reciprocal_rank(rankings) == pytest.approx(0.5)
 
@@ -113,9 +110,12 @@ def test_mrr_mean():
 
 def _make_bm25():
     from tracera.retrieval.bm25 import BM25Index
+
     bm25 = BM25Index()
     bm25.add_document("d1", "def validate_token(): jwt middleware", {"file_path": "auth/token.py"})
-    bm25.add_document("d2", "class AuthMiddleware: handles authentication", {"file_path": "auth/middleware.py"})
+    bm25.add_document(
+        "d2", "class AuthMiddleware: handles authentication", {"file_path": "auth/middleware.py"}
+    )
     bm25.add_document("d3", "def retry_db_call(): database retries", {"file_path": "db/retry.py"})
     return bm25
 
@@ -142,10 +142,13 @@ def test_grep_strategy_baseline(tmp_path):
 
 def test_retrieval_benchmark_full_run(tmp_path):
     bm25 = _make_bm25()
-    dataset = EvaluationDataset("t", [
-        EvalQuery(query="authentication middleware", docs=["d1", "d2"]),
-        EvalQuery(query="database retry", docs=["d3"]),
-    ])
+    dataset = EvaluationDataset(
+        "t",
+        [
+            EvalQuery(query="authentication middleware", docs=["d1", "d2"]),
+            EvalQuery(query="database retry", docs=["d3"]),
+        ],
+    )
     strategies = build_strategies(workspace=tmp_path, bm25=bm25)
     report = RetrievalBenchmark(dataset, strategies).run()
 
@@ -226,11 +229,10 @@ async def test_ablation_framework_runs_arms():
     async def build_agent(config: AblationConfig):
         async def runner(task: str) -> dict:
             return {"success": True, "output": "ok", "tool_names": set()}
+
         return runner
 
-    framework = AblationFramework(
-        ["task"], build_agent, configs=default_ablation_configs()
-    )
+    framework = AblationFramework(["task"], build_agent, configs=default_ablation_configs())
     report = await framework.run()
     assert len(report.arms) == 6
     assert report.best_arm() is not None

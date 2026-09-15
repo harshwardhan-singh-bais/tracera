@@ -20,8 +20,8 @@ Pipeline:
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 from tracera.logging import get_logger
 
@@ -30,12 +30,24 @@ log = get_logger("security.injection")
 #: Phrases that signal an instruction aimed at an AI assistant rather than
 #: ordinary code/documentation text.
 INJECTION_PATTERNS: list[tuple[str, str]] = [
-    (r"ignore (all |any |the )?(previous|above|prior|earlier) (instructions|prompts|messages|context|directions)", "instruction override"),
-    (r"disregard (all |the )?(previous|above|prior|earlier) (instructions|prompts|messages|context)", "instruction override"),
-    (r"you (are|must act as|now act as|are now) (a |an )?(different|new) (assistant|agent|AI|model|system)", "role hijack"),
+    (
+        r"ignore (all |any |the )?(previous|above|prior|earlier) (instructions|prompts|messages|context|directions)",
+        "instruction override",
+    ),
+    (
+        r"disregard (all |the )?(previous|above|prior|earlier) (instructions|prompts|messages|context)",
+        "instruction override",
+    ),
+    (
+        r"you (are|must act as|now act as|are now) (a |an )?(different|new) (assistant|agent|AI|model|system)",
+        "role hijack",
+    ),
     (r"you are now (a |an )?(assistant|agent|AI|model|system) named", "role hijack"),
     (r"forget (everything|all previous|the system prompt)", "memory wipe"),
-    (r"(reveal|show|print|output|send|exfiltrate).{0,40}(system prompt|instructions|api key|secrets|credentials)", "exfiltration request"),
+    (
+        r"(reveal|show|print|output|send|exfiltrate).{0,40}(system prompt|instructions|api key|secrets|credentials)",
+        "exfiltration request",
+    ),
     (r"(system|developer) prompt.{0,30}(reveal|show|leak|expose)", "prompt leak"),
     (r"do not tell (the user|anyone|humans)", "concealment"),
     (r"say you (can't|cannot|did not|didn't) (do|perform|complete) (it|the task)", "false denial"),
@@ -100,13 +112,17 @@ class PromptInjectionDetector:
                     )
                 )
         if findings:
-            log.warning("Prompt-injection scan: %d finding(s) in %d chars", len(findings), len(text))
+            log.warning(
+                "Prompt-injection scan: %d finding(s) in %d chars", len(findings), len(text)
+            )
         return findings
 
     def is_clean(self, text: str) -> bool:
         return not self.scan(text)
 
-    def sanitize(self, text: str, mode: str = DEFAULT_SANITIZE_MODE) -> tuple[str, list[InjectionFinding]]:
+    def sanitize(
+        self, text: str, mode: str = DEFAULT_SANITIZE_MODE
+    ) -> tuple[str, list[InjectionFinding]]:
         """
         Neutralise injected instructions.
 
@@ -123,7 +139,7 @@ class PromptInjectionDetector:
         result = text
         if mode == "strip":
             for f in sorted(findings, key=lambda f: f.start, reverse=True):
-                result = result[: f.start] + f"[redacted]" + result[f.end :]
+                result = result[: f.start] + "[redacted]" + result[f.end :]
         else:
             for f in sorted(findings, key=lambda f: f.start, reverse=True):
                 marker = f"[INJECTION DETECTED ({f.kind})]"

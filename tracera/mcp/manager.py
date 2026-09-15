@@ -47,7 +47,7 @@ class MCPServerConfig:
     cwd: str | None = None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "MCPServerConfig":
+    def from_dict(cls, data: dict[str, Any]) -> MCPServerConfig:
         return cls(
             name=str(data["name"]),
             command=str(data["command"]),
@@ -76,7 +76,7 @@ class MCPManager:
     # ── Config loading ───────────────────────────────────────────────────────
 
     @classmethod
-    def from_file(cls, path: str | Path) -> "MCPManager":
+    def from_file(cls, path: str | Path) -> MCPManager:
         """Load server declarations from a JSON file (see module docstring)."""
         raw = json.loads(Path(path).read_text(encoding="utf-8"))
         configs = [MCPServerConfig.from_dict(d) for d in raw]
@@ -91,7 +91,7 @@ class MCPManager:
 
     # ── Lifecycle ────────────────────────────────────────────────────────────
 
-    async def __aenter__(self) -> "MCPManager":
+    async def __aenter__(self) -> MCPManager:
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
@@ -106,8 +106,11 @@ class MCPManager:
         merged: dict[str, list[dict[str, Any]]] = {}
         for config in self._configs:
             client = MCPClient(
-                config.name, config.command, config.args,
-                env=config.env, cwd=config.cwd,
+                config.name,
+                config.command,
+                config.args,
+                env=config.env,
+                cwd=config.cwd,
             )
             try:
                 await client.connect()
@@ -116,7 +119,8 @@ class MCPManager:
                 merged[config.name] = tools
                 log.info(
                     "Connected '%s' — %d tools available",
-                    config.name, len(tools),
+                    config.name,
+                    len(tools),
                 )
             except Exception as e:
                 log.warning("Failed to connect MCP server '%s': %s", config.name, e)

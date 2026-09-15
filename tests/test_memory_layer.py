@@ -23,7 +23,6 @@ import random
 import time
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 import pytest
 
@@ -47,10 +46,10 @@ from tracera.providers.base import (
     TokenUsage,
 )
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # Test doubles
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 def _token_vec(token: str, dim: int = 32) -> list[float]:
     """Deterministic pseudo-random unit-ish vector per token (cached)."""
@@ -78,26 +77,28 @@ def fake_embed(text: str, dim: int = 32) -> list[float]:
     return [x / n for x in vec]
 
 
-EXTRACTION_JSON = json.dumps([
-    {
-        "kind": "preference",
-        "subject": "user",
-        "predicate": "favorite_color",
-        "object": "blue",
-        "text": "User's favorite color is blue.",
-        "confidence": 0.95,
-        "importance": 0.7,
-    },
-    {
-        "kind": "fact",
-        "subject": "user",
-        "predicate": "preferred_language",
-        "object": "python",
-        "text": "User works primarily in Python.",
-        "confidence": 0.9,
-        "importance": 0.6,
-    },
-])
+EXTRACTION_JSON = json.dumps(
+    [
+        {
+            "kind": "preference",
+            "subject": "user",
+            "predicate": "favorite_color",
+            "object": "blue",
+            "text": "User's favorite color is blue.",
+            "confidence": 0.95,
+            "importance": 0.7,
+        },
+        {
+            "kind": "fact",
+            "subject": "user",
+            "predicate": "preferred_language",
+            "object": "python",
+            "text": "User works primarily in Python.",
+            "confidence": 0.9,
+            "importance": 0.6,
+        },
+    ]
+)
 
 
 class FakeProvider(LLMProvider):
@@ -195,9 +196,12 @@ def _clean_attribution() -> Any:
     yield
     reset_attribution()
     set_session_id(None)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # 1. Attribution enforcement
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 async def test_no_attribution_creates_no_memory(tmp_path):
     """An LLM call without attribution must not create memory."""
@@ -235,6 +239,7 @@ def test_attribution_requires_both_ids():
 # 2. Recall injects top-k memories into the outbound prompt
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 async def test_recall_injects_top_k_into_system_prompt(tmp_path):
     layer = make_layer(tmp_path, top_k=5, recall_grouped=False)
     store = layer.store
@@ -248,9 +253,15 @@ async def test_recall_injects_top_k_into_system_prompt(tmp_path):
     ]
     for i, (text, emb_text, kind) in enumerate(seeds):
         store.upsert_memory(
-            entity_id="user_1", process_id="agent", kind=kind,
-            subject="user", predicate=f"k{i}", object=emb_text.split()[-1],
-            text=text, embedding=fake_embed(emb_text), job_id=100 + i,
+            entity_id="user_1",
+            process_id="agent",
+            kind=kind,
+            subject="user",
+            predicate=f"k{i}",
+            object=emb_text.split()[-1],
+            text=text,
+            embedding=fake_embed(emb_text),
+            job_id=100 + i,
         )
 
     layer.attribution("user_1", "agent")
@@ -270,10 +281,7 @@ async def test_recall_injects_top_k_into_system_prompt(tmp_path):
     assert "Python daily" not in system
     assert "Fridays" not in system
     # all three color memories should be present (order may vary by embedding similarity)
-    color_lines = [
-        line for line in system.splitlines()
-        if line.startswith("- [")
-    ]
+    color_lines = [line for line in system.splitlines() if line.startswith("- [")]
     color_texts = [line for line in color_lines if "favorite color" in line]
     assert len(color_texts) == 3
     for text, _, _ in seeds[:3]:
@@ -288,9 +296,12 @@ async def test_recall_no_match_leaves_prompt_unchanged(tmp_path):
     system = "You are a helpful assistant."
     await provider.complete([LLMMessage.user("how do I fix a type error?")], system=system)
     assert provider.inner.systems[-1] == system  # untouched
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # 3. Extraction classifies a sample turn
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 async def _fake_call_llm(prompt: str) -> str:
     return EXTRACTION_JSON
@@ -325,6 +336,7 @@ async def test_extraction_handles_empty_and_json_fences():
 # ═══════════════════════════════════════════════════════════════════════════════
 # 4. Dedup: same fact restated N times → one row with mention_count = N
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 async def test_dedup_same_fact_three_times_one_row_mention_three(tmp_path):
     layer = make_layer(tmp_path)
@@ -363,31 +375,44 @@ async def test_write_idempotent_under_retry(tmp_path):
     }
     job_id = store.enqueue_job("extract_turn", payload)
     job = store.claim_jobs(limit=1)[0]
-    await layer._execute_job(job)   # first run → insert
-    await layer._execute_job(job)   # retry of the same job → no-op
+    await layer._execute_job(job)  # first run → insert
+    await layer._execute_job(job)  # retry of the same job → no-op
 
     records = store.find_memories("user_1")
     assert len(records) == 2
     # both triples written at mention_count=1 — retry did not inflate them
     assert all(r.mention_count == 1 for r in records)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # 5. Entity isolation
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 async def test_recall_never_crosses_entities(tmp_path):
     layer = make_layer(tmp_path)
     store = layer.store
     store.upsert_memory(
-        entity_id="user_1", process_id="agent", kind="fact",
-        subject="user", predicate="favorite_color", object="blue",
+        entity_id="user_1",
+        process_id="agent",
+        kind="fact",
+        subject="user",
+        predicate="favorite_color",
+        object="blue",
         text="User's favorite color is blue.",
-        embedding=fake_embed("favorite color blue"), job_id=1,
+        embedding=fake_embed("favorite color blue"),
+        job_id=1,
     )
     store.upsert_memory(
-        entity_id="user_2", process_id="agent", kind="fact",
-        subject="user", predicate="favorite_color", object="green",
+        entity_id="user_2",
+        process_id="agent",
+        kind="fact",
+        subject="user",
+        predicate="favorite_color",
+        object="green",
         text="User's favorite color is green.",
-        embedding=fake_embed("favorite color green"), job_id=2,
+        embedding=fake_embed("favorite color green"),
+        job_id=2,
     )
 
     # Direct store-level isolation
@@ -402,7 +427,7 @@ async def test_recall_never_crosses_entities(tmp_path):
     await provider.complete([LLMMessage.user("favorite color")], system="sys")
     system = provider.inner.systems[-1] or ""
     assert "user_1" not in system
-    assert "blue" not in system            # user_1's value is absent
+    assert "blue" not in system  # user_1's value is absent
     assert "Known context about this user:" in system
     assert "green" in system
 
@@ -424,9 +449,12 @@ async def test_write_scoped_to_entity(tmp_path):
 
     assert store.count_memories("user_1") == 2  # two extracted triples
     assert store.count_memories("user_2") == 0
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # 6. Hot-path latency / async extraction
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 async def test_wrapped_call_returns_before_extraction(tmp_path):
     """Response path must not wait for extraction: <50ms overhead, and memory
@@ -437,10 +465,15 @@ async def test_wrapped_call_returns_before_extraction(tmp_path):
     # Use distinct enough embeddings to avoid semantic dedup.
     for i in range(100):
         store.upsert_memory(
-            entity_id="user_1", process_id="agent", kind="fact",
-            subject="user", predicate=f"seed{i}", object=str(i),
+            entity_id="user_1",
+            process_id="agent",
+            kind="fact",
+            subject="user",
+            predicate=f"seed{i}",
+            object=str(i),
             text=f"Seed memory number {i}.",
-            embedding=fake_embed(f"distinct seed memory number {i} unique"), job_id=i,
+            embedding=fake_embed(f"distinct seed memory number {i} unique"),
+            job_id=i,
         )
 
     layer.attribution("user_1", "agent")
@@ -478,9 +511,12 @@ async def test_background_worker_persists_extraction(tmp_path):
         assert {r.predicate for r in records} == {"favorite_color", "preferred_language"}
     finally:
         layer.stop()
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # 7. Per-process policy & sessions
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 async def test_process_allowlist(tmp_path):
     layer = make_layer(tmp_path, enabled_processes=["support_agent"])
@@ -529,6 +565,7 @@ async def test_streaming_path_enqueues_turn(tmp_path):
 # 8. Comprehensive tests (Phase 17)
 # ════════════════════════════════════════════════════════════════════════════════
 
+
 async def test_memory_consolidation_merges_duplicates(tmp_path):
     """Test that consolidation job merges near-duplicate memories."""
     layer = make_layer(tmp_path)
@@ -537,8 +574,12 @@ async def test_memory_consolidation_merges_duplicates(tmp_path):
     # Insert two very similar memories (same triple, slightly different text)
     for i in range(2):
         store.upsert_memory(
-            entity_id="user_1", process_id="agent", kind="fact",
-            subject="user", predicate="favorite_color", object="blue",
+            entity_id="user_1",
+            process_id="agent",
+            kind="fact",
+            subject="user",
+            predicate="favorite_color",
+            object="blue",
             text=f"User's favorite color is blue (version {i}).",
             embedding=fake_embed(f"favorite color blue version {i}"),
             job_id=100 + i,
@@ -549,8 +590,12 @@ async def test_memory_consolidation_merges_duplicates(tmp_path):
 
     # Now add a third very similar one
     store.upsert_memory(
-        entity_id="user_1", process_id="agent", kind="fact",
-        subject="user", predicate="favorite_color", object="blue",
+        entity_id="user_1",
+        process_id="agent",
+        kind="fact",
+        subject="user",
+        predicate="favorite_color",
+        object="blue",
         text="User's favorite color is blue (version 3).",
         embedding=fake_embed("favorite color blue version 3"),
         job_id=103,
@@ -569,15 +614,23 @@ async def test_preview_consolidation_is_read_only(tmp_path):
     store = layer.store
 
     store.upsert_memory(
-        entity_id="user_1", process_id="agent", kind="fact",
-        subject="user", predicate="favorite_color", object="blue",
+        entity_id="user_1",
+        process_id="agent",
+        kind="fact",
+        subject="user",
+        predicate="favorite_color",
+        object="blue",
         text="User's favorite color is blue.",
         embedding=fake_embed("favorite color is blue"),
         job_id=200,
     )
     store.upsert_memory(
-        entity_id="user_1", process_id="agent", kind="fact",
-        subject="user", predicate="favorite_color", object="blue",
+        entity_id="user_1",
+        process_id="agent",
+        kind="fact",
+        subject="user",
+        predicate="favorite_color",
+        object="blue",
         text="User really likes blue.",
         embedding=fake_embed("really likes blue"),
         job_id=201,
@@ -600,8 +653,12 @@ async def test_memory_supersession_and_versioning(tmp_path):
 
     # Insert initial memory
     inserted, record = store.upsert_memory(
-        entity_id="user_1", process_id="agent", kind="fact",
-        subject="user", predicate="db", object="postgresql",
+        entity_id="user_1",
+        process_id="agent",
+        kind="fact",
+        subject="user",
+        predicate="db",
+        object="postgresql",
         text="User uses PostgreSQL.",
         embedding=fake_embed("user uses postgresql"),
         job_id=1,
@@ -636,8 +693,12 @@ async def test_explain_memory_shows_lifecycle(tmp_path):
     store = layer.store
 
     inserted, record = store.upsert_memory(
-        entity_id="user_1", process_id="agent", kind="preference",
-        subject="user", predicate="editor", object="vscode",
+        entity_id="user_1",
+        process_id="agent",
+        kind="preference",
+        subject="user",
+        predicate="editor",
+        object="vscode",
         text="User prefers VS Code.",
         embedding=fake_embed("user prefers vscode"),
         job_id=1,
@@ -659,15 +720,23 @@ async def test_explain_recall_shows_scoring(tmp_path):
     store = layer.store
 
     # Add some memories
-    for i, (text, emb) in enumerate([
-        ("User uses PostgreSQL", "user uses postgresql"),
-        ("User prefers VS Code", "user prefers vscode"),
-        ("User likes Python", "user likes python"),
-    ]):
+    for i, (text, emb) in enumerate(
+        [
+            ("User uses PostgreSQL", "user uses postgresql"),
+            ("User prefers VS Code", "user prefers vscode"),
+            ("User likes Python", "user likes python"),
+        ]
+    ):
         store.upsert_memory(
-            entity_id="user_1", process_id="agent", kind="fact",
-            subject="user", predicate=f"fact{i}", object=emb.split()[-1],
-            text=text, embedding=fake_embed(emb), job_id=10 + i,
+            entity_id="user_1",
+            process_id="agent",
+            kind="fact",
+            subject="user",
+            predicate=f"fact{i}",
+            object=emb.split()[-1],
+            text=text,
+            embedding=fake_embed(emb),
+            job_id=10 + i,
         )
 
     query = "what database does the user use"
@@ -690,19 +759,33 @@ async def test_debug_recall_returns_detailed_breakdown(tmp_path):
 
     # Add memories
     store.upsert_memory(
-        entity_id="user_1", process_id="agent", kind="fact",
-        subject="user", predicate="db", object="postgresql",
-        text="User uses PostgreSQL.", embedding=fake_embed("user uses postgresql"), job_id=1,
+        entity_id="user_1",
+        process_id="agent",
+        kind="fact",
+        subject="user",
+        predicate="db",
+        object="postgresql",
+        text="User uses PostgreSQL.",
+        embedding=fake_embed("user uses postgresql"),
+        job_id=1,
     )
     store.upsert_memory(
-        entity_id="user_1", process_id="agent", kind="preference",
-        subject="user", predicate="editor", object="vscode",
-        text="User prefers VS Code.", embedding=fake_embed("user prefers vscode"), job_id=2,
+        entity_id="user_1",
+        process_id="agent",
+        kind="preference",
+        subject="user",
+        predicate="editor",
+        object="vscode",
+        text="User prefers VS Code.",
+        embedding=fake_embed("user prefers vscode"),
+        job_id=2,
     )
 
     from tracera.memory.layer.attribution import current_attribution
 
-    debug_info = layer._recaller.debug_recall("what database does the user use", current_attribution())
+    debug_info = layer._recaller.debug_recall(
+        "what database does the user use", current_attribution()
+    )
 
     assert debug_info["query"] == "what database does the user use"
     assert debug_info["entity_id"] == "user_1"
@@ -724,18 +807,30 @@ async def test_hybrid_recall_scoring_components(tmp_path):
     # First insert with low mention count, then re-insert to boost mentions
     for _ in range(5):
         store.upsert_memory(
-            entity_id="user_1", process_id="agent", kind="fact",
-            subject="user", predicate="db", object="postgresql",
+            entity_id="user_1",
+            process_id="agent",
+            kind="fact",
+            subject="user",
+            predicate="db",
+            object="postgresql",
             text="User uses PostgreSQL for the database.",
             embedding=fake_embed("user uses postgresql for the database"),
-            confidence=0.9, importance=0.8, job_id=1,
+            confidence=0.9,
+            importance=0.8,
+            job_id=1,
         )
     store.upsert_memory(
-        entity_id="user_1", process_id="agent", kind="fact",
-        subject="user", predicate="editor", object="vscode",
+        entity_id="user_1",
+        process_id="agent",
+        kind="fact",
+        subject="user",
+        predicate="editor",
+        object="vscode",
         text="User prefers VS Code editor.",
         embedding=fake_embed("user prefers vscode editor"),
-        confidence=0.7, importance=0.5, job_id=2,
+        confidence=0.7,
+        importance=0.5,
+        job_id=2,
     )
 
     # Query that matches both
@@ -759,8 +854,12 @@ async def test_token_budget_enforcement_in_recall(tmp_path):
     # Add many memories
     for i in range(10):
         store.upsert_memory(
-            entity_id="user_1", process_id="agent", kind="fact",
-            subject="user", predicate=f"fact{i}", object=f"value{i}",
+            entity_id="user_1",
+            process_id="agent",
+            kind="fact",
+            subject="user",
+            predicate=f"fact{i}",
+            object=f"value{i}",
             text=f"Memory number {i} with some content to make it longer.",
             embedding=fake_embed(f"memory number {i} with content"),
             job_id=i,
@@ -768,8 +867,7 @@ async def test_token_budget_enforcement_in_recall(tmp_path):
 
     provider = layer.wrapped_provider
     await provider.complete(
-        [LLMMessage.user("what do you know?")],
-        system="You are a helpful assistant."
+        [LLMMessage.user("what do you know?")], system="You are a helpful assistant."
     )
 
     system = provider.inner.systems[-1]
@@ -780,9 +878,7 @@ async def test_token_budget_enforcement_in_recall(tmp_path):
 
 async def test_worthiness_filter_rejects_non_durable(tmp_path):
     """Test that worthiness filter rejects non-durable content."""
-    from tracera.memory.layer.extract import (
-        is_memory_worthy, filter_memory_worthy, ExtractedMemory
-    )
+    from tracera.memory.layer.extract import is_memory_worthy
 
     # Non-durable patterns
     assert not is_memory_worthy("hi")[0]
@@ -832,7 +928,7 @@ async def test_safety_filter_detects_prompt_injection(tmp_path):
 
 async def test_memory_scopes_and_policies(tmp_path):
     """Test MemoryScope enum and MemoryPolicy configuration."""
-    from tracera.memory.layer.store import MemoryScope, MemoryPolicy
+    from tracera.memory.layer.store import MemoryPolicy, MemoryScope
 
     # Test scope hierarchy
     assert MemoryScope.GLOBAL in MemoryScope
@@ -851,7 +947,7 @@ async def test_memory_scopes_and_policies(tmp_path):
 
 async def test_background_worker_stats_tracking(tmp_path):
     """Test that background worker tracks statistics."""
-    from tracera.memory.layer.queue import BackgroundWorker, WorkerStats
+    from tracera.memory.layer.queue import BackgroundWorker
 
     store = MemoryStore(tmp_path / "mem.db")
     handler_called = []

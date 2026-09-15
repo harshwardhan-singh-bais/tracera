@@ -1,48 +1,139 @@
 ---
 title: MCP Integration
-description: Expose TRACERA tools over MCP, or consume external MCP servers.
+description: Plug TRACERA into any MCP client — Claude, Cursor, VS Code, Codex, Windsurf, Antigravity and more.
 ---
 
 TRACERA is [Model Context Protocol](https://modelcontextprotocol.io) native
-on both sides.
+on both sides: it can **serve** its full tool registry to any MCP client,
+and **consume** external MCP servers as tools.
 
-## As an MCP server
+## One-command setup: `tracera mcp install`
 
-`tracera mcp serve` exposes the full tool registry — retrieval, structural
-analysis, memory, shell, file operations — to any MCP client:
+The fastest way to plug TRACERA into your editor or agent. It writes a
+ready-to-use stdio server entry into the client's own config file —
+preserving everything already there, with a `.bak` backup before any change:
 
 ```bash
-tracera mcp serve
+tracera mcp install --list              # see every supported host + config path
+tracera mcp install cursor              # one client
+tracera mcp install claude-desktop cursor vscode codex
+tracera mcp install all                 # every detected client
 ```
 
-Example client config (Claude Desktop / any MCP host):
+Supported hosts:
+
+| Key | Client | Config location |
+| --- | --- | --- |
+| `claude-desktop` | Claude Desktop | `%APPDATA%/Claude/claude_desktop_config.json` |
+| `claude-code` | Claude Code | `~/.claude.json` |
+| `codex` | Codex CLI | `~/.codex/config.toml` |
+| `cursor` | Cursor | `%APPDATA%/Cursor/mcp.json` |
+| `windsurf` | Windsurf | `%APPDATA%/Windsurf/mcp_config.json` |
+| `vscode` | VS Code (Copilot) | `.vscode/mcp.json` in the workspace |
+| `cline` | Cline (VS Code) | Cline's `cline_mcp_settings.json` |
+| `gemini-cli` | Gemini CLI | `~/.gemini/settings.json` |
+| `antigravity` | Google Antigravity | platform config dir / `~/.antigravity` |
+
+The entry points at *this checkout* (`python -X utf8 -m tracera.main mcp
+serve --workspace <root>` with `PYTHONUTF8=1`), so code changes apply
+without reinstalling — restart the client and its agent gains all 36 tools:
+hybrid code search, blast radius, call hierarchy, dead code, hotspots,
+memory recall/remember, task context assembly, risk profiles and more.
+
+<Callout type="info">
+The `PYTHONUTF8=1` in every generated entry is not decoration — on Windows,
+Python defaults to cp1252 and any non-ASCII output corrupts the JSON-RPC
+stdio stream. The server also routes all diagnostics to stderr, keeping
+stdout byte-clean for protocol traffic.
+</Callout>
+
+## Manual setup (any MCP client)
+
+Every client that accepts a JSON config understands this shape:
 
 ```json
 {
   "mcpServers": {
     "tracera": {
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/tracera", "tracera", "mcp", "serve"]
+      "command": "C:\\path\\to\\tracera\\.venv\\Scripts\\python.exe",
+      "args": [
+        "-X", "utf8",
+        "-m", "tracera.main", "mcp", "serve",
+        "--workspace", "C:\\path\\to\\tracera"
+      ],
+      "env": { "PYTHONUTF8": "1" },
+      "cwd": "C:\\path\\to\\tracera"
     }
   }
 }
 ```
 
-This makes TRACERA's code intelligence available inside your editor or
-agent host of choice.
+Adjust paths for your machine (or use `uv run --directory <repo> tracera mcp
+serve` if you prefer uv). VS Code / Copilot uses `"servers"` as the container
+key plus `"type": "stdio"` in the entry; Codex CLI uses TOML — `tracera mcp
+install codex` writes the correct block for you.
 
-## As an MCP client
+## What clients get
+
+`tracera mcp serve --check` prints the tool table without starting a server:
+
+| Category | Tools |
+| --- | --- |
+| Code intelligence | `search_code`, `find_symbol`, `find_references`, `get_context`, `get_dependencies`, `find_importers`, `get_blast_radius`, `get_call_hierarchy`, `find_dead_code`, `get_changed_symbols`, `get_hotspots`, `search_ast`, `get_class_hierarchy`, `get_dependency_cycles`, `get_coupling_metrics`, `get_endpoint_impact` |
+| Context | `assemble_task_context`, `get_ranked_context`, `plan_turn`, `get_session_stats`, `get_repo_map` |
+| Memory | `recall_memory`, `remember_memory`, `forget_memory`, `list_sessions`, `search_memory`, `get_memory_graph` |
+| Safety | `check_edit_safe`, `check_delete_safe`, `plan_refactoring`, `get_pr_risk_profile`, `get_symbol_provenance`, `audit_agent_config` |
+| Repository | `run_tests`, `inspect_repository` |
+
+All tools delegate to the same engine the TUI and CLI use — no duplicate
+implementations, no drift.
+
+## Running the server manually
+
+```bash
+tracera mcp serve                          # stdio (default) — what clients use
+tracera mcp serve -t sse --port 8000       # SSE for remote/browser clients
+tracera mcp serve -t streamable-http       # streamable HTTP
+tracera mcp serve --check                  # list tools and exit
+```
+
+Verify it end-to-end the way a real client would:
+
+```bash
+uv run python scripts/test_mcp_e2e.py      # initialize → list tools → call one
+```
+
+## TRACERA as an MCP client
 
 TRACERA can also *consume* external MCP servers and merge their tools into
-its own registry. Configure servers, then check:
+its own registry — those tools become slash-addressable automatically.
+
+`.tracera/mcp_servers.json`:
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_..." }
+    }
+  }
+}
+```
+
+Attach it:
+
+```bash
+tracera mcp connect .tracera/mcp_servers.json
+```
+
+Or let the TUI / `ask` auto-attach the file on launch, then check status:
 
 ```bash
 /mcp        # TUI: connection status + merged tools
 tracera mcp status
 ```
-
-External tools appear in the normal tool registry, which means they are
-also reachable as slash commands.
 
 ## Server settings
 

@@ -17,8 +17,8 @@ GitHub, Postgres, ...).
 from __future__ import annotations
 
 import json
-import os
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -123,14 +123,14 @@ class MCPClient:
 
     # ── Lifecycle ────────────────────────────────────────────────────────────
 
-    async def __aenter__(self) -> "MCPClient":
+    async def __aenter__(self) -> MCPClient:
         await self.connect()
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
         await self.disconnect()
 
-    async def connect(self) -> "MCPClient":
+    async def connect(self) -> MCPClient:
         """Spawn the server subprocess and complete MCP initialize."""
         params = StdioServerParameters(
             command=self._command,
@@ -226,19 +226,22 @@ class MCPClient:
             desc = t.get("description") or f"MCP tool '{remote_name}' on server '{self.name}'"
             registry_name = f"{self.name}_{remote_name}" if prefix else remote_name
 
-            def _make_call(client: "MCPClient", tool_name: str) -> CallToolFn:
+            def _make_call(client: MCPClient, tool_name: str) -> CallToolFn:
                 async def _call(arguments: dict[str, Any] | None = None) -> str:
                     return await client.call_tool(tool_name, arguments or {})
+
                 return _call
 
-            native.append(MCPTool(
-                name=registry_name,
-                description=desc,
-                input_schema=schema,
-                call_fn=_make_call(self, remote_name),
-                server_name=self.name,
-                remote_name=remote_name,
-            ))
+            native.append(
+                MCPTool(
+                    name=registry_name,
+                    description=desc,
+                    input_schema=schema,
+                    call_fn=_make_call(self, remote_name),
+                    server_name=self.name,
+                    remote_name=remote_name,
+                )
+            )
         return native
 
     async def register_tools(self, registry: Any) -> int:

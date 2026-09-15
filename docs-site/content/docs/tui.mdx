@@ -1,0 +1,119 @@
+---
+title: The TUI
+description: Panels, streaming, attachments and every interactive feature in the terminal UI.
+---
+
+TRACERA's terminal UI (built on [Textual](https://textual.textualize.io)) is
+not a REPL with print statements — it is a workspace. This page covers every
+widget and interactive feature so you know what's on screen and what it can
+do.
+
+## Layout at a glance
+
+```
+┌────────────────────────────────────────────────────────────┐
+│ ◆ TRACERA · groq/llama-3.3-70b · indexed: 186 · memory: on │
+├────────────────────────────────────────────────────────────┤
+│  agent stream (phases, tool rows, diffs, search results)   │
+│  …                                                          │
+├────────────────────────────────────────────────────────────┤
+│ ＋  > type a message or /command…            [model pill]  │
+└────────────────────────────────────────────────────────────┘
+```
+
+- **Status header** — active provider/model, index size, memory state. Always visible, always current.
+- **Agent stream** — everything the agent does appears inline, in order (below).
+- **Input bar** — message or slash command, with autocomplete on `/`.
+- **Attachments (`＋`)** — attach files to a message.
+
+## The agent stream
+
+Everything the agent does streams live into the panel:
+
+- **Phase markers** — `◇ Thinking`, `◇ Generating` — so you always know what stage a task is in.
+- **Tool rows** — every tool call appears as a row: ✓ success, ✗ failure with the error line beneath, animated spinner while in flight. Press <kbd>ctrl+t</kbd> to show/hide tool arguments.
+- **File edits collapse** to a `📝 path +N -M` summary row. **Click it** to expand the full inline diff — green added lines, red removed.
+- **Expandable rows** — memory writes, search results, plans, repo info all render as `→` rows; click any of them to expand the full content.
+
+You never stare at a blank screen wondering what the agent is doing — every
+step is visible, and <kbd>esc</kbd> cancels a running task at any point.
+
+## Attachments
+
+Click **＋** next to the input (or use the file picker) to attach files:
+
+- **Text files** are read and injected into the agent's context (up to
+  ~200 KB per file).
+- **Images** attach with a `[!]` badge when the active model cannot view
+  them — so you always know whether the image is actually being seen.
+
+While a request runs, the input is replaced by a **loader pill** showing the
+live phase. Click **●** to stop the task.
+
+## Provider switcher
+
+Press <kbd>ctrl+p</kbd> for the provider/model dropdown. It lists every
+configured provider discovered at runtime — the same source the CLI uses —
+with the active one highlighted:
+
+- Providers without an API key are shown **dimmed with a `[!] missing
+  KEY_NAME` marker** and cannot be selected — no silent failures later.
+- Switching is **live**: the new provider applies to the running session
+  immediately.
+
+A common rhythm: a strong model for `/plan`, a fast/cheap one for `/code`.
+
+## Command palette
+
+<kbd>ctrl+shift+p</kbd> opens the Textual command palette — a fuzzy-searchable
+list of every action (switch provider, show memory, clear, help, …). The
+palette reads from the same registry as autocomplete, so new commands appear
+automatically.
+
+## Dashboard (`/dashboard`)
+
+The system overview panel, one glance:
+
+- **Provider & model** — what's serving you right now
+- **Index health** — files indexed, freshness
+- **Memory** — entry count, layer status
+- **Limits** — iteration/tool-call/token budgets in effect
+
+## Memory panel (<kbd>ctrl+m</kbd> / `/memory`)
+
+Browse the persistent memory store inline: typed records (facts, decisions,
+preferences, skills) with their categories. `/memgraph` renders the
+knowledge graph — how facts link — and `/triples` shows raw semantic
+triples.
+
+## Themes (`/theme`)
+
+Cycle accent themes: **claude → crush → nord**. Cosmetic, instant, and it
+only changes the TUI — the docs site theme is separate.
+
+## Autocomplete
+
+Type `/` and the input suggests every available command with its
+description, filtered as you type, with <kbd>↑</kbd>/<kbd>↓</kbd> and
+<kbd>enter</kbd> to select. The list is generated from the command registry
+— the same source as `/features` — so it is always complete for your build.
+
+## Keyboard reference
+
+| Key | Action |
+| --- | --- |
+| <kbd>ctrl+q</kbd> | Quit |
+| <kbd>ctrl+l</kbd> | Clear conversation |
+| <kbd>ctrl+t</kbd> | Toggle verbose tool rows |
+| <kbd>ctrl+p</kbd> | Provider/model switcher |
+| <kbd>ctrl+shift+p</kbd> | Command palette |
+| <kbd>ctrl+m</kbd> | Memory panel |
+| <kbd>f1</kbd> | Help |
+| <kbd>esc</kbd> | Cancel running task / close dialog |
+| <kbd>pgup</kbd> / <kbd>pgdn</kbd> | Scroll the stream |
+
+## Where to next
+
+- [Slash Commands](/docs/slash-commands) — all 85 commands, by use case
+- [CLI Reference](/docs/cli) — the same engine, headless
+- [Agents & Delegation](/docs/features/agent) — how the fleet and sandbox work

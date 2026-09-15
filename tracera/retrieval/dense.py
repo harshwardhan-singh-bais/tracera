@@ -7,9 +7,9 @@ most semantically similar CodeChunks from the LanceDB vector store.
 
 from __future__ import annotations
 
+from tracera.logging import get_logger
 from tracera.retrieval.embedder import EmbeddingPipeline
 from tracera.retrieval.vector_store import VectorStore
-from tracera.logging import get_logger
 
 log = get_logger("retrieval.dense")
 

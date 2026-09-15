@@ -11,24 +11,17 @@ TRACERA Security — Phases 51-55.
     resources.py      — Phase 55: resource-limit monitoring/enforcement.
 """
 
-from tracera.security.injection import (
-    InjectionFinding,
-    InjectionPolicy,
-    PromptInjectionDetector,
-    sanitize_content,
-)
-from tracera.security.secrets import (
-    SECRET_PATTERNS,
-    SecretRedactor,
-    SecretScanResult,
-    redact_text,
-    scan_text,
-)
 from tracera.security.command_safety import (
     CommandSafety,
     CommandVerdict,
     DangerousCommandError,
     check_command,
+)
+from tracera.security.injection import (
+    InjectionFinding,
+    InjectionPolicy,
+    PromptInjectionDetector,
+    sanitize_content,
 )
 from tracera.security.mcp_security import (
     MCPSecurityManager,
@@ -37,6 +30,13 @@ from tracera.security.mcp_security import (
     validate_mcp_output,
 )
 from tracera.security.resources import ResourceMonitor
+from tracera.security.secrets import (
+    SECRET_PATTERNS,
+    SecretRedactor,
+    SecretScanResult,
+    redact_text,
+    scan_text,
+)
 
 __all__ = [
     "InjectionFinding",

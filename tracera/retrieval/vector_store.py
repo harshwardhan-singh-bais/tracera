@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from tracera.indexer.schema import CodeChunk, SymbolType
+from tracera.indexer.schema import CodeChunk
 from tracera.logging import get_logger
 
 log = get_logger("retrieval.vector_store")
@@ -84,22 +84,23 @@ class VectorStore:
                     self._dimension = dim
         else:
             if self._dimension is None:
-                raise RuntimeError(
-                    "VectorStore dimension is required to create a new table."
-                )
+                raise RuntimeError("VectorStore dimension is required to create a new table.")
             import pyarrow as pa
-            schema = pa.schema([
-                pa.field("id", pa.string()),
-                pa.field("content", pa.string()),
-                pa.field("file_path", pa.string()),
-                pa.field("language", pa.string()),
-                pa.field("symbol", pa.string()),
-                pa.field("symbol_type", pa.string()),
-                pa.field("parent", pa.string()),
-                pa.field("start_line", pa.int32()),
-                pa.field("end_line", pa.int32()),
-                pa.field("vector", pa.list_(pa.float32(), self._dimension)),
-            ])
+
+            schema = pa.schema(
+                [
+                    pa.field("id", pa.string()),
+                    pa.field("content", pa.string()),
+                    pa.field("file_path", pa.string()),
+                    pa.field("language", pa.string()),
+                    pa.field("symbol", pa.string()),
+                    pa.field("symbol_type", pa.string()),
+                    pa.field("parent", pa.string()),
+                    pa.field("start_line", pa.int32()),
+                    pa.field("end_line", pa.int32()),
+                    pa.field("vector", pa.list_(pa.float32(), self._dimension)),
+                ]
+            )
             self._table = self._db.create_table(_TABLE_NAME, schema=schema)
             log.info("Created LanceDB table: %s (dim=%d)", _TABLE_NAME, self._dimension)
         return self._table
@@ -117,18 +118,20 @@ class VectorStore:
 
         rows = []
         for chunk, embedding in zip(chunks, embeddings):
-            rows.append({
-                "id": chunk.id,
-                "content": chunk.content,
-                "file_path": chunk.file_path,
-                "language": chunk.language,
-                "symbol": chunk.primary_symbol or "",
-                "symbol_type": chunk.symbol_type.value if chunk.symbol_type else "",
-                "parent": chunk.parent_symbol or "",
-                "start_line": chunk.range.start_line,
-                "end_line": chunk.range.end_line,
-                "vector": embedding,
-            })
+            rows.append(
+                {
+                    "id": chunk.id,
+                    "content": chunk.content,
+                    "file_path": chunk.file_path,
+                    "language": chunk.language,
+                    "symbol": chunk.primary_symbol or "",
+                    "symbol_type": chunk.symbol_type.value if chunk.symbol_type else "",
+                    "parent": chunk.parent_symbol or "",
+                    "start_line": chunk.range.start_line,
+                    "end_line": chunk.range.end_line,
+                    "vector": embedding,
+                }
+            )
 
         # Merge (overwrite) by deleting existing IDs first
         ids = [r["id"] for r in rows]

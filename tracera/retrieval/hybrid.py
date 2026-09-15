@@ -7,9 +7,9 @@ Reciprocal Rank Fusion (RRF) for a configurable final ranking.
 
 from __future__ import annotations
 
+from tracera.logging import get_logger
 from tracera.retrieval.bm25 import BM25Index
 from tracera.retrieval.dense import DenseRetriever
-from tracera.logging import get_logger
 
 log = get_logger("retrieval.hybrid")
 
@@ -104,9 +104,11 @@ class HybridRetriever:
             results.append(row)
 
         log.debug(
-            "Hybrid retrieval: query=%r k=%d → %d results "
-            "(bm25_weight=%.2f dense_weight=%.2f)",
-            query[:40], k, len(results),
-            self._bm25_weight, self._dense_weight,
+            "Hybrid retrieval: query=%r k=%d → %d results (bm25_weight=%.2f dense_weight=%.2f)",
+            query[:40],
+            k,
+            len(results),
+            self._bm25_weight,
+            self._dense_weight,
         )
         return results

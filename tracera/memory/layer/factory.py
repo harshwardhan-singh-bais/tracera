@@ -17,7 +17,6 @@ from tracera.logging import get_logger
 from tracera.memory.layer.attribution import Attribution
 from tracera.memory.layer.facade import MemoryLayer
 from tracera.memory.layer.store import MemoryStore
-from tracera.memory.layer.wrapper import MemoryProvider
 from tracera.providers.base import LLMProvider
 
 log = get_logger("memory.layer.factory")
@@ -30,9 +29,7 @@ class LocalMemoryEmbedder:
     The model is only loaded on first use so process startup stays fast.
     """
 
-    def __init__(
-        self, model_name: str, device: str, cache_dir: Path | None = None
-    ) -> None:
+    def __init__(self, model_name: str, device: str, cache_dir: Path | None = None) -> None:
         self._model_name = model_name
         self._device = device
         self._cache_dir = cache_dir
@@ -77,9 +74,16 @@ def create_memory_layer(settings: Settings | None = None) -> MemoryLayer | None:
             min_extraction_confidence=0.5,
             min_extraction_importance=0.3,
             enable_worthiness_filter=True,
+            enable_safety=True,
             recall_use_hybrid=True,
             recall_token_budget=2000,
             recall_grouped=True,
+            recall_graph_expansion=settings.tracera_memory_graph_expansion,
+            recall_graph_hops=settings.tracera_memory_graph_hops,
+            enable_reconciliation=settings.tracera_memory_reconciliation,
+            reconciliation_candidates=settings.tracera_memory_reconciliation_candidates,
+            decay_half_life_days=settings.tracera_memory_decay_half_life_days,
+            retention_days=settings.tracera_memory_retention_days,
         )
     except Exception as e:  # noqa: BLE001 — never break startup over memory
         log.warning("Memory layer unavailable (disabled): %s", e)

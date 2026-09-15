@@ -87,15 +87,19 @@ class SearchCodeTool(Tool):
                 if self._context_recall is not None:
                     try:
                         memory_context = self._context_recall.recall(
-                            query, k=10, max_chars=4000,
-                            include_sessions=True, include_triples=True,
+                            query,
+                            k=10,
+                            max_chars=4000,
+                            include_sessions=True,
+                            include_triples=True,
                         )
                     except Exception:
                         pass  # Memory recall is optional
 
                 if self._context_engine is not None:
                     assembled = self._context_engine.assemble(
-                        results, query=f"Search: {query}",
+                        results,
+                        query=f"Search: {query}",
                         memory_context=memory_context,
                         memory_budget_tokens=2000,
                     )
@@ -196,8 +200,11 @@ class FindDefinitionTool(Tool):
             if self._context_recall is not None:
                 try:
                     memory_context = self._context_recall.recall(
-                        query, k=5, max_chars=2000,
-                        include_sessions=True, include_triples=True,
+                        query,
+                        k=5,
+                        max_chars=2000,
+                        include_sessions=True,
+                        include_triples=True,
                     )
                 except Exception:
                     pass
@@ -373,15 +380,19 @@ class GetContextTool(Tool):
                 if self._context_recall is not None:
                     try:
                         memory_context = self._context_recall.recall(
-                            f"Context for: {symbol}", k=5, max_chars=2000,
-                            include_sessions=True, include_triples=True,
+                            f"Context for: {symbol}",
+                            k=5,
+                            max_chars=2000,
+                            include_sessions=True,
+                            include_triples=True,
                         )
                     except Exception:
                         pass
 
                 if self._context_engine is not None:
                     assembled = self._context_engine.assemble(
-                        expanded, query=f"Context for: {symbol}",
+                        expanded,
+                        query=f"Context for: {symbol}",
                         memory_context=memory_context,
                         memory_budget_tokens=2000,
                     )
@@ -453,10 +464,7 @@ class FindReferencesTool(Tool):
             lines: list[str] = []
             for node_id in node_ids[:10]:
                 node = self._graph.get_node(node_id)
-                where = (
-                    f"{node['file_path']}:{node['start_line']}"
-                    if node else node_id
-                )
+                where = f"{node['file_path']}:{node['start_line']}" if node else node_id
                 callers = self._graph.get_callers(node_id)
                 if not callers:
                     lines.append(f"### `{symbol}` defined at `{where}` — no recorded callers.")
@@ -530,7 +538,8 @@ class GetDependenciesTool(Tool):
             header = (
                 f"## `{symbol}` ({node['symbol_type']}) "
                 f"in `{node['file_path']}:{node['start_line']}`"
-                if node else f"## `{symbol}`"
+                if node
+                else f"## `{symbol}`"
             )
 
             lines = [header]

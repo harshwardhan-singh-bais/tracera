@@ -19,7 +19,7 @@ log = get_logger("tools.run_command")
 class RunCommandTool(Tool):
     """
     Execute a shell command inside the workspace directory.
-    
+
     Only pre-approved commands are allowed. All commands run with the
     workspace root as the working directory.
     """
@@ -35,11 +35,22 @@ class RunCommandTool(Tool):
         self._timeout = timeout
         if allowed_commands is None:
             from tracera.config import get_settings
+
             try:
                 allowed_commands = get_settings().allowed_commands
             except Exception:
-                allowed_commands = ["git", "python", "python3", "pytest", "npm", "node",
-                                     "cargo", "make", "ruff", "mypy"]
+                allowed_commands = [
+                    "git",
+                    "python",
+                    "python3",
+                    "pytest",
+                    "npm",
+                    "node",
+                    "cargo",
+                    "make",
+                    "ruff",
+                    "mypy",
+                ]
         self._allowed = set(allowed_commands)
 
     @property
@@ -136,7 +147,7 @@ class RunCommandTool(Tool):
                 stdout, stderr = await asyncio.wait_for(
                     proc.communicate(), timeout=effective_timeout
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 proc.kill()
                 await proc.communicate()
                 return ToolResult.fail(

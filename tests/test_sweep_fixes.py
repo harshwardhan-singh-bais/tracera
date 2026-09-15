@@ -12,7 +12,6 @@ Covers:
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -24,7 +23,6 @@ from tracera.agent.subagents import (
     build_sub_agent,
 )
 from tracera.tools.registry import ToolRegistry
-
 
 # ── 1. Sub-agent sandbox ──────────────────────────────────────────────────────
 

@@ -21,8 +21,9 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from tracera.logging import get_logger
 from tracera.memory.layer.store import Job, MemoryStore
@@ -33,6 +34,7 @@ log = get_logger("memory.layer.worker")
 @dataclass
 class WorkerStats:
     """Runtime statistics for the background worker."""
+
     jobs_processed: int = 0
     jobs_failed: int = 0
     jobs_retried: int = 0
@@ -120,8 +122,11 @@ class BackgroundWorker(threading.Thread):
     # ── Main loop ────────────────────────────────────────────────────────────
 
     def run(self) -> None:  # noqa: D102 — thread entrypoint
-        log.debug("Memory worker started (batch_size=%d, priority=%s)",
-                  self._batch_size, self._priority_enabled)
+        log.debug(
+            "Memory worker started (batch_size=%d, priority=%s)",
+            self._batch_size,
+            self._priority_enabled,
+        )
         while not self._stop.is_set():
             try:
                 # Claim a batch of jobs (respects priority if enabled)
@@ -162,8 +167,11 @@ class BackgroundWorker(threading.Thread):
                     self._stats.last_error = str(e)[:500]
                 if self._stop.wait(self._poll_interval):
                     break
-        log.debug("Memory worker stopped (processed=%d, failed=%d)",
-                  self._stats.jobs_processed, self._stats.jobs_failed)
+        log.debug(
+            "Memory worker stopped (processed=%d, failed=%d)",
+            self._stats.jobs_processed,
+            self._stats.jobs_failed,
+        )
 
 
 class PriorityBackgroundWorker(BackgroundWorker):

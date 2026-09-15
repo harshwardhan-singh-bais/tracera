@@ -25,24 +25,26 @@ log = get_logger("agent.memory")
 
 # ── Memory types ──────────────────────────────────────────────────────────────
 
+
 class MemoryCategory(str, Enum):
-    PROJECT_FACT = "project_fact"         # static facts about the codebase
-    USER_PREFERENCE = "user_preference"   # how the user likes things done
-    PAST_DECISION = "past_decision"       # architectural/design decisions made
-    TASK_CONTEXT = "task_context"         # context relevant to current task
-    ERROR_PATTERN = "error_pattern"       # recurring errors and their fixes
-    CODE_LOCATION = "code_location"       # where specific things are in the codebase
+    PROJECT_FACT = "project_fact"  # static facts about the codebase
+    USER_PREFERENCE = "user_preference"  # how the user likes things done
+    PAST_DECISION = "past_decision"  # architectural/design decisions made
+    TASK_CONTEXT = "task_context"  # context relevant to current task
+    ERROR_PATTERN = "error_pattern"  # recurring errors and their fixes
+    CODE_LOCATION = "code_location"  # where specific things are in the codebase
 
 
 @dataclass
 class MemoryEntry:
     """A single memory entry."""
+
     id: str
     category: MemoryCategory
     content: str
-    source: str = ""          # where this memory came from (e.g. "user", "agent", "file")
+    source: str = ""  # where this memory came from (e.g. "user", "agent", "file")
     tags: list[str] = field(default_factory=list)
-    importance: float = 0.5   # 0.0–1.0
+    importance: float = 0.5  # 0.0–1.0
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
     access_count: int = 0
@@ -74,7 +76,7 @@ class MemoryEntry:
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> "MemoryEntry":
+    def from_dict(cls, d: dict) -> MemoryEntry:
         return cls(
             id=d["id"],
             category=MemoryCategory(d["category"]),
@@ -96,6 +98,7 @@ class MemoryEntry:
 
 # ── TF-IDF retrieval ──────────────────────────────────────────────────────────
 
+
 def _tokenize(text: str) -> list[str]:
     return re.findall(r"[a-z0-9_]+", text.lower())
 
@@ -113,13 +116,14 @@ def _tfidf_score(query_tokens: list[str], doc_tokens: list[str], idf: dict[str, 
 
 # ── Agent Memory ──────────────────────────────────────────────────────────────
 
+
 class AgentMemory:
     """
     Persistent memory store for TRACERA agents.
-    
+
     Storage: JSON file at {memory_dir}/memory.json
     Retrieval: TF-IDF similarity (upgradeable to dense embeddings in phase 17+)
-    
+
     The memory system answers questions like:
     - "What do I know about this project?"
     - "What has the user asked me not to do?"
@@ -186,7 +190,7 @@ class AgentMemory:
     ) -> MemoryEntry:
         """
         Add a new memory entry.
-        
+
         If *deduplicate* is True and a very similar entry exists, updates it instead.
         """
         if deduplicate:
@@ -250,7 +254,7 @@ class AgentMemory:
     ) -> list[MemoryEntry]:
         """
         Retrieve the top-k most relevant memory entries for *query*.
-        
+
         Uses TF-IDF similarity. Upgradeable to dense embeddings in phase 17.
         """
         query_tokens = _tokenize(query)
@@ -258,9 +262,9 @@ class AgentMemory:
             return list(self._entries.values())[:k]
 
         candidates = [
-            e for e in self._entries.values()
-            if e.importance >= min_importance
-            and (category is None or e.category == category)
+            e
+            for e in self._entries.values()
+            if e.importance >= min_importance and (category is None or e.category == category)
         ]
 
         scored = []
@@ -268,7 +272,7 @@ class AgentMemory:
             doc_tokens = _tokenize(entry.content + " " + " ".join(entry.tags))
             score = _tfidf_score(query_tokens, doc_tokens, self._idf)
             # Boost by importance and recency
-            score *= (1 + entry.importance)
+            score *= 1 + entry.importance
             scored.append((score, entry))
 
         scored.sort(key=lambda x: x[0], reverse=True)
@@ -333,9 +337,7 @@ class AgentMemory:
         return len(self._entries)
 
     def stats(self) -> dict[str, Any]:
-        by_category: dict[str, int] = Counter(
-            e.category.value for e in self._entries.values()
-        )
+        by_category: dict[str, int] = Counter(e.category.value for e in self._entries.values())
         return {
             "total": self.count,
             "by_category": dict(by_category),
@@ -361,9 +363,7 @@ class AgentMemory:
 
     # ── Internal ──────────────────────────────────────────────────────────────
 
-    def _find_duplicate(
-        self, content: str, category: MemoryCategory
-    ) -> MemoryEntry | None:
+    def _find_duplicate(self, content: str, category: MemoryCategory) -> MemoryEntry | None:
         """Find an entry with very similar content in the same category."""
         query_tokens = set(_tokenize(content))
         for entry in self._entries.values():
@@ -381,9 +381,9 @@ class AgentMemory:
         """Remove least-important, least-accessed entries."""
         entries = sorted(
             self._entries.values(),
-            key=lambda e: (e.importance + (e.access_count * 0.1)),
+            key=lambda e: e.importance + (e.access_count * 0.1),
         )
-        to_remove = entries[:len(entries) - self.MAX_ENTRIES + 100]
+        to_remove = entries[: len(entries) - self.MAX_ENTRIES + 100]
         for entry in to_remove:
             del self._entries[entry.id]
         log.info("Pruned %d memory entries", len(to_remove))

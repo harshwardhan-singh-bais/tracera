@@ -39,7 +39,7 @@ def _parse_handled_commands() -> tuple[set[str], bool]:
     body = match.group(0)
     # Both forms: cmd == "/x"  and  cmd in ("/x", "/y").
     found = set(re.findall(r'cmd == \(?"([^"]+)"\)?', body))
-    for group in re.findall(r'cmd in \(([^)]*)\)', body):
+    for group in re.findall(r"cmd in \(([^)]*)\)", body):
         found.update(re.findall(r'"([^"]+)"', group))
     has_fallback = "cmd[1:] in SLASH_TOOLS" in body
     return {c.lstrip("/").lower() for c in found}, has_fallback
@@ -50,6 +50,7 @@ def _all_tool_names() -> set[str]:
     import tempfile
 
     import tracera.main  # noqa: F401  (registers nested tool classes)
+
     for mod_name in (
         "tracera.tools.ast_tools",
         "tracera.tools.code_search",
@@ -81,6 +82,7 @@ def _all_tool_names() -> set[str]:
         ws = WorkspaceSandbox(Path(td))
         names.update(create_default_registry(ws).names)
         from tracera.main import _make_inspect_repository_tool, _make_run_tests_tool
+
         names.add(_make_run_tests_tool(ws).name)
         names.add(_make_inspect_repository_tool(ws).name)
     return names
@@ -115,8 +117,8 @@ def test_dispatched_commands_match_autocomplete_registry():
 
 
 def test_feature_groups_reference_known_commands_or_aliases():
-    from tracera.tui.widgets.slash_actions import FEATURE_GROUPS, SLASH_TOOLS
     from tracera.tui.widgets.command_registry import SLASH_COMMANDS
+    from tracera.tui.widgets.slash_actions import FEATURE_GROUPS, SLASH_TOOLS
 
     for group, items in FEATURE_GROUPS.items():
         assert items, f"Feature group '{group}' is empty"
@@ -131,7 +133,7 @@ def test_feature_groups_reference_known_commands_or_aliases():
 
 
 def test_command_registry_merges_aliases():
-    from tracera.tui.widgets.command_registry import SLASH_COMMANDS, COMMAND_ORDER
+    from tracera.tui.widgets.command_registry import COMMAND_ORDER, SLASH_COMMANDS
     from tracera.tui.widgets.slash_actions import SLASH_TOOLS
 
     for alias in SLASH_TOOLS:

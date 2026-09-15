@@ -14,9 +14,10 @@ Commands:
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 from rich.console import Console
@@ -35,11 +36,25 @@ app = typer.Typer(
     no_args_is_help=False,
 )
 
+
+def _version_callback(value: bool) -> None:
+    if value:
+        from importlib.metadata import version
+
+        try:
+            v = version("tracera")
+        except Exception:
+            v = "unknown"
+        console.print(f"tracera {v}")
+        raise typer.Exit()
+
+
 console = Console()
 
 
 def _get_settings():
     from tracera.config import get_settings
+
     return get_settings()
 
 
@@ -48,12 +63,14 @@ def _setup() -> None:
     settings = _get_settings()
     settings.ensure_dirs()
     from tracera.logging import setup_logging
+
     setup_logging(
         level=settings.tracera_log_level,
         log_file=settings.tracera_log_file,
     )
     # Phase 2: workspace lifecycle — create the `.tracera/` data dirs
     from tracera.workspace.lifecycle import WorkspaceLifecycle
+
     WorkspaceLifecycle(settings.tracera_data_dir).initialise()
 
 
@@ -66,9 +83,9 @@ def _build_agent(settings=None, workspace_path: Path | None = None, retrieval_pi
     if settings is None:
         settings = _get_settings()
 
+    from tracera.agent.react_loop import ReActAgent
     from tracera.tools.registry import create_default_registry
     from tracera.workspace.sandbox import WorkspaceSandbox
-    from tracera.agent.react_loop import ReActAgent
 
     ws_path = workspace_path or settings.tracera_workspace
     workspace = WorkspaceSandbox(
@@ -82,13 +99,17 @@ def _build_agent(settings=None, workspace_path: Path | None = None, retrieval_pi
     # output is assembled + compressed before it reaches the LLM.
     if retrieval_pipeline is not None:
         from tracera.tools.registry import extend_registry_with_retrieval
+
         symbol_retriever = retrieval_pipeline[1]
         expander = retrieval_pipeline[2]
         graph_retriever = retrieval_pipeline[-1]
         context_engine = retrieval_pipeline[4]
         compressor = retrieval_pipeline[5]
         extend_registry_with_retrieval(
-            registry, symbol_retriever, expander, graph_retriever,
+            registry,
+            symbol_retriever,
+            expander,
+            graph_retriever,
             context_engine=context_engine,
             compressor=compressor,
             retrieval_pipeline=retrieval_pipeline,
@@ -103,6 +124,7 @@ def _build_agent(settings=None, workspace_path: Path | None = None, retrieval_pi
     memory_layer = None
     try:
         from tracera.memory.layer.factory import register_memory_layer
+
         provider, memory_layer = register_memory_layer(provider, settings)
     except Exception as e:  # noqa: BLE001
         console.print(f"[dim yellow]⚠ Memory layer disabled ({e})[/]")
@@ -148,13 +170,14 @@ def _build_agent(settings=None, workspace_path: Path | None = None, retrieval_pi
 
     # Phase 10 → 8: give the agent access to persistent memory
     from tracera.agent.memory import AgentMemory
+
     memory = AgentMemory(settings.memory_dir)
 
     # Enhanced memory: session management, structured extraction, context recall
-    from tracera.memory.session import SessionManager
-    from tracera.memory.recall import ContextRecall, EnhancedMemoryStore
-    from tracera.memory.triples import TripleStore
     from tracera.memory.extractor import ConversationExtractor
+    from tracera.memory.recall import ContextRecall, EnhancedMemoryStore
+    from tracera.memory.session import SessionManager
+    from tracera.memory.triples import TripleStore
 
     session_manager = SessionManager(settings.memory_dir)
     enhanced_memory = EnhancedMemoryStore(settings.memory_dir)
@@ -176,6 +199,7 @@ def _build_agent(settings=None, workspace_path: Path | None = None, retrieval_pi
 
     # Phase 9: let the agent plan every task up front (todo tracking + replan)
     from tracera.agent.planner import TaskDecomposer
+
     decomposer = TaskDecomposer(provider)
 
     agent = ReActAgent(
@@ -206,53 +230,70 @@ def _build_agent(settings=None, workspace_path: Path | None = None, retrieval_pi
 
     # Register memory tools in the agent's registry
     from tracera.tools.memory_tools import (
-        RecallMemoryTool, RememberMemoryTool, ForgetMemoryTool, ListSessionsTool,
-        MemoryStatsTool, MemoryConsolidateTool, MemoryGraphTool, MemoryWorkerStatusTool,
+        ForgetMemoryTool,
+        ListSessionsTool,
+        MemoryConsolidateTool,
+        MemoryGraphTool,
+        MemoryStatsTool,
+        MemoryWorkerStatusTool,
+        RecallMemoryTool,
+        RememberMemoryTool,
     )
-    registry.register_many([
-        RecallMemoryTool(context_recall),
-        RememberMemoryTool(enhanced_memory),
-        ForgetMemoryTool(enhanced_memory),
-        ListSessionsTool(session_manager),
-        MemoryStatsTool(enhanced_memory, triple_store),
-        MemoryConsolidateTool(memory_layer._store if memory_layer else None),
-        MemoryGraphTool(triple_store),
-        MemoryWorkerStatusTool(memory_layer),
-    ])
+
+    registry.register_many(
+        [
+            RecallMemoryTool(context_recall),
+            RememberMemoryTool(enhanced_memory),
+            ForgetMemoryTool(enhanced_memory),
+            ListSessionsTool(session_manager),
+            MemoryStatsTool(enhanced_memory, triple_store),
+            MemoryConsolidateTool(memory_layer._store if memory_layer else None),
+            MemoryGraphTool(triple_store),
+            MemoryWorkerStatusTool(memory_layer),
+        ]
+    )
 
     # Register session/context tools (always available, degrade gracefully)
     from tracera.tools.session_tools import (
         AssembleTaskContextTool,
-        PlanTurnTool,
         GetRankedContextTool,
-        GetSessionStatsTool,
         GetRepoMapTool,
+        GetSessionStatsTool,
+        PlanTurnTool,
     )
-    registry.register_many([
-        AssembleTaskContextTool(retrieval_pipeline=retrieval_pipeline),
-        PlanTurnTool(retrieval_pipeline=retrieval_pipeline),
-        GetRankedContextTool(retrieval_pipeline=retrieval_pipeline),
-        GetSessionStatsTool(session_manager=session_manager),
-        GetRepoMapTool(retrieval_pipeline=retrieval_pipeline, workspace=workspace),
-    ])
+
+    registry.register_many(
+        [
+            AssembleTaskContextTool(retrieval_pipeline=retrieval_pipeline),
+            PlanTurnTool(retrieval_pipeline=retrieval_pipeline),
+            GetRankedContextTool(retrieval_pipeline=retrieval_pipeline),
+            GetSessionStatsTool(session_manager=session_manager),
+            GetRepoMapTool(retrieval_pipeline=retrieval_pipeline, workspace=workspace),
+        ]
+    )
 
     # Register test/run tools (always available)
-    from tracera.tools.test_runner import TestRunner
     from tracera.workspace.sandbox import WorkspaceSandbox
-    registry.register_many([
-        _make_run_tests_tool(workspace),
-        _make_inspect_repository_tool(workspace),
-    ])
+
+    registry.register_many(
+        [
+            _make_run_tests_tool(workspace),
+            _make_inspect_repository_tool(workspace),
+        ]
+    )
 
     # Register additional memory tools for MCP parity
-    registry.register_many([
-        _SearchMemoryTool(memory_store=enhanced_memory),
-        _GetMemoryGraphTool(triple_store=triple_store, memory_store=enhanced_memory),
-        _GetServerStatusTool(),
-    ])
+    registry.register_many(
+        [
+            _SearchMemoryTool(memory_store=enhanced_memory),
+            _GetMemoryGraphTool(triple_store=triple_store, memory_store=enhanced_memory),
+            _GetServerStatusTool(),
+        ]
+    )
 
     # Register jCodeMunch-inspired structural analysis tools (Phase 51+)
     from tracera.tools.registry import extend_registry_with_ast_tools
+
     extend_registry_with_ast_tools(
         registry,
         retrieval_pipeline=retrieval_pipeline,
@@ -264,9 +305,10 @@ def _build_agent(settings=None, workspace_path: Path | None = None, retrieval_pi
 
 
 def _make_run_tests_tool(workspace):
+    import sys
+
     from tracera.tools.base import Tool, ToolResult
     from tracera.tools.test_runner import TestRunner
-    import sys
 
     class RunTestsTool(Tool):
         name = "run_tests"
@@ -289,7 +331,9 @@ def _make_run_tests_tool(workspace):
         async def execute(self, framework=None, test_paths=None):
             try:
                 runner = TestRunner(self._ws.root, python=sys.executable)
-                report = await asyncio.to_thread(runner.run, framework=framework, test_paths=test_paths)
+                report = await asyncio.to_thread(
+                    runner.run, framework=framework, test_paths=test_paths
+                )
                 lines = [report.summary, ""]
                 for f in report.failures[:20]:
                     loc = f"{f.file_path}:{f.line_number}" if f.file_path else f.test_name
@@ -312,7 +356,10 @@ def _make_inspect_repository_tool(workspace):
         parameters = {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "Optional path to inspect (defaults to workspace root)."},
+                "path": {
+                    "type": "string",
+                    "description": "Optional path to inspect (defaults to workspace root).",
+                },
             },
         }
 
@@ -325,9 +372,11 @@ def _make_inspect_repository_tool(workspace):
 
         async def execute(self, path=None):
             try:
-                from tracera.git.operations import GitRepo
-                from tracera.config.settings import get_settings
                 import pathlib
+
+                from tracera.config.settings import get_settings
+                from tracera.git.operations import GitRepo
+
                 root = pathlib.Path(path).resolve() if path else self._ws.root
                 lines = [f"## Repository: {root}\n"]
                 try:
@@ -346,14 +395,19 @@ def _make_inspect_repository_tool(workspace):
                 try:
                     repo = GitRepo(root)
                     status = repo.status()
-                    lines.append(f"Git: branch `{status.branch}` — {'dirty' if status.is_dirty else 'clean'}")
+                    lines.append(
+                        f"Git: branch `{status.branch}` — {'dirty' if status.is_dirty else 'clean'}"
+                    )
                     for c in repo.log(max_count=3):
                         lines.append(f"  • {c.hexsha[:7]} {c.summary[:60]}")
                 except Exception:
                     lines.append("Git: not a repository")
                 settings = get_settings()
                 manifest = settings.index_dir / "index_manifest.json"
-                lines.append("Code index: " + ("indexed" if manifest.exists() else "not indexed — run /index"))
+                lines.append(
+                    "Code index: "
+                    + ("indexed" if manifest.exists() else "not indexed — run /index")
+                )
                 return ToolResult.ok(self.name, "", "\n".join(lines))
             except Exception as e:
                 return ToolResult.fail(self.name, "", str(e))
@@ -363,14 +417,22 @@ def _make_inspect_repository_tool(workspace):
 
 class _SearchMemoryTool(Tool):
     """Search enhanced memory store."""
+
     name = "search_memory"
     description = "Search the enhanced memory store with TF-IDF ranking."
     parameters = {
         "type": "object",
         "properties": {
             "query": {"type": "string", "description": "What to search for."},
-            "k": {"type": "integer", "description": "Number of results (default 10).", "default": 10},
-            "memory_type": {"type": "string", "description": "Optional filter (fact, rule, preference, etc.)."},
+            "k": {
+                "type": "integer",
+                "description": "Number of results (default 10).",
+                "default": 10,
+            },
+            "memory_type": {
+                "type": "string",
+                "description": "Optional filter (fact, rule, preference, etc.).",
+            },
         },
         "required": ["query"],
     }
@@ -387,6 +449,7 @@ class _SearchMemoryTool(Tool):
             if not self._memory:
                 return ToolResult.ok(self.name, "", "No memory store available.")
             from tracera.memory.taxonomy import MemoryType
+
             mt = None
             if memory_type:
                 try:
@@ -399,8 +462,14 @@ class _SearchMemoryTool(Tool):
             sep = chr(10)
             lines = [f"## Memory Search: '{query}'" + sep]
             for mem in results:
-                icon_map = {"fact": "📌", "rule": "📏", "relationship": "🔗",
-                            "skill": "🛠️", "preference": "⭐", "event": "📋"}
+                icon_map = {
+                    "fact": "📌",
+                    "rule": "📏",
+                    "relationship": "🔗",
+                    "skill": "🛠️",
+                    "preference": "⭐",
+                    "event": "📋",
+                }
                 icon = icon_map.get(mem.memory_type.value, "•")
                 conf = f" ({mem.confidence:.0%})" if mem.confidence < 0.9 else ""
                 lines.append(f"- {icon} [{mem.memory_type.value}] {mem.content}{conf}")
@@ -411,13 +480,18 @@ class _SearchMemoryTool(Tool):
 
 class _GetMemoryGraphTool(Tool):
     """Get knowledge graph of semantic relationships."""
+
     name = "get_memory_graph"
     description = "Get the knowledge graph of semantic relationships."
     parameters = {
         "type": "object",
         "properties": {
             "concept": {"type": "string", "description": "Optional concept to focus on."},
-            "max_depth": {"type": "integer", "description": "Traversal depth (default 2).", "default": 2},
+            "max_depth": {
+                "type": "integer",
+                "description": "Traversal depth (default 2).",
+                "default": 2,
+            },
         },
         "required": [],
     }
@@ -446,7 +520,10 @@ class _GetMemoryGraphTool(Tool):
             else:
                 stats = self._memory.stats()
                 triple_count = self._triple_store.triple_count
-                lines = ["## Knowledge Graph Summary" + sep, f"**Memories:** {stats['total']} total"]
+                lines = [
+                    "## Knowledge Graph Summary" + sep,
+                    f"**Memories:** {stats['total']} total",
+                ]
                 if stats.get("by_type"):
                     for mt, count in stats["by_type"].items():
                         lines.append(f"  - {mt}: {count}")
@@ -462,6 +539,7 @@ class _GetMemoryGraphTool(Tool):
 
 class _GetServerStatusTool(Tool):
     """Get server status and diagnostics."""
+
     name = "get_server_status"
     description = "Get server status, version information, and diagnostic details."
     parameters = {"type": "object", "properties": {}, "required": []}
@@ -476,7 +554,14 @@ class _GetServerStatusTool(Tool):
     async def execute(self):
         try:
             import json
-            status = {"server": "TRACERA", "version": "0.1.0", "workspace": "active", "tools_available": "full", "memory": "enabled"}
+
+            status = {
+                "server": "TRACERA",
+                "version": "0.1.0",
+                "workspace": "active",
+                "tools_available": "full",
+                "memory": "enabled",
+            }
             return ToolResult.ok(self.name, "", json.dumps(status, indent=2))
         except Exception as e:
             return ToolResult.fail(self.name, "", str(e))
@@ -522,6 +607,7 @@ def _write_memory(memory, kind: str, content: str) -> None:
     kind: 'decision' → PAST_DECISION · 'error' → ERROR_PATTERN
     """
     from tracera.agent.memory import MemoryCategory
+
     try:
         text = content.strip()
         if not text:
@@ -596,22 +682,32 @@ def _build_provider(settings=None):
     return FailoverProvider(providers)
 
 
-
 # ── Default command: open TUI ─────────────────────────────────────────────────
+
 
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version",
+            "-V",
+            callback=_version_callback,
+            is_eager=True,
+            help="Show the installed TRACERA version and exit.",
+        ),
+    ] = False,
     workspace: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option("--workspace", "-w", help="Workspace root directory."),
     ] = None,
     provider: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--provider", "-p", help="LLM provider (openai/anthropic/gemini/ollama)."),
     ] = None,
     model: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--model", "-m", help="Model ID."),
     ] = None,
 ) -> None:
@@ -634,8 +730,10 @@ def main(
 
     workspace_path = (workspace or settings.tracera_workspace).resolve()
 
-    from tracera.logging import print_banner
     from time import sleep
+
+    from tracera.logging import print_banner
+
     # The banner prints once as scrollback output — the TUI also receives the
     # text so its own first frame can reproduce it (the alt-screen switch on
     # Windows can't be avoided, so the app shows the same banner at the top of
@@ -652,7 +750,7 @@ def main(
         ("Warming tool registry...", "tools", "#f47067"),
         ("Initializing TUI interface...", "tui", "#a371f7"),
     ]
-    
+
     # Animated startup sequence with premium spinners
     start_spinners = ["▰▱▱▱▱", "▰▰▱▱▱", "▰▰▰▱▱", "▰▰▰▰▱", "▰▰▰▰▰"]
     with console.status("[bold #6cb6ff]Starting TRACERA Premium...[/]", spinner="dots"):
@@ -664,7 +762,7 @@ def main(
             # Mark as complete
             console.print(f"\r  [green]✓ ✓ ✓ ✓ ✓[/] [green]{step_msg:<30}[/]")
             sleep(0.1)
-    
+
     console.print("\n[bold #6cb6ff]✓ All systems operational. Launching interface...[/]\n")
     sleep(0.5)
 
@@ -705,19 +803,20 @@ def main(
 
 # ── ask ───────────────────────────────────────────────────────────────────────
 
+
 @app.command()
 def ask(
     task: Annotated[str, typer.Argument(help="Task or question for the agent.")],
     workspace: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option("--workspace", "-w", help="Workspace root."),
     ] = None,
     provider: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--provider", "-p"),
     ] = None,
     model: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--model", "-m"),
     ] = None,
     stream: Annotated[
@@ -736,6 +835,7 @@ def ask(
     workspace_path = (workspace or settings.tracera_workspace).resolve()
 
     from tracera.logging import print_banner
+
     print_banner()
 
     # Load retrieval pipeline if index exists (Phase 31)
@@ -761,9 +861,7 @@ def ask(
         async for event in await agent.run(task):
             match event.type:
                 case AgentEventType.THINKING:
-                    console.print(
-                        f"[dim]◌  Thinking (iteration {event.iteration + 1})…[/]"
-                    )
+                    console.print(f"[dim]◌  Thinking (iteration {event.iteration + 1})…[/]")
                 case AgentEventType.TOOL_START:
                     console.print(
                         f"[green]⚙  {event.tool_name}[/]  "
@@ -775,12 +873,15 @@ def ask(
                     console.print(f"[{color}]{status}[/] {event.tool_name}")
                 case AgentEventType.RESPONSE_COMPLETE:
                     from rich.markdown import Markdown
+
                     console.print("\n")
-                    console.print(Panel(
-                        Markdown(event.text or ""),
-                        title="[bold cyan]TRACERA[/]",
-                        border_style="cyan",
-                    ))
+                    console.print(
+                        Panel(
+                            Markdown(event.text or ""),
+                            title="[bold cyan]TRACERA[/]",
+                            border_style="cyan",
+                        )
+                    )
                 case AgentEventType.ERROR:
                     console.print(f"[bold red]Error:[/] {event.text}")
 
@@ -789,10 +890,11 @@ def ask(
 
 # ── status ────────────────────────────────────────────────────────────────────
 
+
 @app.command()
 def status(
     workspace: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option("--workspace", "-w"),
     ] = None,
 ) -> None:
@@ -815,20 +917,26 @@ def status(
 
     # Index status
     index_manifest = settings.index_dir / "index_manifest.json"
-    index_status = "[bold green]indexed[/]" if index_manifest.exists() else "[dim yellow]not indexed (run: tracera index)[/]"
+    index_status = (
+        "[bold green]indexed[/]"
+        if index_manifest.exists()
+        else "[dim yellow]not indexed (run: tracera index)[/]"
+    )
     table.add_row("Code Index", index_status)
-
 
     # Memory stats
     from tracera.agent.memory import AgentMemory
+
     memory = AgentMemory(settings.memory_dir)
     table.add_row("Memory Entries", str(memory.count))
 
-
     from tracera.providers import list_available_providers
+
     providers_info = list_available_providers(settings)
 
-    provider_table = Table(title="Provider Status (ranked by quality)", border_style="cyan", show_header=True)
+    provider_table = Table(
+        title="Provider Status (ranked by quality)", border_style="cyan", show_header=True
+    )
     provider_table.add_column("#", style="dim", width=3)
     provider_table.add_column("Provider", style="bold cyan", width=12)
     provider_table.add_column("Status", width=10)
@@ -850,15 +958,14 @@ def status(
     console.print(provider_table)
 
 
-
-
-
 # ── observability ─────────────────────────────────────────────────────────────
+
 
 @app.command()
 def observability(
     reset: Annotated[
-        bool, typer.Option("--reset", help="Reset the in-process telemetry counters."),
+        bool,
+        typer.Option("--reset", help="Reset the in-process telemetry counters."),
     ] = False,
 ) -> None:
     """
@@ -929,11 +1036,11 @@ app.add_typer(memory_app)
 @memory_app.command("list")
 def memory_list(
     category: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--category", "-c", help="Filter by category."),
     ] = None,
     query: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--query", "-q", help="Search query."),
     ] = None,
 ) -> None:
@@ -1025,15 +1132,13 @@ def memory_clear(
 
 @memory_app.command("inspect")
 def memory_inspect(
-    entity: Annotated[
-        str, typer.Argument(help="External entity id (user / org / customer).")
-    ],
+    entity: Annotated[str, typer.Argument(help="External entity id (user / org / customer).")],
     kind: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--kind", "-k", help="fact | preference | skill | attribute"),
     ] = None,
     process: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--process", "-p", help="Filter by process id."),
     ] = None,
 ) -> None:
@@ -1079,9 +1184,7 @@ def memory_inspect(
                 str(rec.mention_count),
             )
         console.print(table)
-    console.print(
-        f"[dim]Total: {len(records)} memories for entity '{entity}'[/]"
-    )
+    console.print(f"[dim]Total: {len(records)} memories for entity '{entity}'[/]")
 
 
 @memory_app.command("status")
@@ -1099,8 +1202,7 @@ def memory_status() -> None:
     )
     processes = settings.memory_layer_processes
     console.print(
-        "  Enabled processes:    "
-        + (", ".join(processes) if processes else "[dim]all[/]")
+        "  Enabled processes:    " + (", ".join(processes) if processes else "[dim]all[/]")
     )
     console.print(f"  Entity (CLI default): {settings.tracera_memory_entity}")
     console.print(f"  Database:             {settings.memory_layer_db}")
@@ -1126,11 +1228,9 @@ def memory_status() -> None:
 
 @memory_app.command("graph")
 def memory_graph(
-    entity: Annotated[
-        str, typer.Argument(help="Entity to show graph for.")
-    ],
+    entity: Annotated[str, typer.Argument(help="Entity to show graph for.")],
     concept: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--concept", "-c", help="Focus on a specific concept."),
     ] = None,
     depth: Annotated[
@@ -1141,8 +1241,8 @@ def memory_graph(
     """Show knowledge graph for an entity."""
     _setup()
     settings = _get_settings()
+
     from tracera.memory.triples import TripleStore
-    from pathlib import Path
 
     triples_path = settings.memory_dir / "memory_triples.json"
     if not triples_path.exists():
@@ -1175,10 +1275,12 @@ def memory_graph(
             console.print(table)
 
         if subgraph["neighbors"]:
-            console.print(f"\n[dim]Neighbors ({len(subgraph['neighbors'])} triples within {depth} hops):[/]")
+            console.print(
+                f"\n[dim]Neighbors ({len(subgraph['neighbors'])} triples within {depth} hops):[/]"
+            )
     else:
         # Show overall stats
-        console.print(f"[bold cyan]Knowledge Graph Stats[/]")
+        console.print("[bold cyan]Knowledge Graph Stats[/]")
         console.print(f"  Total triples: {store.triple_count}")
         console.print(f"  Nodes: {store.node_count}")
         console.print(f"  Edges: {store.edge_count}")
@@ -1196,13 +1298,13 @@ def memory_graph(
         if clusters:
             console.print(f"\n[dim]Concept clusters ({len(clusters)}):[/]")
             for i, cluster in enumerate(clusters[:5]):
-                console.print(f"  Cluster {i+1}: {', '.join(cluster[:10])}")
+                console.print(f"  Cluster {i + 1}: {', '.join(cluster[:10])}")
 
 
 @memory_app.command("consolidate")
 def memory_consolidate(
     entity: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--entity", "-e", help="Entity to consolidate (default: all)."),
     ] = None,
     threshold: Annotated[
@@ -1224,9 +1326,7 @@ def memory_consolidate(
     if dry_run:
         console.print("[yellow]Dry run - showing potential merges[/]")
         with console.status("[bold yellow]Previewing...[/]"):
-            preview = store.preview_consolidation(
-                entity_id=entity, similarity_threshold=threshold
-            )
+            preview = store.preview_consolidation(entity_id=entity, similarity_threshold=threshold)
         candidates = preview["candidates"]
         console.print(
             f"[dim]Scanned {preview['scanned']} memories — "
@@ -1270,7 +1370,7 @@ def memory_worker() -> None:
         console.print("[red]Memory layer not enabled[/]")
         return
 
-    if hasattr(layer, '_worker') and layer._worker:
+    if hasattr(layer, "_worker") and layer._worker:
         stats = layer._worker.get_stats()
         console.print("[bold cyan]Memory Worker Stats[/]")
         table = Table(border_style="cyan", show_header=True)
@@ -1285,23 +1385,22 @@ def memory_worker() -> None:
 
 @memory_app.command("export")
 def memory_export(
-    entity: Annotated[
-        str, typer.Argument(help="Entity to export memories for.")
-    ],
+    entity: Annotated[str, typer.Argument(help="Entity to export memories for.")],
     output: Annotated[
         Path,
         typer.Option("--output", "-o", help="Output file path."),
     ],
     kind: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--kind", "-k", help="Filter by memory kind."),
     ] = None,
 ) -> None:
     """Export memories to JSON file."""
     _setup()
     settings = _get_settings()
-    from tracera.memory.layer.store import MemoryStore, MemoryKind
     import json
+
+    from tracera.memory.layer.store import MemoryStore
 
     store = MemoryStore(settings.memory_layer_db)
     records = store.find_memories(entity, kind=kind, limit=10_000)
@@ -1323,23 +1422,22 @@ def memory_export(
 
 @memory_app.command("import")
 def memory_import(
-    entity: Annotated[
-        str, typer.Argument(help="Entity to import memories for.")
-    ],
+    entity: Annotated[str, typer.Argument(help="Entity to import memories for.")],
     input_file: Annotated[
         Path,
         typer.Argument(help="Input JSON file."),
     ],
     process: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--process", "-p", help="Process ID for imported memories."),
     ] = "cli-import",
 ) -> None:
     """Import memories from JSON file."""
     _setup()
     settings = _get_settings()
-    from tracera.memory.layer.store import MemoryStore
     import json
+
+    from tracera.memory.layer.store import MemoryStore
 
     if not input_file.exists():
         console.print(f"[red]File not found: {input_file}[/]")
@@ -1379,18 +1477,19 @@ def memory_import(
 
 # ── tui ───────────────────────────────────────────────────────────────────────
 
+
 @app.command()
 def tui(
     workspace: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option("--workspace", "-w"),
     ] = None,
     provider: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--provider", "-p"),
     ] = None,
     model: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--model", "-m"),
     ] = None,
 ) -> None:
@@ -1402,6 +1501,7 @@ def tui(
 
 
 # ── Pipeline factory ──────────────────────────────────────────────────────────
+
 
 def _build_retrieval_pipeline(settings=None, workspace_path: Path | None = None):
     """
@@ -1419,19 +1519,19 @@ def _build_retrieval_pipeline(settings=None, workspace_path: Path | None = None)
     index_dir = settings.index_dir
     embed_cache = index_dir / "embed_cache"
 
-    from tracera.retrieval.bm25 import BM25Index
-    from tracera.retrieval.embedder import EmbeddingPipeline
-    from tracera.retrieval.vector_store import VectorStore
-    from tracera.retrieval.dense import DenseRetriever
-    from tracera.retrieval.hybrid import HybridRetriever
-    from tracera.retrieval.symbol_retrieval import SymbolAwareRetriever
-    from tracera.retrieval.context_expander import ContextExpander
-    from tracera.retrieval.reranker import CrossEncoderReranker
-    from tracera.retrieval.incremental import IncrementalIndexer
-    from tracera.graph.symbol_graph import SymbolGraph
-    from tracera.graph.graph_retrieval import GraphRetriever
-    from tracera.agent.context_engine import ContextAssemblyEngine
     from tracera.agent.compressor import ContextCompressor
+    from tracera.agent.context_engine import ContextAssemblyEngine
+    from tracera.graph.graph_retrieval import GraphRetriever
+    from tracera.graph.symbol_graph import SymbolGraph
+    from tracera.retrieval.bm25 import BM25Index
+    from tracera.retrieval.context_expander import ContextExpander
+    from tracera.retrieval.dense import DenseRetriever
+    from tracera.retrieval.embedder import EmbeddingPipeline
+    from tracera.retrieval.hybrid import HybridRetriever
+    from tracera.retrieval.incremental import IncrementalIndexer
+    from tracera.retrieval.reranker import CrossEncoderReranker
+    from tracera.retrieval.symbol_retrieval import SymbolAwareRetriever
+    from tracera.retrieval.vector_store import VectorStore
 
     # Phase 17: Embedder
     embedder = EmbeddingPipeline(
@@ -1512,10 +1612,11 @@ def _build_retrieval_pipeline(settings=None, workspace_path: Path | None = None)
 
 # ── index ─────────────────────────────────────────────────────────────────────
 
+
 @app.command()
 def index(
     workspace: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option("--workspace", "-w", help="Workspace root."),
     ] = None,
     rebuild: Annotated[
@@ -1566,16 +1667,17 @@ def index(
 
 # ── search ────────────────────────────────────────────────────────────────────
 
+
 @app.command()
 def search(
     query: Annotated[str, typer.Argument(help="Search query.")],
     workspace: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option("--workspace", "-w"),
     ] = None,
     k: Annotated[int, typer.Option("--k", "-k", help="Number of results.")] = 5,
     language: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--lang", "-l", help="Filter by language (python/js/ts/...)."),
     ] = None,
     rerank: Annotated[
@@ -1602,7 +1704,10 @@ def search(
     try:
         pipeline = _build_retrieval_pipeline(settings, ws_path)
         symbol_retriever, expander, reranker, graph_retriever = (
-            pipeline[1], pipeline[2], pipeline[3], pipeline[-1]
+            pipeline[1],
+            pipeline[2],
+            pipeline[3],
+            pipeline[-1],
         )
     except Exception as e:
         console.print(f"[bold red]Pipeline init failed:[/] {e}")
@@ -1614,9 +1719,7 @@ def search(
             # Phase 22: Context expansion
             results = expander.expand(results, max_additional=3)
             # Phase 26: dependency-aware graph expansion (when a graph exists)
-            results = graph_retriever.expand_with_graph(
-                results, max_depth=1, max_total=k * 2
-            )
+            results = graph_retriever.expand_with_graph(results, max_depth=1, max_total=k * 2)
             # Phase 23: Optional reranking
             if rerank:
                 results = reranker.rerank(query, results, k=k)
@@ -1627,13 +1730,11 @@ def search(
             raise typer.Exit(1)
 
     if not results:
-        console.print(
-            "[yellow]No results. Run [bold]tracera index[/] first to build the index.[/]"
-        )
+        console.print("[yellow]No results. Run [bold]tracera index[/] first to build the index.[/]")
         return
 
-    from rich.syntax import Syntax
     from rich.panel import Panel as RPanel
+    from rich.syntax import Syntax
 
     for i, r in enumerate(results, 1):
         symbol = r.get("symbol") or "—"
@@ -1663,15 +1764,16 @@ def search(
 
 # ── fix ──────────────────────────────────────────────────────────────────────
 
+
 @app.command()
 def fix(
     task: Annotated[str, typer.Argument(help="Coding task to implement or fix.")],
     workspace: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option("--workspace", "-w"),
     ] = None,
     provider: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--provider", "-p"),
     ] = None,
     max_iterations: Annotated[
@@ -1707,11 +1809,11 @@ def fix(
         console.print(f"[bold red]Init failed:[/] {e}")
         raise typer.Exit(1)
 
-    from tracera.tools.test_runner import TestRunner
-    from tracera.agent.autonomous import AutonomousFixLoop, RetrievalDebugger, RegressionProtector
-    from tracera.agent.context_engine import ContextAssemblyEngine
+    from tracera.agent.autonomous import AutonomousFixLoop, RegressionProtector, RetrievalDebugger
     from tracera.agent.compressor import ContextCompressor
+    from tracera.agent.context_engine import ContextAssemblyEngine
     from tracera.agent.planner import TaskDecomposer
+    from tracera.tools.test_runner import TestRunner
 
     symbol_retriever = pipeline[1] if pipeline else None
     context_engine = pipeline[4] if pipeline else ContextAssemblyEngine()
@@ -1723,8 +1825,11 @@ def fix(
     # Phase 9: plan the task up front and replan after failed attempts
     decomposer = TaskDecomposer(prov)
     fix_loop = AutonomousFixLoop(
-        ws_path, test_runner, debugger,
-        max_iterations=max_iterations, decomposer=decomposer,
+        ws_path,
+        test_runner,
+        debugger,
+        max_iterations=max_iterations,
+        decomposer=decomposer,
     )
 
     console.print("[dim]Taking pre-task regression baseline…[/]")
@@ -1770,9 +1875,7 @@ def fix(
     reg_table.add_row("Tests passing after", str(report["post_passed"]))
     reg_table.add_row(
         "Regressions",
-        f"[bold red]{report['regressions']}[/]"
-        if report["regressions"]
-        else "[bold green]0[/]",
+        f"[bold red]{report['regressions']}[/]" if report["regressions"] else "[bold green]0[/]",
     )
     reg_table.add_row("Changed files", ", ".join(report["changed_files"][:5]) or "—")
     reg_table.add_row(
@@ -1784,18 +1887,19 @@ def fix(
 
 # ── review ────────────────────────────────────────────────────────────────────
 
+
 @app.command()
 def review(
     workspace: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option("--workspace", "-w"),
     ] = None,
     provider: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--provider", "-p"),
     ] = None,
     summary: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--summary", "-s", help="Brief description of what was implemented."),
     ] = None,
 ) -> None:
@@ -1834,11 +1938,12 @@ def review(
 
 # ── delegate ─────────────────────────────────────────────────────────────────
 
+
 @app.command()
 def delegate(
     task: Annotated[str, typer.Argument(help="Task to delegate to the sub-agent fleet.")],
     workspace: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option("--workspace", "-w"),
     ] = None,
     parallel: Annotated[
@@ -1870,7 +1975,8 @@ def delegate(
     from tracera.agent.subagents import build_sub_agent_fleet
 
     fleet = build_sub_agent_fleet(
-        prov, registry,
+        prov,
+        registry,
         model=settings.tracera_default_model,
         max_iterations=settings.tracera_max_iterations,
         max_tool_calls=settings.tracera_max_tool_calls,
@@ -1897,21 +2003,25 @@ def delegate(
                     f"{result.iterations} iter · {result.tool_calls} tools"
                 )
                 if result.output:
-                    console.print(Panel(
-                        result.output[:800],
-                        title=f"[bold]{result.label} result[/]",
-                        border_style="dim",
-                    ))
+                    console.print(
+                        Panel(
+                            result.output[:800],
+                            title=f"[bold]{result.label} result[/]",
+                            border_style="dim",
+                        )
+                    )
                 if result.error:
                     console.print(f"  [red]error:[/] {result.error[:300]}")
             elif etype == "report":
                 report = event["report"]
                 console.print("\n[bold]Aggregated report[/]")
-                console.print(Panel(
-                    report.to_markdown(),
-                    title="[bold cyan]Delegation Report[/]",
-                    border_style="cyan",
-                ))
+                console.print(
+                    Panel(
+                        report.to_markdown(),
+                        title="[bold cyan]Delegation Report[/]",
+                        border_style="cyan",
+                    )
+                )
 
     asyncio.run(_run())
 
@@ -1927,7 +2037,9 @@ app.add_typer(eval_app)
 
 @eval_app.command("dataset")
 def eval_dataset(
-    output: Annotated[Path, typer.Option("--output", "-o", help="Where to write the dataset JSON.")] = Path(".tracera/eval/dataset.json"),
+    output: Annotated[
+        Path, typer.Option("--output", "-o", help="Where to write the dataset JSON.")
+    ] = Path(".tracera/eval/dataset.json"),
 ) -> None:
     """
     Phase 45 — write the example retrieval-evaluation dataset to disk.
@@ -1936,6 +2048,7 @@ def eval_dataset(
     as ground truth), then run `tracera eval retrieval`.
     """
     from tracera.evaluation.dataset import example_dataset
+
     dataset = example_dataset()
     path = dataset.save(output)
     console.print(
@@ -1951,9 +2064,13 @@ def eval_retrieval(
         Path,
         typer.Argument(help="Path to the evaluation dataset JSON."),
     ] = Path(".tracera/eval/dataset.json"),
-    workspace: Annotated[Optional[Path], typer.Option("--workspace", "-w")] = None,
-    output: Annotated[Path, typer.Option("--output", "-o")] = Path(".tracera/eval/retrieval_report.md"),
-    include: Annotated[Optional[str], typer.Option("--include", help="Comma-separated strategy names.")] = None,
+    workspace: Annotated[Path | None, typer.Option("--workspace", "-w")] = None,
+    output: Annotated[Path, typer.Option("--output", "-o")] = Path(
+        ".tracera/eval/retrieval_report.md"
+    ),
+    include: Annotated[
+        str | None, typer.Option("--include", help="Comma-separated strategy names.")
+    ] = None,
 ) -> None:
     """
     Phases 46-48 — run the retrieval benchmark.
@@ -1983,6 +2100,7 @@ def eval_retrieval(
 
     from tracera.retrieval.dense import DenseRetriever
     from tracera.retrieval.hybrid import HybridRetriever
+
     dense = DenseRetriever(embedder, vector_store)
     hybrid = HybridRetriever(bm25, dense)
 
@@ -2000,7 +2118,9 @@ def eval_retrieval(
         console.print("[bold red]No strategies could be built — is the code index present?[/]")
         raise typer.Exit(1)
 
-    console.print(f"[bold cyan]Retrieval benchmark[/] — {len(dataset)} queries, {len(strategies)} strategies\n")
+    console.print(
+        f"[bold cyan]Retrieval benchmark[/] — {len(dataset)} queries, {len(strategies)} strategies\n"
+    )
     report = RetrievalBenchmark(dataset, strategies).run()
     console.print(report.to_markdown())
     report.save(output)
@@ -2010,10 +2130,10 @@ def eval_retrieval(
 @eval_app.command("agent")
 def eval_agent(
     tasks: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--tasks", help="Comma-separated coding tasks to run."),
     ] = None,
-    workspace: Annotated[Optional[Path], typer.Option("--workspace", "-w")] = None,
+    workspace: Annotated[Path | None, typer.Option("--workspace", "-w")] = None,
     output: Annotated[Path, typer.Option("--output", "-o")] = Path(".tracera/eval/agent_report.md"),
 ) -> None:
     """
@@ -2055,6 +2175,7 @@ def eval_agent(
     report_path = output
     report_path.parent.mkdir(parents=True, exist_ok=True)
     import json
+
     report_path.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
     console.print(f"\n[bold green]OK[/] Report saved to [cyan]{report_path}[/]")
 
@@ -2062,11 +2183,13 @@ def eval_agent(
 @eval_app.command("ablation")
 def eval_ablation(
     tasks: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--tasks", help="Comma-separated coding tasks to run per arm."),
     ] = None,
-    workspace: Annotated[Optional[Path], typer.Option("--workspace", "-w")] = None,
-    output: Annotated[Path, typer.Option("--output", "-o")] = Path(".tracera/eval/ablation_report.md"),
+    workspace: Annotated[Path | None, typer.Option("--workspace", "-w")] = None,
+    output: Annotated[Path, typer.Option("--output", "-o")] = Path(
+        ".tracera/eval/ablation_report.md"
+    ),
 ) -> None:
     """
     Phase 50 — run the ablation study.
@@ -2084,7 +2207,7 @@ def eval_ablation(
     ]
     task_list = [t.strip() for t in tasks.split(",")] if tasks else default_tasks
 
-    from tracera.evaluation.ablation import AblationFramework, AblationConfig
+    from tracera.evaluation.ablation import AblationConfig, AblationFramework
 
     # Build an agent runner per ablation config, then benchmark it.
     async def build_agent(config: AblationConfig):
@@ -2128,7 +2251,7 @@ app.add_typer(mcp_app)
 @mcp_app.command("serve")
 def mcp_serve(
     workspace: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option("--workspace", "-w", help="Workspace root."),
     ] = None,
     transport: Annotated[
@@ -2154,11 +2277,32 @@ def mcp_serve(
     Exposes 35+ tools across Code Intelligence, Context, Memory,
     Safety, and Repository categories over the Model Context Protocol.
     """
+    # ── stdio hygiene (critical for Windows) ─────────────────────────────
+    # The stdio transport speaks JSON-RPC on stdout/stdin. Python on Windows
+    # defaults to cp1252, so any non-ASCII character printed to stdout
+    # (banners, emoji, table borders) corrupts the protocol stream. Force
+    # UTF-8, and keep stdout byte-clean for stdio/SSE transports by routing
+    # logs and the Rich console to stderr.
+    if sys.platform == "win32":
+        os.environ.setdefault("PYTHONUTF8", "1")
+        for stream in (sys.stdout, sys.stderr):
+            if hasattr(stream, "reconfigure"):
+                try:
+                    stream.reconfigure(encoding="utf-8", errors="replace")
+                except (OSError, ValueError):
+                    pass
+    if transport == "stdio":
+        os.environ["TRACERA_MCP_STDIO"] = "1"
+        from tracera.logging import get_console, redirect_console_to_stderr
+
+        redirect_console_to_stderr()
+
     _setup()
     settings = _get_settings()
     ws_path = (workspace or settings.tracera_workspace).resolve()
 
     from tracera.mcp.server import ALL_MCP_TOOLS, TraceraMCPServer
+
     server = TraceraMCPServer(settings, ws_path)
 
     if check:
@@ -2178,10 +2322,142 @@ def mcp_serve(
         console.print(table)
         return
 
-    console.print(f"[dim]TRACERA MCP server — transport={transport} workspace={ws_path}[/]")
-    console.print(f"[dim]Tools: {len(ALL_MCP_TOOLS)} tools across Code Intelligence, Context, Memory, Safety, Repository[/]")
-    
-    server.mcp.run(transport=transport)
+    # On stdio, stdout is the JSON-RPC stream — status lines go to stderr.
+    _status_console = get_console() if transport == "stdio" else console
+    _status_console.print(f"[dim]TRACERA MCP server — transport={transport} workspace={ws_path}[/]")
+    _status_console.print(
+        f"[dim]Tools: {len(ALL_MCP_TOOLS)} tools across Code Intelligence, Context, Memory, Safety, Repository[/]"
+    )
+
+    if transport != "stdio":
+        server.mcp.run(transport=transport)
+    else:
+        # anyio's stdio backend wraps the raw streams. Anything that imported
+        # sys.stdout before us (Typer/Rich do) still holds the wrapper, so we
+        # swap the actual low-level streams via anyio's stdio API instead.
+        import anyio
+        import anyio.lowlevel
+
+        async def _run_stdio() -> None:
+            # mcp.server.stdio.stdio_server yields (read, write) over the real
+            # stdin/stdout pipes; FastMCP boots its task group from them.
+            await server.mcp.run_stdio_async()
+
+        anyio.run(_run_stdio)
+
+
+@mcp_app.command("install")
+def mcp_install(
+    hosts: Annotated[
+        list[str] | None,
+        typer.Argument(
+            help=(
+                "Host(s) to install into: claude-desktop claude-code codex cursor "
+                "windsurf vscode cline gemini-cli antigravity. "
+                "Omit for --list, or pass 'all'."
+            ),
+        ),
+    ] = None,
+    workspace: Annotated[
+        Path | None,
+        typer.Option("--workspace", "-w", help="Workspace root TRACERA will serve."),
+    ] = None,
+    list_hosts: Annotated[
+        bool,
+        typer.Option("--list", help="Show all supported hosts and their config paths."),
+    ] = False,
+    force: Annotated[
+        bool,
+        typer.Option("--force", "-f", help="Rewrite the entry even if it looks unchanged."),
+    ] = False,
+) -> None:
+    """
+    Register TRACERA as an MCP server in one or more MCP clients.
+
+    Writes a ready-to-use stdio server entry (with UTF-8 stdio hygiene for
+    Windows) into the client's own config file — Claude Desktop, Claude
+    Code, Codex CLI, Cursor, Windsurf, VS Code (Copilot), Cline, Gemini CLI
+    and Google Antigravity are supported. Existing config is preserved and
+    a .bak sidecar is written before any change.
+    """
+    from tracera.mcp.hosts import HOSTS
+    from tracera.mcp.install import install_codex, install_into_host
+
+    if list_hosts or not hosts:
+        table = Table(
+            title="Supported MCP hosts (tracera mcp install <key...>)",
+            border_style="cyan",
+            show_header=True,
+        )
+        table.add_column("Key", style="bold cyan")
+        table.add_column("Client", style="white")
+        table.add_column("Config path", style="dim")
+        for key, h in HOSTS.items():
+            try:
+                p = str(h.config_path())
+            except Exception:
+                p = "?"
+            table.add_row(key, h.name, p)
+        console.print(table)
+        if not hosts:
+            console.print(
+                "[dim]Run: tracera mcp install <key...> — or 'all' for every detected client.[/]"
+            )
+        return
+
+    _setup()
+    settings = _get_settings()
+    ws_path = (workspace or settings.tracera_workspace).resolve()
+
+    keys = list(hosts)
+    if len(keys) == 1 and keys[0].lower() == "all":
+        keys = [
+            k
+            for k, h in HOSTS.items()
+            if h.project_relative is not None or h.config_path().exists()
+        ]
+
+    results = []
+    for key in keys:
+        h = HOSTS.get(key.lower())
+        if h is None:
+            results.append((key, None, "unknown host", "see 'tracera mcp install --list'"))
+            continue
+        try:
+            if h.key == "codex":
+                r = install_codex(ws_path, force=force)
+            else:
+                r = install_into_host(h, ws_path, force=force)
+            results.append((h.name, r.path, r.status, r.detail))
+        except Exception as e:
+            results.append((h.name, None, "error", str(e)))
+
+    table = Table(
+        title=f"TRACERA MCP install — workspace={ws_path}",
+        border_style="green"
+        if any(r[2] in ("installed", "created", "updated") for r in results)
+        else "yellow",
+        show_header=True,
+    )
+    table.add_column("Client", style="bold")
+    table.add_column("Status")
+    table.add_column("Detail", style="dim")
+    status_style = {
+        "installed": "green",
+        "created": "green",
+        "updated": "green",
+        "unchanged": "cyan",
+        "skipped": "yellow",
+        "error": "red",
+        "unknown host": "red",
+    }
+    for name, _path, status, detail in results:
+        table.add_row(name, f"[{status_style.get(status, 'white')}]{status}[/]", detail)
+    console.print(table)
+    console.print(
+        "[dim]Restart the client afterwards. The entry runs "
+        "`tracera mcp serve` over stdio with PYTHONUTF8=1 (clean JSON-RPC on Windows).[/]"
+    )
 
 
 @mcp_app.command("connect")
@@ -2191,7 +2467,7 @@ def mcp_connect(
         typer.Argument(help="JSON file with MCP server declarations."),
     ],
     workspace: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option("--workspace", "-w", help="Workspace root for native tools."),
     ] = None,
 ) -> None:
@@ -2246,8 +2522,7 @@ def mcp_connect(
         raise typer.Exit(1)
 
     console.print(
-        f"\n[bold]Unified Tool Registry:[/] {len(native_names)} native + "
-        f"{added} MCP tools"
+        f"\n[bold]Unified Tool Registry:[/] {len(native_names)} native + {added} MCP tools"
     )
     unified = Table(show_header=True, border_style="green")
     unified.add_column("#", style="dim", width=3)

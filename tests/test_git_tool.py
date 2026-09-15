@@ -86,9 +86,9 @@ def test_incremental_deletion_cleans_bm25(tmp_path: Path):
         def delete_by_file(self, file_path):
             self.deleted.append(file_path)
 
+    from tracera.graph.symbol_graph import SymbolGraph
     from tracera.retrieval.bm25 import BM25Index
     from tracera.retrieval.incremental import IncrementalIndexer
-    from tracera.graph.symbol_graph import SymbolGraph
 
     ws = tmp_path / "ws"
     ws.mkdir()

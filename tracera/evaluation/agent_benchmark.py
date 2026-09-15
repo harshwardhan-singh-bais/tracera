@@ -19,9 +19,9 @@ mean tokens, mean latency, mean cost.
 from __future__ import annotations
 
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from tracera.logging import get_logger
 
@@ -29,8 +29,12 @@ log = get_logger("evaluation.agent_benchmark")
 
 #: Tool names counted as retrieval calls.
 RETRIEVAL_TOOLS = {
-    "search_code", "find_symbol", "find_definition", "find_references",
-    "get_context", "get_dependencies",
+    "search_code",
+    "find_symbol",
+    "find_definition",
+    "find_references",
+    "get_context",
+    "get_dependencies",
 }
 
 #: Rough cost per 1M tokens (USD) — configurable; used for estimates only.
@@ -214,9 +218,9 @@ class AgentBenchmark:
         result.tokens_out = int(outcome.get("tokens_out", 0))
 
         tool_names = set(outcome.get("tool_names") or [])
-        result.retrieval_calls = sum(
-            1 for n in tool_names if n in RETRIEVAL_TOOLS
-        ) if tool_names else 0
+        result.retrieval_calls = (
+            sum(1 for n in tool_names if n in RETRIEVAL_TOOLS) if tool_names else 0
+        )
         # Fallback: count from the raw output if tool_names is empty.
         if not tool_names and result.tool_calls:
             result.retrieval_calls = int(outcome.get("retrieval_calls", 0))
@@ -235,8 +239,12 @@ class AgentBenchmark:
 
         log.info(
             "Task %-40s success=%s iter=%d tools=%d tokens=%d lat=%.0fms",
-            task[:40], result.success, result.iterations,
-            result.tool_calls, result.total_tokens, result.latency_ms,
+            task[:40],
+            result.success,
+            result.iterations,
+            result.tool_calls,
+            result.total_tokens,
+            result.latency_ms,
         )
         return result
 
@@ -246,6 +254,8 @@ class AgentBenchmark:
             report.results.append(await self.run_task(task))
         log.info(
             "Agent benchmark %s complete: %d tasks, success %.0f%%",
-            self.name, report.n, report.success_rate * 100,
+            self.name,
+            report.n,
+            report.success_rate * 100,
         )
         return report

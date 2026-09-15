@@ -64,7 +64,7 @@ class Triple:
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> "Triple":
+    def from_dict(cls, d: dict) -> Triple:
         return cls(
             subject=d["subject"],
             predicate=d["predicate"],
@@ -128,6 +128,7 @@ class TripleStore:
     def __init__(self) -> None:
         try:
             import networkx as nx
+
             self._g: Any = nx.MultiDiGraph()
         except ImportError:
             raise RuntimeError("networkx not installed. Run: uv add networkx")
@@ -282,7 +283,7 @@ class TripleStore:
         log.debug("Saved %d triples to %s", len(self._triples), path)
 
     @classmethod
-    def load(cls, path: Path) -> "TripleStore":
+    def load(cls, path: Path) -> TripleStore:
         """Load triples from JSON."""
         store = cls()
         if path.exists():
@@ -364,14 +365,8 @@ class TripleStore:
         Returns a dict with 'outgoing', 'incoming', and 'neighbors' keys
         containing the relevant triples for building context about an entity.
         """
-        outgoing = [
-            t for t in self.get_objects(entity)
-            if t.confidence >= min_confidence
-        ]
-        incoming = [
-            t for t in self.get_subjects(entity)
-            if t.confidence >= min_confidence
-        ]
+        outgoing = [t for t in self.get_objects(entity) if t.confidence >= min_confidence]
+        incoming = [t for t in self.get_subjects(entity) if t.confidence >= min_confidence]
         neighbors = self.get_neighbors(entity, max_depth=max_depth)
         neighbors = [t for t in neighbors if t.confidence >= min_confidence]
 
@@ -417,8 +412,9 @@ class TripleStore:
                     u, v = path[i], path[i + 1]
                     # Find the triple connecting these nodes
                     for triple in self._triples.values():
-                        if (triple.subject.lower() == u and triple.object.lower() == v) or \
-                           (triple.subject.lower() == v and triple.object.lower() == u):
+                        if (triple.subject.lower() == u and triple.object.lower() == v) or (
+                            triple.subject.lower() == v and triple.object.lower() == u
+                        ):
                             triple_path.append(triple)
                             break
                 if triple_path:

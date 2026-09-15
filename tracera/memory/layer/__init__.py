@@ -33,12 +33,6 @@ from tracera.memory.layer.attribution import (
     set_attribution,
     set_session_id,
 )
-from tracera.memory.layer.extract import (
-    EXTRACTION_PROMPT,
-    ExtractedMemory,
-    MemoryExtractor,
-)
-from tracera.memory.layer.facade import AgentMemory, MemoryLayer, MemoryLayerError
 from tracera.memory.layer.events import (
     EventPipeline,
     EventType,
@@ -50,17 +44,35 @@ from tracera.memory.layer.events import (
     handle_repository_discovery,
     handle_tool_completed,
 )
+from tracera.memory.layer.extract import (
+    EXTRACTION_PROMPT,
+    ExtractedMemory,
+    MemoryExtractor,
+)
+from tracera.memory.layer.facade import AgentMemory, MemoryLayer, MemoryLayerError
 from tracera.memory.layer.queue import BackgroundWorker
 from tracera.memory.layer.recall import RecallInjector, format_memories, format_memories_grouped
+from tracera.memory.layer.reconcile import (
+    MemoryReconciler,
+    ReconcileAction,
+    ReconcileEvent,
+)
 from tracera.memory.layer.store import (
     ALL_KINDS,
+    FUNCTIONAL_PREDICATE_EXACT,
+    FUNCTIONAL_PREDICATE_TOKENS,
+    SCHEMA_VERSION,
     Job,
     MemoryKind,
-    MemoryRecord,
-    MemoryStore,
-    cosine_similarity,
-    MemoryScope,
     MemoryPolicy,
+    MemoryRecord,
+    MemoryScope,
+    MemoryStore,
+    VectorIndex,
+    canonical_key,
+    cosine_similarity,
+    pack_embedding,
+    unpack_embedding,
 )
 from tracera.memory.layer.wrapper import MemoryProvider
 
@@ -72,10 +84,20 @@ __all__ = [
     "EventType",
     "EXTRACTION_PROMPT",
     "ExtractedMemory",
+    "FUNCTIONAL_PREDICATE_EXACT",
+    "FUNCTIONAL_PREDICATE_TOKENS",
     "Job",
     "MemoryEvent",
     "MemoryExtractor",
     "MemoryKind",
+    "MemoryReconciler",
+    "ReconcileAction",
+    "ReconcileEvent",
+    "SCHEMA_VERSION",
+    "VectorIndex",
+    "canonical_key",
+    "pack_embedding",
+    "unpack_embedding",
     "AgentMemory",
     "MemoryLayer",
     "MemoryLayerError",

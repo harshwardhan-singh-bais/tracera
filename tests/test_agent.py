@@ -1,13 +1,11 @@
 """Tests for TRACERA agent: conversation, planner, memory."""
 
-import pytest
-from pathlib import Path
-
 
 # ── Conversation State ────────────────────────────────────────────────────────
 
+
 def test_conversation_add_messages():
-    from tracera.conversation.state import ConversationState, MessageType
+    from tracera.conversation.state import ConversationState
 
     conv = ConversationState(system_prompt="You are helpful.")
     assert len(conv) == 1  # system message
@@ -72,8 +70,9 @@ def test_conversation_tool_calls():
 
 # ── Planning System ───────────────────────────────────────────────────────────
 
+
 def test_plan_add_items():
-    from tracera.agent.planner import Plan, TodoStatus
+    from tracera.agent.planner import Plan
 
     plan = Plan("Add authentication")
     item1 = plan.add_item("Read existing code", priority=0)
@@ -98,7 +97,7 @@ def test_plan_lifecycle():
 
 
 def test_plan_with_failures():
-    from tracera.agent.planner import Plan, TodoStatus
+    from tracera.agent.planner import Plan
 
     plan = Plan("Failing task")
     item = plan.add_item("Step 1")
@@ -136,7 +135,7 @@ def test_plan_to_markdown():
 
 
 def test_plan_dependency_resolution():
-    from tracera.agent.planner import Plan, TodoStatus
+    from tracera.agent.planner import Plan
 
     plan = Plan("Dep test")
     a = plan.add_item("A", priority=0)
@@ -150,6 +149,7 @@ def test_plan_dependency_resolution():
 
 
 # ── Agent Memory ──────────────────────────────────────────────────────────────
+
 
 def test_memory_add_and_retrieve(tmp_path):
     from tracera.agent.memory import AgentMemory, MemoryCategory

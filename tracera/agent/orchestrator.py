@@ -25,9 +25,10 @@ import asyncio
 import inspect
 import json
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, AsyncIterator
+from typing import Any
 
 from tracera.agent.subagents import (
     ROLE_LABELS,
@@ -40,6 +41,7 @@ log = get_logger("agent.orchestrator")
 
 
 # ── Shared task state ─────────────────────────────────────────────────────────
+
 
 class SharedTaskState:
     """
@@ -75,7 +77,7 @@ class SharedTaskState:
         """Deep-ish copy for handing to an agent without shared mutation."""
         return json.loads(json.dumps(self._data, default=str))
 
-    def merge(self, other: "SharedTaskState") -> None:
+    def merge(self, other: SharedTaskState) -> None:
         """Merge another state's lists into this one (used to combine agents)."""
         for key, value in other._data.items():
             if isinstance(value, list):
@@ -98,6 +100,7 @@ def _state_context(state: SharedTaskState) -> str:
 
 
 # ── Delegation plan ───────────────────────────────────────────────────────────
+
 
 class AgentStatus(str, Enum):
     PENDING = "pending"
@@ -176,23 +179,60 @@ class DelegationPlan:
 
 _ROLE_KEYWORDS: dict[SubAgentRole, tuple[str, ...]] = {
     SubAgentRole.RESEARCHER: (
-        "understand", "explain", "where", "how does", "what does", "locate",
-        "find", "search", "research", "investigate the code", "architecture",
-        "overview", "summarize", "summarise",
+        "understand",
+        "explain",
+        "where",
+        "how does",
+        "what does",
+        "locate",
+        "find",
+        "search",
+        "research",
+        "investigate the code",
+        "architecture",
+        "overview",
+        "summarize",
+        "summarise",
     ),
     SubAgentRole.TESTER: (
-        "test", "run tests", "pytest", "unit test", "regression",
+        "test",
+        "run tests",
+        "pytest",
+        "unit test",
+        "regression",
     ),
     SubAgentRole.REVIEWER: (
-        "review", "check", "verify", "audit", "code quality", "lint",
+        "review",
+        "check",
+        "verify",
+        "audit",
+        "code quality",
+        "lint",
     ),
     SubAgentRole.DEBUGGER: (
-        "debug", "fix the bug", "why is", "failing", "failure", "crash",
-        "traceback", "error", "exception",
+        "debug",
+        "fix the bug",
+        "why is",
+        "failing",
+        "failure",
+        "crash",
+        "traceback",
+        "error",
+        "exception",
     ),
     SubAgentRole.CODER: (
-        "implement", "write", "create", "add", "refactor", "change",
-        "update", "edit", "build", "make", "fix", "modify",
+        "implement",
+        "write",
+        "create",
+        "add",
+        "refactor",
+        "change",
+        "update",
+        "edit",
+        "build",
+        "make",
+        "fix",
+        "modify",
     ),
 }
 
@@ -228,6 +268,7 @@ def assign_role(task: str) -> SubAgentRole | None:
 
 
 # ── Orchestrator ──────────────────────────────────────────────────────────────
+
 
 class TaskOrchestrator:
     """
@@ -309,7 +350,8 @@ class TaskOrchestrator:
         if self.parallel:
             # Build all (step, result) futures, then await in order.
             futures = [
-                self._run_step(step, plan) for step in plan.steps
+                self._run_step(step, plan)
+                for step in plan.steps
                 if step.role is not None and step.role in self.fleet
             ]
             ordered = await asyncio.gather(*futures)
@@ -373,7 +415,7 @@ class TaskOrchestrator:
             self.state.append(f"findings.{result.role.value}", result.output[:500])
         return result
 
-    async def execute(self, task: str) -> "OrchestrationReport":
+    async def execute(self, task: str) -> OrchestrationReport:
         """Collect all events and return the final report."""
         report: OrchestrationReport | None = None
         async for event in self.delegate(task):
@@ -384,6 +426,7 @@ class TaskOrchestrator:
 
 
 # ── Aggregation ───────────────────────────────────────────────────────────────
+
 
 @dataclass
 class OrchestrationReport:

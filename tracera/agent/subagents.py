@@ -18,10 +18,10 @@ orchestrator / TUI code.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
 
 from tracera.logging import get_logger
 from tracera.tools.registry import ToolRegistry
@@ -44,9 +44,19 @@ class SubAgentRole(str, Enum):
 #: can (and did, during a sweep run) edit files and `git commit` into the
 #: user's working repo. History rewrite is the only remedy after the fact.
 _FORBIDDEN_COMMAND_SUBSTRINGS = (
-    "git commit", "git push", "git reset", "git rebase", "git checkout",
-    "git restore", "git clean", "git stash", "git merge", "git cherry-pick",
-    "git revert", "git tag", "git branch",
+    "git commit",
+    "git push",
+    "git reset",
+    "git rebase",
+    "git checkout",
+    "git restore",
+    "git clean",
+    "git stash",
+    "git merge",
+    "git cherry-pick",
+    "git revert",
+    "git tag",
+    "git branch",
 )
 
 
@@ -145,6 +155,7 @@ ROLE_SYSTEM_PROMPTS: dict[SubAgentRole, str] = {
 
 
 # ── Specialized agent ─────────────────────────────────────────────────────────
+
 
 @dataclass
 class SubAgentSpec:

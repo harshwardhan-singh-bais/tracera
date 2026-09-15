@@ -13,16 +13,15 @@ to extract memories from:
 
 from __future__ import annotations
 
-import json
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable
+from typing import Any
 
 from tracera.logging import get_logger
 from tracera.memory.layer.store import MemoryStore
-from tracera.providers.base import LLMMessage
 
 log = get_logger("memory.layer.events")
 
@@ -72,7 +71,7 @@ class MemoryEvent:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "MemoryEvent":
+    def from_dict(cls, d: dict[str, Any]) -> MemoryEvent:
         return cls(
             type=EventType(d["type"]),
             entity_id=d["entity_id"],
@@ -170,6 +169,7 @@ class EventPipeline:
 
 # Built-in event handlers for common patterns
 
+
 def handle_llm_response(event: MemoryEvent) -> list[dict[str, Any]] | None:
     """Extract memories from LLM responses."""
     payload = event.payload
@@ -182,34 +182,50 @@ def handle_llm_response(event: MemoryEvent) -> list[dict[str, Any]] | None:
 
     # Detect explicit user instructions ("Remember that...", "Always...", "Never...")
     user_lower = user_message.lower()
-    if any(user_lower.startswith(p) for p in [
-        "remember that", "remember to", "always ", "never ",
-        "don't ", "do not ", "please ", "i prefer", "i like",
-        "my preference", "we use", "we always"
-    ]):
+    if any(
+        user_lower.startswith(p)
+        for p in [
+            "remember that",
+            "remember to",
+            "always ",
+            "never ",
+            "don't ",
+            "do not ",
+            "please ",
+            "i prefer",
+            "i like",
+            "my preference",
+            "we use",
+            "we always",
+        ]
+    ):
         # These are high-confidence memory candidates
         kind = "preference" if any(p in user_lower for p in ["prefer", "like"]) else "rule"
-        memories.append({
-            "kind": kind,
-            "subject": "user",
-            "predicate": "instruction" if kind == "rule" else "preference",
-            "object": user_message[:200],
-            "text": f"User instruction: {user_message[:300]}",
-            "confidence": 0.9,
-            "importance": 0.8,
-        })
+        memories.append(
+            {
+                "kind": kind,
+                "subject": "user",
+                "predicate": "instruction" if kind == "rule" else "preference",
+                "object": user_message[:200],
+                "text": f"User instruction: {user_message[:300]}",
+                "confidence": 0.9,
+                "importance": 0.8,
+            }
+        )
 
     # Detect decisions
     if any(p in user_lower for p in ["decided", "chose", "going with", "switched to"]):
-        memories.append({
-            "kind": "decision",
-            "subject": "user",
-            "predicate": "decided",
-            "object": user_message[:200],
-            "text": f"Decision: {user_message[:300]}",
-            "confidence": 0.85,
-            "importance": 0.7,
-        })
+        memories.append(
+            {
+                "kind": "decision",
+                "subject": "user",
+                "predicate": "decided",
+                "object": user_message[:200],
+                "text": f"Decision: {user_message[:300]}",
+                "confidence": 0.85,
+                "importance": 0.7,
+            }
+        )
 
     return memories if memories else None
 
@@ -227,51 +243,62 @@ def handle_tool_completed(event: MemoryEvent) -> list[dict[str, Any]] | None:
     # Detect file modification patterns
     if tool_name in ("edit_file", "write_file") and file_path:
         if success:
-            memories.append({
-                "kind": "event",
-                "subject": "agent",
-                "predicate": "modified",
-                "object": file_path,
-                "text": f"Modified {file_path}",
-                "confidence": 0.9,
-                "importance": 0.6,
-            })
+            memories.append(
+                {
+                    "kind": "event",
+                    "subject": "agent",
+                    "predicate": "modified",
+                    "object": file_path,
+                    "text": f"Modified {file_path}",
+                    "confidence": 0.9,
+                    "importance": 0.6,
+                }
+            )
 
     # Detect test results
-    if tool_name in ("test_runner", "run_command") and "test" in str(payload.get("args", "")).lower():
+    if (
+        tool_name in ("test_runner", "run_command")
+        and "test" in str(payload.get("args", "")).lower()
+    ):
         if success and "passed" in output.lower():
-            memories.append({
-                "kind": "event",
-                "subject": "project",
-                "predicate": "tests_pass",
-                "object": "true",
-                "text": "Tests passed after changes",
-                "confidence": 0.85,
-                "importance": 0.7,
-            })
+            memories.append(
+                {
+                    "kind": "event",
+                    "subject": "project",
+                    "predicate": "tests_pass",
+                    "object": "true",
+                    "text": "Tests passed after changes",
+                    "confidence": 0.85,
+                    "importance": 0.7,
+                }
+            )
         elif not success and ("failed" in output.lower() or "error" in output.lower()):
-            memories.append({
-                "kind": "event",
-                "subject": "project",
-                "predicate": "tests_fail",
-                "object": "true",
-                "text": f"Tests failed: {output[:200]}",
-                "confidence": 0.85,
-                "importance": 0.8,
-            })
+            memories.append(
+                {
+                    "kind": "event",
+                    "subject": "project",
+                    "predicate": "tests_fail",
+                    "object": "true",
+                    "text": f"Tests failed: {output[:200]}",
+                    "confidence": 0.85,
+                    "importance": 0.8,
+                }
+            )
 
     # Detect git discoveries
     if tool_name == "git_tool":
         if "status" in str(payload.get("args", "")):
-            memories.append({
-                "kind": "fact",
-                "subject": "repository",
-                "predicate": "has_changes",
-                "object": "true",
-                "text": "Repository has uncommitted changes",
-                "confidence": 0.9,
-                "importance": 0.5,
-            })
+            memories.append(
+                {
+                    "kind": "fact",
+                    "subject": "repository",
+                    "predicate": "has_changes",
+                    "object": "true",
+                    "text": "Repository has uncommitted changes",
+                    "confidence": 0.9,
+                    "importance": 0.5,
+                }
+            )
 
     return memories if memories else None
 
@@ -286,15 +313,17 @@ def handle_agent_decision(event: MemoryEvent) -> list[dict[str, Any]] | None:
     if not decision:
         return None
 
-    return [{
-        "kind": "decision",
-        "subject": "agent",
-        "predicate": "decided",
-        "object": decision[:200],
-        "text": f"Decision ({scope}): {decision}. Reason: {reason}",
-        "confidence": 0.85,
-        "importance": 0.75,
-    }]
+    return [
+        {
+            "kind": "decision",
+            "subject": "agent",
+            "predicate": "decided",
+            "object": decision[:200],
+            "text": f"Decision ({scope}): {decision}. Reason: {reason}",
+            "confidence": 0.85,
+            "importance": 0.75,
+        }
+    ]
 
 
 def handle_file_changed(event: MemoryEvent) -> list[dict[str, Any]] | None:
@@ -307,26 +336,30 @@ def handle_file_changed(event: MemoryEvent) -> list[dict[str, Any]] | None:
     memories = []
 
     if file_path:
-        memories.append({
-            "kind": "event",
-            "subject": "repository",
-            "predicate": change_type,
-            "object": file_path,
-            "text": f"{change_type.capitalize()} {file_path}",
-            "confidence": 0.9,
-            "importance": 0.6,
-        })
+        memories.append(
+            {
+                "kind": "event",
+                "subject": "repository",
+                "predicate": change_type,
+                "object": file_path,
+                "text": f"{change_type.capitalize()} {file_path}",
+                "confidence": 0.9,
+                "importance": 0.6,
+            }
+        )
 
     for symbol in symbols:
-        memories.append({
-            "kind": "relationship",
-            "subject": symbol,
-            "predicate": "defined_in",
-            "object": file_path,
-            "text": f"{symbol} is defined in {file_path}",
-            "confidence": 0.8,
-            "importance": 0.5,
-        })
+        memories.append(
+            {
+                "kind": "relationship",
+                "subject": symbol,
+                "predicate": "defined_in",
+                "object": file_path,
+                "text": f"{symbol} is defined in {file_path}",
+                "confidence": 0.8,
+                "importance": 0.5,
+            }
+        )
 
     return memories if memories else None
 
@@ -351,31 +384,37 @@ def handle_repository_discovery(event: MemoryEvent) -> list[dict[str, Any]] | No
     }
     kind = kind_map.get(discovery_type, "fact")
 
-    memories = [{
-        "kind": kind,
-        "subject": "repository",
-        "predicate": discovery_type,
-        "object": description[:200],
-        "text": f"Code analysis: {description[:300]}",
-        "confidence": 0.75,
-        "importance": 0.6,
-    }]
+    memories = [
+        {
+            "kind": kind,
+            "subject": "repository",
+            "predicate": discovery_type,
+            "object": description[:200],
+            "text": f"Code analysis: {description[:300]}",
+            "confidence": 0.75,
+            "importance": 0.6,
+        }
+    ]
 
     for symbol in symbols:
-        memories.append({
-            "kind": "relationship",
-            "subject": symbol,
-            "predicate": "related_to",
-            "object": discovery_type,
-            "text": f"{symbol} relates to {discovery_type}: {description[:100]}",
-            "confidence": 0.7,
-            "importance": 0.5,
-        })
+        memories.append(
+            {
+                "kind": "relationship",
+                "subject": symbol,
+                "predicate": "related_to",
+                "object": discovery_type,
+                "text": f"{symbol} relates to {discovery_type}: {description[:100]}",
+                "confidence": 0.7,
+                "importance": 0.5,
+            }
+        )
 
     return memories
 
 
-def build_default_pipeline(store: MemoryStore, embed_fn: Callable[[str], list[float]]) -> EventPipeline:
+def build_default_pipeline(
+    store: MemoryStore, embed_fn: Callable[[str], list[float]]
+) -> EventPipeline:
     """Build a pipeline with default handlers for common event types."""
     pipeline = EventPipeline(store, embed_fn)
 

@@ -183,9 +183,9 @@ class Telemetry:
                     "completion_tokens": c.completion_tokens,
                     "total_tokens": c.total_tokens,
                     "total_latency_ms": round(c.llm_latency_ms, 2),
-                    "avg_latency_ms": round(
-                        c.llm_latency_ms / c.llm_calls, 2
-                    ) if c.llm_calls else 0.0,
+                    "avg_latency_ms": round(c.llm_latency_ms / c.llm_calls, 2)
+                    if c.llm_calls
+                    else 0.0,
                 },
                 "tools": {
                     "calls": c.tool_calls,

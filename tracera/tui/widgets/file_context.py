@@ -7,17 +7,15 @@ syntax highlighting indicators and click-to-preview.
 
 from __future__ import annotations
 
-from pathlib import Path
 from collections import deque
+from pathlib import Path
 
+from rich.text import Text
 from textual.app import ComposeResult
+from textual.containers import Vertical
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Static
-from textual.containers import Vertical
-
-from rich.text import Text
-
 
 # File extension to language mapping for syntax indicators
 _LANG_COLORS = {

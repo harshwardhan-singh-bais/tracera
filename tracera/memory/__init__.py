@@ -13,22 +13,22 @@ Components:
   - ContextRecall: retrieval-augmented memory injection before LLM calls
 """
 
-from tracera.memory.session import SessionManager, Session
+from tracera.memory.extractor import ConversationExtractor
+from tracera.memory.layer import AgentMemory, MemoryLayer, MemoryStore
+from tracera.memory.layer.store import ALL_KINDS, MemoryRecord
+from tracera.memory.recall import ContextRecall
+from tracera.memory.session import Session, SessionManager
 from tracera.memory.taxonomy import (
+    MemoryEvent,
+    MemoryFact,
+    MemoryPreference,
+    MemoryRelationship,
+    MemoryRule,
+    MemorySkill,
     MemoryType,
     StructuredMemory,
-    MemoryFact,
-    MemoryRule,
-    MemoryRelationship,
-    MemorySkill,
-    MemoryPreference,
-    MemoryEvent,
 )
-from tracera.memory.extractor import ConversationExtractor
-from tracera.memory.triples import TripleStore, Triple
-from tracera.memory.recall import ContextRecall
-from tracera.memory.layer import AgentMemory, MemoryLayer, MemoryStore
-from tracera.memory.layer.store import MemoryRecord, ALL_KINDS
+from tracera.memory.triples import Triple, TripleStore
 
 __all__ = [
     "SessionManager",

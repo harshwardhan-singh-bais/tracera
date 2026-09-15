@@ -7,7 +7,6 @@ All mutating operations require explicit opt-in.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -19,7 +18,8 @@ log = get_logger("git")
 
 try:
     import git as gitpython
-    from git import Repo, InvalidGitRepositoryError, GitCommandError
+    from git import GitCommandError, InvalidGitRepositoryError, Repo
+
     _GIT_AVAILABLE = True
 except ImportError:
     _GIT_AVAILABLE = False
@@ -95,9 +95,7 @@ class GitRepo:
             try:
                 self._repo = Repo(str(self.path), search_parent_directories=True)
             except InvalidGitRepositoryError:
-                raise NotAGitRepositoryError(
-                    f"Not a git repository: {self.path}"
-                )
+                raise NotAGitRepositoryError(f"Not a git repository: {self.path}")
         return self._repo
 
     # ── Inspection ────────────────────────────────────────────────────────────

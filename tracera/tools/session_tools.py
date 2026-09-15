@@ -30,6 +30,7 @@ def _get_graph(retrieval_pipeline=None):
 
 # ── assemble_task_context ────────────────────────────────────────────────────
 
+
 class AssembleTaskContextTool(Tool):
     """One-call task orchestration — classify intent, extract anchors, run tools."""
 
@@ -65,7 +66,9 @@ class AssembleTaskContextTool(Tool):
 
     async def execute(self, task: str, max_tokens: int = 8000) -> ToolResult:
         if self._pipeline is None or len(self._pipeline) < 2:
-            return ToolResult.ok(self.name, "", "Retrieval pipeline not available. Run `tracera index` first.")
+            return ToolResult.ok(
+                self.name, "", "Retrieval pipeline not available. Run `tracera index` first."
+            )
 
         symbol_retriever = self._pipeline[1]
         expander = self._pipeline[2] if len(self._pipeline) > 2 else None
@@ -78,7 +81,7 @@ class AssembleTaskContextTool(Tool):
         # Extract anchor symbols
         anchors = self._extract_anchors(task)
 
-        lines = [f"## Task Context Assembly\n"]
+        lines = ["## Task Context Assembly\n"]
         lines.append(f"**Task:** {task[:200]}")
         lines.append(f"**Intent:** {intent}")
         lines.append(f"**Anchors:** {', '.join(anchors) if anchors else 'none detected'}\n")
@@ -139,7 +142,9 @@ class AssembleTaskContextTool(Tool):
             content = r.get("content", "")
             tokens = len(content) // 4  # rough estimate
             if token_estimate + tokens > max_tokens:
-                lines.append(f"\n_[Token budget ({max_tokens}) reached — {len(all_results)} results truncated]_")
+                lines.append(
+                    f"\n_[Token budget ({max_tokens}) reached — {len(all_results)} results truncated]_"
+                )
                 break
             token_estimate += tokens
 
@@ -158,8 +163,12 @@ class AssembleTaskContextTool(Tool):
             lines.append("_No relevant context found. Try indexing the workspace first._")
 
         return ToolResult.ok(
-            self.name, "", "\n".join(lines),
-            intent=intent, anchors=anchors, tokens_used=token_estimate,
+            self.name,
+            "",
+            "\n".join(lines),
+            intent=intent,
+            anchors=anchors,
+            tokens_used=token_estimate,
         )
 
     @staticmethod
@@ -174,7 +183,10 @@ class AssembleTaskContextTool(Tool):
             return "extend"
         if any(w in t for w in ["audit", "review", "security", "lint", "check", "verify"]):
             return "audit"
-        if any(w in t for w in ["explore", "understand", "explain", "overview", "what does", "how does"]):
+        if any(
+            w in t
+            for w in ["explore", "understand", "explain", "overview", "what does", "how does"]
+        ):
             return "explore"
         if any(w in t for w in ["test", "assert", "coverage", "spec"]):
             return "review"
@@ -184,17 +196,30 @@ class AssembleTaskContextTool(Tool):
     def _extract_anchors(task: str) -> list[str]:
         """Extract likely symbol names from the task."""
         import re
+
         # Find CamelCase identifiers
-        camel = re.findall(r'\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b', task)
+        camel = re.findall(r"\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b", task)
         # Find snake_case identifiers (likely function/variable names)
-        snake = re.findall(r'\b[a-z]+(?:_[a-z]+){1,}\b', task)
+        snake = re.findall(r"\b[a-z]+(?:_[a-z]+){1,}\b", task)
         # Filter out common English words
-        stopwords = {"the", "this", "that", "with", "from", "have", "been", "does", "should", "would"}
+        stopwords = {
+            "the",
+            "this",
+            "that",
+            "with",
+            "from",
+            "have",
+            "been",
+            "does",
+            "should",
+            "would",
+        }
         anchors = [a for a in camel + snake if a.lower() not in stopwords]
         return anchors[:5]
 
 
 # ── plan_turn ────────────────────────────────────────────────────────────────
+
 
 class PlanTurnTool(Tool):
     """Analyze query and return confidence-guided routing before first read."""
@@ -257,7 +282,7 @@ class PlanTurnTool(Tool):
             route.append("search_symbols → get_symbol_source")
 
         lines = [
-            f"## Turn Plan\n",
+            "## Turn Plan\n",
             f"**Query:** {query[:200]}",
             f"**Intent:** {intent}",
             f"**Anchors:** {', '.join(anchors[:5]) if anchors else 'none'}",
@@ -278,13 +303,19 @@ class PlanTurnTool(Tool):
         lines.append(f"\n**Estimated consumption:** ~{est_tokens} tokens ({len(results)} results)")
 
         return ToolResult.ok(
-            self.name, "", "\n".join(lines),
-            intent=intent, confidence=confidence, anchors=anchors,
-            estimated_tokens=est_tokens, route=route,
+            self.name,
+            "",
+            "\n".join(lines),
+            intent=intent,
+            confidence=confidence,
+            anchors=anchors,
+            estimated_tokens=est_tokens,
+            route=route,
         )
 
 
 # ── get_ranked_context ───────────────────────────────────────────────────────
+
 
 class GetRankedContextTool(Tool):
     """Pack most relevant symbols into a fixed token budget."""
@@ -353,18 +384,27 @@ class GetRankedContextTool(Tool):
             start = r.get("start_line", "?")
             end = r.get("end_line", "?")
 
-            lines.append(f"### [{included}] `{symbol}` — `{fp}` L{start}-{end} (score: {score:.3f})")
+            lines.append(
+                f"### [{included}] `{symbol}` — `{fp}` L{start}-{end} (score: {score:.3f})"
+            )
             lines.append(f"```{content[:500]}```\n")
 
-        lines.append(f"_Tokens used: {tokens_used}/{max_tokens}, symbols: {included}/{len(results)}_")
+        lines.append(
+            f"_Tokens used: {tokens_used}/{max_tokens}, symbols: {included}/{len(results)}_"
+        )
 
         return ToolResult.ok(
-            self.name, "", "\n".join(lines),
-            query=query, tokens_used=tokens_used, symbols=included,
+            self.name,
+            "",
+            "\n".join(lines),
+            query=query,
+            tokens_used=tokens_used,
+            symbols=included,
         )
 
 
 # ── get_session_stats ────────────────────────────────────────────────────────
+
 
 class GetSessionStatsTool(Tool):
     """Session economics — token usage, savings, and tool breakdown."""
@@ -434,6 +474,7 @@ class GetSessionStatsTool(Tool):
 
 # ── get_repo_map ─────────────────────────────────────────────────────────────
 
+
 class GetRepoMapTool(Tool):
     """Cold-start orientation map — query-less repo overview ranked by centrality."""
 
@@ -473,6 +514,7 @@ class GetRepoMapTool(Tool):
             # PageRank centrality
             try:
                 import networkx as nx
+
                 pagerank = nx.pagerank(graph._g)
                 # Sort by centrality
                 ranked = sorted(pagerank.items(), key=lambda x: -x[1])
@@ -511,6 +553,7 @@ class GetRepoMapTool(Tool):
             lines.append("_Symbol graph not available. Showing file structure._\n")
             if self._workspace:
                 from tracera.indexer.scanner import FileScanner
+
                 scanner = FileScanner(str(self._workspace.root))
                 files = scanner.scan()
                 for fp in sorted(files)[:50]:
@@ -523,6 +566,8 @@ class GetRepoMapTool(Tool):
         lines.append(f"\n_Tokens used: {tokens_used}/{max_tokens}_")
 
         return ToolResult.ok(
-            self.name, "", "\n".join(lines),
+            self.name,
+            "",
+            "\n".join(lines),
             tokens_used=tokens_used,
         )

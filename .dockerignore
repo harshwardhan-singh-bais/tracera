@@ -1,0 +1,33 @@
+# Version control
+.git
+.gitignore
+.github
+
+# Python
+.venv
+venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+dist
+build
+
+# TRACERA local data (index, memory, logs — built at runtime)
+.tracera
+.env
+
+# Docs site (separate Next.js app — not part of the runtime image)
+docs-site
+docs
+
+# Misc local artifacts
+*.svg
+*.log
+.claude
+.crush
+.demo_tmp
+.utim_tmp
+mcpb
+*.mcpb

@@ -7,7 +7,6 @@ connection errors are generic ProviderError.
 
 import httpx
 import openai
-import pytest
 
 from tracera.errors import (
     ProviderAuthError,

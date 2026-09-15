@@ -85,21 +85,21 @@ class RetrievalBenchmarkReport:
             return None
         return max(
             self.strategies,
-            key=lambda n: getattr(self.strategies[n], {
-                "recall@1": "recall_1",
-                "recall@5": "recall_5",
-                "recall@10": "recall_10",
-                "mrr": "mrr",
-                "ndcg@5": "ndcg_5",
-            }.get(metric, "recall_5")),
+            key=lambda n: getattr(
+                self.strategies[n],
+                {
+                    "recall@1": "recall_1",
+                    "recall@5": "recall_5",
+                    "recall@10": "recall_10",
+                    "mrr": "mrr",
+                    "ndcg@5": "ndcg_5",
+                }.get(metric, "recall_5"),
+            ),
         )
 
     def to_markdown(self) -> str:
         lines = [f"# Retrieval benchmark: {self.dataset}\n"]
-        header = (
-            "| Strategy | R@1 | R@5 | R@10 | P@5 | MRR | nDCG@5 | "
-            "lat (ms) | ctx (B) |"
-        )
+        header = "| Strategy | R@1 | R@5 | R@10 | P@5 | MRR | nDCG@5 | lat (ms) | ctx (B) |"
         lines.append(header)
         lines.append("|---" * 9 + "|")
         for scores in self.strategies.values():
@@ -119,13 +119,14 @@ class RetrievalBenchmarkReport:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
-            json.dumps({
-                "dataset": self.dataset,
-                "ran_at": self.ran_at,
-                "strategies": {
-                    name: s.to_dict() for name, s in self.strategies.items()
+            json.dumps(
+                {
+                    "dataset": self.dataset,
+                    "ran_at": self.ran_at,
+                    "strategies": {name: s.to_dict() for name, s in self.strategies.items()},
                 },
-            }, indent=2),
+                indent=2,
+            ),
             encoding="utf-8",
         )
         return path
@@ -168,11 +169,13 @@ class RetrievalBenchmark:
                 mrr_sum += reciprocal_rank(hits, gt)
                 ndcg_sum += ndcg_at_k(hits, gt, k=5)
 
-                per_query.append({
-                    "query": query.query,
-                    "hits": [h.to_dict() for h in hits[:10]],
-                    "recall@5": recall_at_k(hits, gt, k=5),
-                })
+                per_query.append(
+                    {
+                        "query": query.query,
+                        "hits": [h.to_dict() for h in hits[:10]],
+                        "recall@5": recall_at_k(hits, gt, k=5),
+                    }
+                )
 
             scores = StrategyScores(name=name, kind=strategy.kind)
             scores.recall_1 = r1 / n
@@ -190,8 +193,11 @@ class RetrievalBenchmark:
 
             log.info(
                 "Strategy %-16s R@5=%.3f MRR=%.3f lat=%.1fms ctx=%.0fB",
-                name, scores.recall_5, scores.mrr,
-                scores.latency_ms_mean, scores.context_bytes_mean,
+                name,
+                scores.recall_5,
+                scores.mrr,
+                scores.latency_ms_mean,
+                scores.context_bytes_mean,
             )
 
         return report

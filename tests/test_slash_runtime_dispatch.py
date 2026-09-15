@@ -19,14 +19,13 @@ Two guards here:
 from __future__ import annotations
 
 import ast
-import tracera.tui.app as _app_mod
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import tracera.tui.app as _app_mod
 from tracera.tui.app import TraceraTUI
 from tracera.tui.widgets.command_registry import SLASH_COMMANDS
-
 
 # ── Guard 1 (static): @work only on _run_agent_task ──────────────────────────
 
@@ -113,19 +112,50 @@ def _make_app(tmp_path):
 
 # Plausible dummy args (same shape as test_slash_command_execution).
 _ARG_MAP = {
-    "model": " mock-model", "search": "test", "debug": "test",
-    "plan": "do something", "code": "do something", "ask": "do something",
-    "symbol": "Foo", "symbols": "Foo", "source": "Foo", "definition": "Foo",
-    "context": "Foo", "deps": "Foo", "outline": "foo.py", "assemble": "do it",
-    "refs": "Foo", "callers": "Foo", "blast": "Foo", "classhier": "Foo",
-    "endpoint": "/api/test", "impls": "Foo", "provenance": "Foo", "risk": "Foo",
-    "refactor": "Foo", "editsafe": "Foo", "deletesafe": "Foo",
-    "importers": "foo.py", "git": "status", "tests": "pytest",
-    "read": "pyproject.toml", "write": "out.txt", "edit": "pyproject.toml",
-    "ls": ".", "grep": "test", "run": "echo hi", "recall": "test",
-    "remember": "test memory", "forget": "test", "memsearch": "test",
-    "planturn": "test", "ranked": "test", "taskcontext": "do it",
-    "delegate": "do something", "tool": "read_file", "plantask": "do it",
+    "model": " mock-model",
+    "search": "test",
+    "debug": "test",
+    "plan": "do something",
+    "code": "do something",
+    "ask": "do something",
+    "symbol": "Foo",
+    "symbols": "Foo",
+    "source": "Foo",
+    "definition": "Foo",
+    "context": "Foo",
+    "deps": "Foo",
+    "outline": "foo.py",
+    "assemble": "do it",
+    "refs": "Foo",
+    "callers": "Foo",
+    "blast": "Foo",
+    "classhier": "Foo",
+    "endpoint": "/api/test",
+    "impls": "Foo",
+    "provenance": "Foo",
+    "risk": "Foo",
+    "refactor": "Foo",
+    "editsafe": "Foo",
+    "deletesafe": "Foo",
+    "importers": "foo.py",
+    "git": "status",
+    "tests": "pytest",
+    "read": "pyproject.toml",
+    "write": "out.txt",
+    "edit": "pyproject.toml",
+    "ls": ".",
+    "grep": "test",
+    "run": "echo hi",
+    "recall": "test",
+    "remember": "test memory",
+    "forget": "test",
+    "memsearch": "test",
+    "planturn": "test",
+    "ranked": "test",
+    "taskcontext": "do it",
+    "delegate": "do something",
+    "tool": "read_file",
+    "plantask": "do it",
     "ast": "def $NAME($$$PARAMS): ...",
 }
 
@@ -191,8 +221,12 @@ class _FakeProtector:
 
     def verify_after(self):
         return {
-            "overall_success": True, "pre_passed": 1, "post_passed": 1,
-            "post_failed": 0, "summary": "ok", "changed_files": [],
+            "overall_success": True,
+            "pre_passed": 1,
+            "post_passed": 1,
+            "post_failed": 0,
+            "summary": "ok",
+            "changed_files": [],
         }
 
 
@@ -211,6 +245,7 @@ async def test_every_slash_command_in_real_textual_runtime(tmp_path, monkeypatch
 
     monkeypatch.setattr(planner_mod, "TaskDecomposer", _FakeDecomposer, raising=False)
     import tracera.tui.app as app_mod
+
     monkeypatch.setattr(app_mod, "TaskDecomposer", _FakeDecomposer, raising=False)
     monkeypatch.setattr(orchestrator_mod, "TaskOrchestrator", _FakeOrchestrator)
     monkeypatch.setattr(subagents_mod, "build_sub_agent_fleet", lambda *a, **k: {})

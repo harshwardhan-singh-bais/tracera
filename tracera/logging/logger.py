@@ -11,14 +11,12 @@ Features:
 from __future__ import annotations
 
 import logging
-import sys
 from pathlib import Path
 from typing import Any
 
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.theme import Theme
-
 
 # ── TRACERA colour theme ──────────────────────────────────────────────────────
 
@@ -43,6 +41,7 @@ _file_console: Console | None = None
 
 
 # ── Root logger setup ─────────────────────────────────────────────────────────
+
 
 def setup_logging(
     level: str = "INFO",
@@ -108,9 +107,25 @@ def get_logger(name: str) -> logging.Logger:
 
 # ── Rich console helpers ──────────────────────────────────────────────────────
 
+
 def get_console() -> Console:
     """Return the shared Rich console."""
     return _console
+
+
+def redirect_console_to_stderr() -> None:
+    """
+    Rebind the shared Rich console (and the root logger's Rich handler) to
+    stderr. Used by `tracera mcp serve` in stdio mode, where stdout is a
+    JSON-RPC byte stream that must stay byte-clean.
+    """
+    global _console
+    if _console.stderr:
+        return  # already stderr-backed
+    _console = Console(theme=_THEME, stderr=True)
+    for handler in logging.getLogger().handlers:
+        if isinstance(handler, RichHandler):
+            handler.console = _console
 
 
 # ── Pixel-wordmark banner ───────────────────────────────────────────────────
@@ -126,21 +141,30 @@ _PIXEL_FONT: dict[str, list[str]] = {
 }
 _PIXEL_WORD = "tracera"
 _PIXEL_ROWS: list[str] = [
-    "".join(_PIXEL_FONT[ch][row] + (" " if i < len(_PIXEL_WORD) - 1 else "")
-           for i, ch in enumerate(_PIXEL_WORD))
+    "".join(
+        _PIXEL_FONT[ch][row] + (" " if i < len(_PIXEL_WORD) - 1 else "")
+        for i, ch in enumerate(_PIXEL_WORD)
+    )
     for row in range(5)
 ]
 
 #: Left-to-right gradient applied per letter (accent blue → prompt purple).
 _WORD_COLORS = [
-    "#6cb6ff", "#7db9ff", "#8fc0ff", "#a3c9ff", "#b8ccff", "#c5b0ff", "#d2a8ff",
+    "#6cb6ff",
+    "#7db9ff",
+    "#8fc0ff",
+    "#a3c9ff",
+    "#b8ccff",
+    "#c5b0ff",
+    "#d2a8ff",
 ]
 _GHOST = "#232330"  # unlit pixels during materialization
-_SWEEP = "#ffffff"   # scanline highlight
+_SWEEP = "#ffffff"  # scanline highlight
 
 
-def _word_frame_markup(lit: set[tuple[int, int]] | None = None,
-                       sweep_col: int | None = None) -> str:
+def _word_frame_markup(
+    lit: set[tuple[int, int]] | None = None, sweep_col: int | None = None
+) -> str:
     """Rich-markup frame of the pixel word.
 
     ``lit=None`` → every pixel on (final state). Otherwise only pixels in the
@@ -185,6 +209,7 @@ def _word_pixel_positions() -> list[tuple[int, int]]:
 def _materialize_frames(steps: int = 12) -> list[str]:
     """Progressive pixel-materialization frames (deterministic seed)."""
     import random
+
     rng = random.Random(0x7ACEA)  # fixed → same assemble order every run
     order = _word_pixel_positions()
     rng.shuffle(order)
@@ -192,7 +217,7 @@ def _materialize_frames(steps: int = 12) -> list[str]:
     per_step = max(1, len(order) // steps)
     lit: set[tuple[int, int]] = set()
     for i in range(0, len(order), per_step):
-        lit.update(order[i:i + per_step])
+        lit.update(order[i : i + per_step])
         frames.append(_word_frame_markup(lit=lit))
     frames.append(_word_frame_markup())  # all pixels on
     return frames
@@ -236,9 +261,10 @@ def animate_banner(console: Console | None = None, *, duration: float = 1.1) -> 
     and only the final static banner (printed by the caller) remains.
     Non-TTY consoles skip straight to the static frame.
     """
+    import time
+
     from rich.live import Live
     from rich.text import Text
-    import time
 
     console = console or _console
     if not console.is_terminal:
@@ -274,6 +300,7 @@ def print_banner() -> str:
 
 # ── Styled log helpers (used by non-logging code for visual output) ───────────
 
+
 def log_tool(name: str, args: dict[str, Any]) -> None:
     _console.print(f"[tracera.tool]⚙  {name}[/] {_fmt_args(args)}")
 
@@ -301,9 +328,8 @@ def log_success(message: str) -> None:
 
 def log_error_panel(title: str, message: str) -> None:
     from rich.panel import Panel
-    _console.print(
-        Panel(message, title=f"[bold red]{title}[/]", border_style="red")
-    )
+
+    _console.print(Panel(message, title=f"[bold red]{title}[/]", border_style="red"))
 
 
 def _fmt_args(args: dict[str, Any]) -> str:

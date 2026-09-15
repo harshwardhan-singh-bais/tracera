@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import re
 
-from tracera.retrieval.hybrid import HybridRetriever
 from tracera.logging import get_logger
+from tracera.retrieval.hybrid import HybridRetriever
 
 log = get_logger("retrieval.symbol")
 
@@ -101,6 +101,9 @@ class SymbolAwareRetriever:
 
         log.debug(
             "Symbol-aware retrieval: query=%r k=%d type=%s → %d results",
-            query[:40], k, detected_type, len(deduplicated),
+            query[:40],
+            k,
+            detected_type,
+            len(deduplicated),
         )
         return deduplicated

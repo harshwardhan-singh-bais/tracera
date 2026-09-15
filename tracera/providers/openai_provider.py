@@ -7,15 +7,15 @@ Supports OpenAI, Azure OpenAI, Groq, Together, and any OpenAI-compatible endpoin
 from __future__ import annotations
 
 import time
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 from tracera.errors import (
-    MissingAPIKeyError,
     ProviderAuthError,
     ProviderContextLengthError,
+    ProviderError,
     ProviderRateLimitError,
     ProviderUnavailableError,
-    ProviderError,
 )
 
 
@@ -46,6 +46,8 @@ def _classify_error(e: Exception) -> ProviderError:
     if isinstance(e, openai.APIConnectionError):
         return ProviderError(f"OpenAI connection error: {e}")
     return ProviderError(f"OpenAI request failed: {e}")
+
+
 from tracera.logging import get_logger
 from tracera.providers.base import (
     LLMMessage,
@@ -110,9 +112,7 @@ class OpenAIProvider(LLMProvider):
 
     # ── Message conversion ────────────────────────────────────────────────────
 
-    def _messages_to_openai(
-        self, messages: list[LLMMessage], system: str | None
-    ) -> list[dict]:
+    def _messages_to_openai(self, messages: list[LLMMessage], system: str | None) -> list[dict]:
         result = []
         if system:
             result.append({"role": "system", "content": system})
@@ -139,26 +139,31 @@ class OpenAIProvider(LLMProvider):
                     ]
                 result.append(d)
             elif msg.role == Role.TOOL:
-                result.append({
-                    "role": "tool",
-                    "tool_call_id": msg.tool_call_id,
-                    "content": msg.content or "",
-                })
+                result.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": msg.tool_call_id,
+                        "content": msg.content or "",
+                    }
+                )
         return result
 
     def _parse_tool_calls(self, raw_calls: Any) -> list[ToolCallRequest]:
         import json
+
         result = []
         for tc in raw_calls:
             try:
                 args = json.loads(tc.function.arguments)
             except Exception:
                 args = {}
-            result.append(ToolCallRequest(
-                id=tc.id,
-                name=tc.function.name,
-                arguments=args,
-            ))
+            result.append(
+                ToolCallRequest(
+                    id=tc.id,
+                    name=tc.function.name,
+                    arguments=args,
+                )
+            )
         return result
 
     # ── Complete ──────────────────────────────────────────────────────────────
@@ -173,7 +178,6 @@ class OpenAIProvider(LLMProvider):
         tools: list[ToolSchema] | None = None,
         system: str | None = None,
     ) -> LLMResponse:
-        import openai
 
         model_id = model or self._default_model
         oai_messages = self._messages_to_openai(messages, system)
@@ -210,7 +214,9 @@ class OpenAIProvider(LLMProvider):
 
         log.debug(
             "OpenAI %s: %d tok in %.0fms",
-            model_id, usage.total_tokens, latency_ms,
+            model_id,
+            usage.total_tokens,
+            latency_ms,
         )
 
         return LLMResponse(
@@ -235,7 +241,6 @@ class OpenAIProvider(LLMProvider):
         system: str | None = None,
     ) -> AsyncIterator[StreamEvent]:
         import json
-        import openai
 
         model_id = model or self._default_model
         oai_messages = self._messages_to_openai(messages, system)
@@ -289,9 +294,7 @@ class OpenAIProvider(LLMProvider):
                                     "args_str": "",
                                 }
                             if tc_delta.function and tc_delta.function.arguments:
-                                pending_tool_calls[idx]["args_str"] += (
-                                    tc_delta.function.arguments
-                                )
+                                pending_tool_calls[idx]["args_str"] += tc_delta.function.arguments
                             if tc_delta.id:
                                 pending_tool_calls[idx]["id"] = tc_delta.id
                             if tc_delta.function and tc_delta.function.name:
@@ -320,12 +323,11 @@ class OpenAIProvider(LLMProvider):
 
         yield StreamEvent(type="done")
 
-    async def count_tokens(
-        self, messages: list[LLMMessage], *, model: str | None = None
-    ) -> int:
+    async def count_tokens(self, messages: list[LLMMessage], *, model: str | None = None) -> int:
         """Use tiktoken if available, otherwise fall back to heuristic."""
         try:
             import tiktoken
+
             model_id = model or self._default_model
             try:
                 enc = tiktoken.encoding_for_model(model_id)

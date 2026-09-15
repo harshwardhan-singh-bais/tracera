@@ -11,14 +11,13 @@ import asyncio
 import os
 import shutil
 from pathlib import Path
-from typing import AsyncIterator, Iterator
 
 import aiofiles
 import aiofiles.os
 
 from tracera.errors import (
-    FileSizeLimitError,
     FileNotFoundInWorkspaceError,
+    FileSizeLimitError,
     PathTraversalError,
     WorkspaceError,
 )
@@ -60,6 +59,24 @@ class WorkspaceSandbox:
     """
 
     MAX_FILE_SIZE_DEFAULT = 10 * 1024 * 1024  # 10 MB
+
+    #: Directories the grep walk always skips (vendored deps, build output).
+    #: Hidden dirs (dot-prefixed) are skipped separately in the walk.
+    _GREP_SKIP_DIRS = frozenset(
+        {
+            "node_modules",
+            "__pycache__",
+            "site-packages",
+            "dist",
+            "build",
+            ".next",
+            "target",
+            "vendor",
+            "venv",
+            ".venv",
+            "env",
+        }
+    )
 
     def __init__(
         self,
@@ -111,9 +128,7 @@ class WorkspaceSandbox:
             raise FileSizeLimitError(str(path), size, self.max_file_size)
         return resolved.read_text(encoding=encoding, errors="replace")
 
-    def write_text_sync(
-        self, path: str | Path, content: str, *, encoding: str = "utf-8"
-    ) -> Path:
+    def write_text_sync(self, path: str | Path, content: str, *, encoding: str = "utf-8") -> Path:
         resolved = self.resolve(path)
         resolved.parent.mkdir(parents=True, exist_ok=True)
         resolved.write_text(content, encoding=encoding)
@@ -126,9 +141,7 @@ class WorkspaceSandbox:
             raise FileNotFoundInWorkspaceError(str(path))
         if resolved.is_dir():
             if not recursive:
-                raise WorkspaceError(
-                    f"'{path}' is a directory — pass recursive=True to delete."
-                )
+                raise WorkspaceError(f"'{path}' is a directory — pass recursive=True to delete.")
             shutil.rmtree(resolved)
         else:
             resolved.unlink()
@@ -152,9 +165,7 @@ class WorkspaceSandbox:
         async with aiofiles.open(resolved, encoding=encoding, errors="replace") as f:
             return await f.read()
 
-    async def write_text(
-        self, path: str | Path, content: str, *, encoding: str = "utf-8"
-    ) -> Path:
+    async def write_text(self, path: str | Path, content: str, *, encoding: str = "utf-8") -> Path:
         resolved = self.resolve(path)
         await aiofiles.os.makedirs(str(resolved.parent), exist_ok=True)
         async with aiofiles.open(resolved, "w", encoding=encoding) as f:
@@ -178,9 +189,7 @@ class WorkspaceSandbox:
             raise FileNotFoundInWorkspaceError(str(path))
         if resolved.is_dir():
             if not recursive:
-                raise WorkspaceError(
-                    f"'{path}' is a directory — pass recursive=True to delete."
-                )
+                raise WorkspaceError(f"'{path}' is a directory — pass recursive=True to delete.")
             await asyncio.to_thread(shutil.rmtree, resolved)
         else:
             await aiofiles.os.remove(str(resolved))
@@ -203,8 +212,9 @@ class WorkspaceSandbox:
             raise WorkspaceError(f"Not a directory: {path}")
 
         entries: list[FileEntry] = []
-        await self._walk_dir(resolved, entries, depth=0, max_depth=max_depth,
-                             include_hidden=include_hidden)
+        await self._walk_dir(
+            resolved, entries, depth=0, max_depth=max_depth, include_hidden=include_hidden
+        )
         return entries
 
     async def _walk_dir(
@@ -229,7 +239,8 @@ class WorkspaceSandbox:
             entries.append(FileEntry(item, self.root, is_dir=is_dir, size=size))
             if is_dir and depth < max_depth - 1:
                 await self._walk_dir(
-                    item, entries,
+                    item,
+                    entries,
                     depth=depth + 1,
                     max_depth=max_depth,
                     include_hidden=include_hidden,
@@ -251,9 +262,7 @@ class WorkspaceSandbox:
         """
         content = await self.read_text(path)
         if old_text not in content:
-            raise WorkspaceError(
-                f"Text not found in '{path}': {old_text[:80]!r}"
-            )
+            raise WorkspaceError(f"Text not found in '{path}': {old_text[:80]!r}")
         if count == 0:
             new_content = content.replace(old_text, new_text)
             n = content.count(old_text)
@@ -285,7 +294,7 @@ class WorkspaceSandbox:
         try:
             rx = re.compile(pattern, flags)
         except re.error as e:
-            raise WorkspaceError(f"Invalid regex pattern: {e}")
+            raise WorkspaceError(f"Invalid regex pattern: {e}") from e
 
         results: list[dict] = []
 
@@ -294,15 +303,19 @@ class WorkspaceSandbox:
                 return
             try:
                 content = await self.read_text(file_path)
-            except (FileSizeLimitError, UnicodeDecodeError):
+            except (FileSizeLimitError, UnicodeDecodeError, OSError):
+                # OSError covers permission-denied/locked files (e.g. dev
+                # servers holding .next/dev/lock) — skip, never crash the walk.
                 return
             for i, line in enumerate(content.splitlines(), start=1):
                 if rx.search(line):
-                    results.append({
-                        "file": str(self.relative(file_path)),
-                        "line": i,
-                        "content": line.rstrip(),
-                    })
+                    results.append(
+                        {
+                            "file": str(self.relative(file_path)),
+                            "line": i,
+                            "content": line.rstrip(),
+                        }
+                    )
                     if len(results) >= max_results:
                         break
 
@@ -310,7 +323,11 @@ class WorkspaceSandbox:
             await _search_file(resolved)
         else:
             for root, dirs, files in os.walk(resolved):
-                dirs[:] = [d for d in dirs if not d.startswith(".")]
+                # Skip hidden dirs and vendored/dependency trees — walking
+                # node_modules/.venv makes grep unusable on real repos.
+                dirs[:] = [
+                    d for d in dirs if not d.startswith(".") and d not in self._GREP_SKIP_DIRS
+                ]
                 for fname in files:
                     file_path = Path(root) / fname
                     if include_extensions:

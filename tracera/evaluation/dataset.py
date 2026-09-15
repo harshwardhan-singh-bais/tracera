@@ -58,7 +58,7 @@ class EvalQuery:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "EvalQuery":
+    def from_dict(cls, data: dict[str, Any]) -> EvalQuery:
         return cls(
             query=str(data.get("query", "")),
             files=list(data.get("files") or []),
@@ -92,7 +92,7 @@ class EvaluationDataset:
         docs: list[str] | None = None,
         symbols: list[str] | None = None,
         category: str = "general",
-    ) -> "EvalQuery":
+    ) -> EvalQuery:
         q = EvalQuery(
             query=query,
             files=list(files or []),
@@ -114,7 +114,7 @@ class EvaluationDataset:
     def __getitem__(self, index: int) -> EvalQuery:
         return self.queries[index]
 
-    def filter_category(self, category: str) -> "EvaluationDataset":
+    def filter_category(self, category: str) -> EvaluationDataset:
         return EvaluationDataset(
             name=f"{self.name}:{category}",
             queries=[q for q in self.queries if q.category == category],
@@ -135,14 +135,12 @@ class EvaluationDataset:
     def save(self, path: str | Path) -> Path:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(self.to_dict(), indent=2), encoding="utf-8"
-        )
+        path.write_text(json.dumps(self.to_dict(), indent=2), encoding="utf-8")
         log.info("Saved eval dataset (%d queries) → %s", len(self.queries), path)
         return path
 
     @classmethod
-    def load(cls, path: str | Path) -> "EvaluationDataset":
+    def load(cls, path: str | Path) -> EvaluationDataset:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         return cls(
             name=str(data.get("name", Path(path).stem)),
@@ -151,6 +149,7 @@ class EvaluationDataset:
 
 
 # ── Example datasets ──────────────────────────────────────────────────────────
+
 
 def example_queries() -> list[EvalQuery]:
     """Generic example benchmark queries (edit to match a real codebase)."""

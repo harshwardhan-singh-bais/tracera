@@ -1,15 +1,14 @@
 """Tests for TRACERA coding tools."""
 
 import pytest
-from pathlib import Path
 
-from tracera.workspace.sandbox import WorkspaceSandbox
-from tracera.tools.read_file import ReadFileTool
-from tracera.tools.write_file import WriteFileTool
 from tracera.tools.edit_file import EditFileTool
-from tracera.tools.list_dir import ListDirTool
 from tracera.tools.grep import GrepTool
-from tracera.tools.registry import ToolRegistry, create_default_registry
+from tracera.tools.list_dir import ListDirTool
+from tracera.tools.read_file import ReadFileTool
+from tracera.tools.registry import create_default_registry
+from tracera.tools.write_file import WriteFileTool
+from tracera.workspace.sandbox import WorkspaceSandbox
 
 
 @pytest.fixture
@@ -23,6 +22,7 @@ def registry(workspace):
 
 
 # ── ReadFileTool ──────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_read_file_ok(workspace, tmp_path):
@@ -53,6 +53,7 @@ async def test_read_file_missing(workspace):
 
 # ── WriteFileTool ─────────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_write_file_creates(workspace, tmp_path):
     tool = WriteFileTool(workspace)
@@ -72,6 +73,7 @@ async def test_write_file_updates(workspace, tmp_path):
 
 
 # ── EditFileTool ──────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_edit_file_ok(workspace, tmp_path):
@@ -101,6 +103,7 @@ async def test_edit_file_not_found(workspace, tmp_path):
 
 # ── ListDirTool ───────────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_list_dir_ok(workspace, tmp_path):
     (tmp_path / "src").mkdir()
@@ -114,6 +117,7 @@ async def test_list_dir_ok(workspace, tmp_path):
 
 
 # ── GrepTool ──────────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_grep_tool_finds(workspace, tmp_path):
@@ -135,6 +139,7 @@ async def test_grep_tool_no_results(workspace, tmp_path):
 
 
 # ── Tool Registry ─────────────────────────────────────────────────────────────
+
 
 def test_registry_has_all_tools(registry):
     names = registry.names
@@ -166,5 +171,6 @@ async def test_registry_execute_tool(registry, tmp_path):
 
 def test_registry_tool_not_found(registry):
     from tracera.errors import ToolNotFoundError
+
     with pytest.raises(ToolNotFoundError):
         registry.get("nonexistent_tool")

@@ -1,10 +1,9 @@
 """Tests for TRACERA workspace sandbox."""
 
 import pytest
-from pathlib import Path
 
+from tracera.errors import FileNotFoundInWorkspaceError, PathTraversalError
 from tracera.workspace.sandbox import WorkspaceSandbox
-from tracera.errors import PathTraversalError, FileNotFoundInWorkspaceError
 
 
 @pytest.fixture
@@ -13,6 +12,7 @@ def workspace(tmp_path):
 
 
 # ── Path resolution ───────────────────────────────────────────────────────────
+
 
 def test_resolve_relative(workspace, tmp_path):
     resolved = workspace.resolve("foo/bar.txt")
@@ -35,6 +35,7 @@ def test_resolve_absolute_outside_rejected(workspace, tmp_path):
 
 
 # ── Read / Write ──────────────────────────────────────────────────────────────
+
 
 def test_read_write_sync(workspace, tmp_path):
     path = tmp_path / "hello.txt"
@@ -62,6 +63,7 @@ async def test_async_read_write(workspace, tmp_path):
 
 # ── Delete ────────────────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_delete_file(workspace, tmp_path):
     await workspace.write_text("to_delete.txt", "bye")
@@ -78,6 +80,7 @@ async def test_delete_missing_raises(workspace):
 
 # ── Edit ──────────────────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_edit_text(workspace):
     await workspace.write_text("code.py", "def foo():\n    pass\n")
@@ -92,11 +95,13 @@ async def test_edit_text(workspace):
 async def test_edit_text_not_found(workspace):
     await workspace.write_text("code.py", "hello world")
     from tracera.errors import WorkspaceError
+
     with pytest.raises(WorkspaceError, match="not found"):
         await workspace.edit_text("code.py", "MISSING TEXT", "replacement")
 
 
 # ── List directory ────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_list_directory(workspace, tmp_path):
@@ -112,6 +117,7 @@ async def test_list_directory(workspace, tmp_path):
 
 
 # ── Grep ──────────────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_grep_finds_pattern(workspace, tmp_path):

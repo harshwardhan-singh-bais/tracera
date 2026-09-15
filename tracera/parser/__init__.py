@@ -16,8 +16,9 @@ Design inspired by jCodeMunch's parser layer — reimplmented natively.
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from tracera.logging import get_logger
 
@@ -48,6 +49,7 @@ def _try_load_language(name: str) -> None:
     """Attempt to load a Tree-sitter language dynamically."""
     try:
         import tree_sitter_python as tspy
+
         if name == "python":
             _LANGUAGES[name] = tspy.language()
             log.debug("Dynamically loaded python parser")
@@ -56,6 +58,7 @@ def _try_load_language(name: str) -> None:
 
     try:
         import tree_sitter_typescript as tst
+
         if name in ("typescript", "javascript"):
             _LANGUAGES[name] = tst.language()
             log.debug("Dynamically loaded %s parser", name)
@@ -64,6 +67,7 @@ def _try_load_language(name: str) -> None:
 
     try:
         import tree_sitter_go as tsgo
+
         if name == "go":
             _LANGUAGES[name] = tsgo.language()
             log.debug("Dynamically loaded go parser")
@@ -72,6 +76,7 @@ def _try_load_language(name: str) -> None:
 
     try:
         import tree_sitter_rust as tsrust
+
         if name == "rust":
             _LANGUAGES[name] = tsrust.language()
             log.debug("Dynamically loaded rust parser")
@@ -80,6 +85,7 @@ def _try_load_language(name: str) -> None:
 
     try:
         import tree_sitter_java as tsjava
+
         if name == "java":
             _LANGUAGES[name] = tsjava.language()
             log.debug("Dynamically loaded java parser")
@@ -96,6 +102,7 @@ def list_languages() -> list[str]:
 
 # ── Parser interface ──────────────────────────────────────────────────────────
 
+
 class Parser:
     """A Tree-sitter parser for a specific language."""
 
@@ -104,13 +111,13 @@ class Parser:
         self._language = get_language(language_name)
         try:
             import tree_sitter as ts
+
             self._parser = ts.Parser()
             # tree-sitter 0.26+ uses property assignment for language
             self._parser.language = ts.Language(self._language)
         except ImportError:
             raise RuntimeError(
-                "tree-sitter Python package not installed. "
-                "Run: pip install tree-sitter"
+                "tree-sitter Python package not installed. Run: pip install tree-sitter"
             )
 
     def parse(self, source: bytes | str) -> Any:
@@ -125,6 +132,7 @@ class Parser:
 
 
 # ── Symbol extraction ─────────────────────────────────────────────────────────
+
 
 def extract_symbols(tree: Any, source: bytes | str) -> list[dict[str, Any]]:
     """
@@ -182,20 +190,24 @@ def _extract_nodes(
         # Get the name child (first identifier-like child)
         name_node = _find_name_node(node)
         if name_node is not None:
-            name = source[name_node.start_byte:name_node.end_byte].decode("utf-8", errors="replace")
+            name = source[name_node.start_byte : name_node.end_byte].decode(
+                "utf-8", errors="replace"
+            )
 
         if name:
-            symbols.append({
-                "name": name,
-                "type": _normalize_symbol_type(node_type),
-                "file_path": "",
-                "start_byte": node.start_byte,
-                "end_byte": node.end_byte,
-                "start_line": node.start_point.row + 1,
-                "end_line": node.end_point.row + 1,
-                "parent": parent_name,
-                "children": [],
-            })
+            symbols.append(
+                {
+                    "name": name,
+                    "type": _normalize_symbol_type(node_type),
+                    "file_path": "",
+                    "start_byte": node.start_byte,
+                    "end_byte": node.end_byte,
+                    "start_line": node.start_point.row + 1,
+                    "end_line": node.end_point.row + 1,
+                    "parent": parent_name,
+                    "children": [],
+                }
+            )
 
     # Recurse into children
     for child in node.children:
@@ -237,6 +249,7 @@ def _normalize_symbol_type(node_type: str) -> str:
 
 
 # ── Convenience API ───────────────────────────────────────────────────────────
+
 
 def get_parser(language: str) -> Parser:
     """Get a parser for the given language, loading it if needed."""
@@ -300,14 +313,16 @@ def _detect_language(suffix: str) -> str:
 
 try:
     import tree_sitter_python as tspy
+
     register_language("python", tspy.language())
 except ImportError:
     pass
 
 try:
     import tree_sitter_typescript as tst
+
     # tree-sitter-typescript may expose language() differently per version
-    lang_fn = getattr(tst, 'language', None)
+    lang_fn = getattr(tst, "language", None)
     if callable(lang_fn):
         register_language("typescript", lang_fn())
         register_language("javascript", lang_fn())

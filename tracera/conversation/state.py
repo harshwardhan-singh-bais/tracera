@@ -10,12 +10,13 @@ from __future__ import annotations
 import copy
 import time
 import uuid
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Iterator
+from typing import Any
 
-from tracera.providers.base import LLMMessage, Role, ToolCallRequest
 from tracera.logging import get_logger
+from tracera.providers.base import LLMMessage, ToolCallRequest
 
 log = get_logger("conversation.state")
 
@@ -23,6 +24,7 @@ _CHARS_PER_TOKEN = 4  # rough heuristic used for budget estimation
 
 
 # ── Message envelope ──────────────────────────────────────────────────────────
+
 
 class MessageType(str, Enum):
     USER = "user"
@@ -39,6 +41,7 @@ class ConversationMessage:
     """
     A typed, timestamped message envelope wrapping an LLMMessage.
     """
+
     id: str
     type: MessageType
     message: LLMMessage
@@ -46,7 +49,7 @@ class ConversationMessage:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def user(cls, content: str) -> "ConversationMessage":
+    def user(cls, content: str) -> ConversationMessage:
         return cls(
             id=str(uuid.uuid4()),
             type=MessageType.USER,
@@ -54,7 +57,7 @@ class ConversationMessage:
         )
 
     @classmethod
-    def system(cls, content: str) -> "ConversationMessage":
+    def system(cls, content: str) -> ConversationMessage:
         return cls(
             id=str(uuid.uuid4()),
             type=MessageType.SYSTEM,
@@ -62,7 +65,7 @@ class ConversationMessage:
         )
 
     @classmethod
-    def assistant_text(cls, content: str, **metadata: Any) -> "ConversationMessage":
+    def assistant_text(cls, content: str, **metadata: Any) -> ConversationMessage:
         return cls(
             id=str(uuid.uuid4()),
             type=MessageType.ASSISTANT,
@@ -73,7 +76,7 @@ class ConversationMessage:
     @classmethod
     def assistant_tool_calls(
         cls, tool_calls: list[ToolCallRequest], **metadata: Any
-    ) -> "ConversationMessage":
+    ) -> ConversationMessage:
         return cls(
             id=str(uuid.uuid4()),
             type=MessageType.TOOL_CALL,
@@ -84,7 +87,7 @@ class ConversationMessage:
     @classmethod
     def tool_result(
         cls, tool_call_id: str, tool_name: str, content: str, **metadata: Any
-    ) -> "ConversationMessage":
+    ) -> ConversationMessage:
         return cls(
             id=str(uuid.uuid4()),
             type=MessageType.TOOL_RESULT,
@@ -93,7 +96,7 @@ class ConversationMessage:
         )
 
     @classmethod
-    def error(cls, content: str, **metadata: Any) -> "ConversationMessage":
+    def error(cls, content: str, **metadata: Any) -> ConversationMessage:
         """Record an error observation in the conversation."""
         return cls(
             id=str(uuid.uuid4()),
@@ -103,7 +106,7 @@ class ConversationMessage:
         )
 
     @classmethod
-    def planning(cls, content: str) -> "ConversationMessage":
+    def planning(cls, content: str) -> ConversationMessage:
         """Record a planning step (not sent to LLM, for UI display)."""
         return cls(
             id=str(uuid.uuid4()),
@@ -127,9 +130,11 @@ class ConversationMessage:
 
 # ── Conversation state ────────────────────────────────────────────────────────
 
+
 @dataclass
 class ConversationStats:
     """Aggregate statistics for a conversation."""
+
     total_messages: int = 0
     user_messages: int = 0
     assistant_messages: int = 0
@@ -253,7 +258,7 @@ class ConversationState:
 
     # ── Truncation ────────────────────────────────────────────────────────────
 
-    def truncate(self, max_messages: int, *, keep_system: bool = True) -> "ConversationState":
+    def truncate(self, max_messages: int, *, keep_system: bool = True) -> ConversationState:
         """
         Return a new ConversationState with at most *max_messages* messages.
         Preserves system messages if *keep_system* is True.
@@ -331,27 +336,20 @@ class ConversationState:
 
         # Recompute history-derived stats to stay accurate
         self.stats.total_messages = len(self._messages)
-        self.stats.user_messages = sum(
-            m.type == MessageType.USER for m in self._messages
-        )
-        self.stats.assistant_messages = sum(
-            m.type == MessageType.ASSISTANT for m in self._messages
-        )
-        self.stats.tool_calls = sum(
-            len(m.tool_calls or []) for m in self._messages
-        )
-        self.stats.tool_results = sum(
-            m.type == MessageType.TOOL_RESULT for m in self._messages
-        )
+        self.stats.user_messages = sum(m.type == MessageType.USER for m in self._messages)
+        self.stats.assistant_messages = sum(m.type == MessageType.ASSISTANT for m in self._messages)
+        self.stats.tool_calls = sum(len(m.tool_calls or []) for m in self._messages)
+        self.stats.tool_results = sum(m.type == MessageType.TOOL_RESULT for m in self._messages)
         self.stats.errors = sum(m.type == MessageType.ERROR for m in self._messages)
         log.debug(
             "Compacted conversation: %d tokens → %d tokens",
-            self.estimated_tokens(), max_tokens,
+            self.estimated_tokens(),
+            max_tokens,
         )
 
     # ── Snapshot ──────────────────────────────────────────────────────────────
 
-    def snapshot(self) -> "ConversationState":
+    def snapshot(self) -> ConversationState:
         """Return a deep copy of the current state."""
         new_state = ConversationState.__new__(ConversationState)
         new_state.id = self.id

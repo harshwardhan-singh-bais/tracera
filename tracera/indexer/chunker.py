@@ -54,10 +54,11 @@ class SymbolAwareChunker:
 
         # Extract major symbols (Classes, Functions, Methods)
         major_symbols = [
-            s for s in symbols 
+            s
+            for s in symbols
             if s.type in (SymbolType.CLASS, SymbolType.FUNCTION, SymbolType.METHOD)
         ]
-        
+
         # Sort by start line
         major_symbols.sort(key=lambda s: s.range.start_line)
 
@@ -98,13 +99,13 @@ class SymbolAwareChunker:
                 end = i - 1
                 if end >= start:
                     uncovered_blocks.append((start, end))
-        
+
         if in_block:
             uncovered_blocks.append((start, total_lines - 1))
 
         # Add uncovered blocks as generic chunks
         for start_line, end_line in uncovered_blocks:
-            block_content = "\n".join(code_lines[start_line:end_line + 1])
+            block_content = "\n".join(code_lines[start_line : end_line + 1])
             if not block_content.strip():
                 continue
 

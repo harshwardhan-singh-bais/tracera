@@ -24,10 +24,10 @@ import pytest
 
 import tracera.tools.test_runner as tr  # aliased so pytest doesn't collect Test* classes
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # Shared fakes
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class FakeProvider:
     """Minimal LLM provider — never touches the network."""
@@ -42,13 +42,18 @@ class FakeProvider:
     async def complete(self, messages, **kwargs):
         self.complete_calls += 1
         from tracera.providers.base import LLMResponse, TokenUsage
+
         return LLMResponse(
-            content=self.response_text, tool_calls=None,
-            usage=TokenUsage(), model=self.default_model, finish_reason="stop",
+            content=self.response_text,
+            tool_calls=None,
+            usage=TokenUsage(),
+            model=self.default_model,
+            finish_reason="stop",
         )
 
     async def stream(self, messages, **kwargs):
         from tracera.providers.base import StreamEvent
+
         yield StreamEvent(type="text_delta", text=self.response_text)
         yield StreamEvent(type="done")
 
@@ -64,17 +69,17 @@ class _StubReadFile:
 
     async def execute(self, path=None, **kwargs):
         from tracera.tools.base import ToolResult
-        return ToolResult.ok(
-            tool_name=self.name, tool_call_id="", output=f"contents of {path}"
-        )
+
+        return ToolResult.ok(tool_name=self.name, tool_call_id="", output=f"contents of {path}")
 
     def to_schema(self):
         from tracera.providers.base import ToolSchema
-        return ToolSchema(name=self.name, description=self.description,
-                          parameters=self.parameters_schema)
+
+        return ToolSchema(
+            name=self.name, description=self.description, parameters=self.parameters_schema
+        )
 
     async def safe_execute(self, tool_call_id, arguments):
-        from tracera.tools.base import ToolResult
         result = await self.execute(**arguments)
         result.tool_call_id = tool_call_id
         return result
@@ -115,11 +120,13 @@ class _FakeDense:
 
 def _run_agent(agent, task, conversation=None):
     """Drive a ReActAgent to completion, collecting all events."""
+
     async def _collect():
         events = []
         async for ev in await agent.run(task, conversation=conversation):
             events.append(ev)
         return events
+
     return asyncio.run(_collect())
 
 
@@ -127,30 +134,34 @@ def _run_agent(agent, task, conversation=None):
 # FOUNDATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 def test_phase_01_architecture_config_cli():
     """Phase 1: config system + env vars + CLI entry point + logging all work."""
     from tracera.config import get_settings
+
     settings = get_settings()
     assert settings.tracera_workspace is not None
     assert settings.tracera_default_provider  # loaded from .env
     assert settings.ensure_dirs() is None  # data dirs created without error
 
-    from tracera.main import app, ask, status, index, search, fix, review, tui
+    from tracera.main import app, ask, fix, index, review, search, status, tui
+
     assert app.info.name == "tracera"
     # Every CLI command is registered on the Typer app
     for fn in (ask, status, index, search, fix, review, tui):
         assert callable(fn)
     assert len(app.registered_commands) >= 7
 
-    from tracera.logging import setup_logging, get_logger
+    from tracera.logging import get_logger, setup_logging
+
     setup_logging(level="DEBUG", log_file=None)
     get_logger("connectivity.phase1").info("logging works")
 
 
 def test_phase_02_workspace_sandbox_and_lifecycle(tmp_path):
     """Phase 2: sandbox I/O + traversal protection + workspace lifecycle."""
-    from tracera.workspace.sandbox import WorkspaceSandbox
     from tracera.errors import PathTraversalError, WorkspaceError
+    from tracera.workspace.sandbox import WorkspaceSandbox
 
     ws = WorkspaceSandbox(tmp_path)
     ws.write_text_sync("src/app.py", "print('hi')\n")
@@ -171,6 +182,7 @@ def test_phase_02_workspace_sandbox_and_lifecycle(tmp_path):
 
     # Lifecycle creates data dirs
     from tracera.workspace.lifecycle import WorkspaceLifecycle
+
     lifecycle = WorkspaceLifecycle(tmp_path / "data")
     lifecycle.initialise()
     assert lifecycle.is_initialised()
@@ -180,6 +192,7 @@ def test_phase_02_workspace_sandbox_and_lifecycle(tmp_path):
 def test_phase_03_git_integration(tmp_path):
     """Phase 3: repo detection, status, diff, log, branch all work."""
     import git as gitpython
+
     from tracera.git.operations import GitRepo, detect_git_repo
 
     repo = gitpython.Repo.init(tmp_path)
@@ -209,15 +222,18 @@ def test_phase_03_git_integration(tmp_path):
 def test_phase_04_provider_abstraction():
     """Phase 4: provider factory, adapters, schemas, and streaming all work."""
     from tracera.providers import create_provider, list_available_providers
+    from tracera.providers.base import LLMMessage, ToolSchema
+    from tracera.providers.nemotron_provider import NemotronProvider
     from tracera.providers.ollama_provider import OllamaProvider
     from tracera.providers.openai_provider import OpenAIProvider
-    from tracera.providers.nemotron_provider import NemotronProvider
-    from tracera.providers.base import LLMMessage, ToolSchema
 
     settings = types.SimpleNamespace(
-        tracera_default_provider="openai", tracera_default_model="",
-        openai_api_key="sk-test", google_api_key="",
-        anthropic_api_key="", nemotron_api_key="nk-test",
+        tracera_default_provider="openai",
+        tracera_default_model="",
+        openai_api_key="sk-test",
+        google_api_key="",
+        anthropic_api_key="",
+        nemotron_api_key="nk-test",
         ollama_base_url="http://localhost:11434",
     )
     p = create_provider("openai", settings=settings)
@@ -239,7 +255,7 @@ def test_phase_04_provider_abstraction():
 def test_phase_05_conversation_state():
     """Phase 5: messages, tool calls/results, history, truncation."""
     from tracera.conversation.state import ConversationState
-    from tracera.providers.base import ToolCallRequest, Role
+    from tracera.providers.base import Role, ToolCallRequest
 
     conv = ConversationState(system_prompt="sys")
     conv.add_user("add auth")
@@ -255,7 +271,8 @@ def test_phase_05_conversation_state():
     assert conv.stats.tool_calls == 1 and conv.stats.tool_results == 1
 
     for i in range(20):
-        conv.add_user(f"u{i}"); conv.add_assistant(f"a{i}")
+        conv.add_user(f"u{i}")
+        conv.add_assistant(f"a{i}")
     assert len(conv.truncate(5)) <= 6  # system + 5 recent
     snap = conv.snapshot()
     assert len(snap) >= 1
@@ -263,9 +280,9 @@ def test_phase_05_conversation_state():
 
 def test_phase_06_tool_registry(tmp_path):
     """Phase 6: registration, discovery, schemas, execution, extension."""
-    from tracera.workspace.sandbox import WorkspaceSandbox
-    from tracera.tools.registry import create_default_registry, extend_registry_with_retrieval
     from tracera.graph.symbol_graph import SymbolGraph
+    from tracera.tools.registry import create_default_registry, extend_registry_with_retrieval
+    from tracera.workspace.sandbox import WorkspaceSandbox
 
     (tmp_path / "a.py").write_text("x = 1\n")
     registry = create_default_registry(WorkspaceSandbox(tmp_path))
@@ -281,27 +298,37 @@ def test_phase_06_tool_registry(tmp_path):
         def search(self, query, k=5, language=None):
             return []
 
-    extend_registry_with_retrieval(registry, FakeRetriever(), None, types.SimpleNamespace(graph=SymbolGraph()))
-    assert {"search_code", "find_symbol", "get_context", "find_references", "get_dependencies"} <= set(registry.names)
+    extend_registry_with_retrieval(
+        registry, FakeRetriever(), None, types.SimpleNamespace(graph=SymbolGraph())
+    )
+    assert {
+        "search_code",
+        "find_symbol",
+        "get_context",
+        "find_references",
+        "get_dependencies",
+    } <= set(registry.names)
 
 
 def test_phase_07_coding_tools(tmp_path):
     """Phase 7: read/write/edit/list/grep/run_command all execute."""
-    from tracera.workspace.sandbox import WorkspaceSandbox
-    from tracera.tools.read_file import ReadFileTool
-    from tracera.tools.write_file import WriteFileTool
     from tracera.tools.edit_file import EditFileTool
-    from tracera.tools.list_dir import ListDirTool
-    from tracera.tools.grep import GrepTool
-    from tracera.tools.run_command import RunCommandTool
     from tracera.tools.git_tool import GitTool
+    from tracera.tools.grep import GrepTool
+    from tracera.tools.list_dir import ListDirTool
+    from tracera.tools.read_file import ReadFileTool
+    from tracera.tools.run_command import RunCommandTool
+    from tracera.tools.write_file import WriteFileTool
+    from tracera.workspace.sandbox import WorkspaceSandbox
 
     ws = WorkspaceSandbox(tmp_path)
     (tmp_path / "app.py").write_text("class Auth:\n    pass\n")
 
     assert asyncio.run(ReadFileTool(ws).execute(path="app.py")).success
     assert asyncio.run(WriteFileTool(ws).execute(path="b.py", content="y=2\n")).success
-    assert asyncio.run(EditFileTool(ws).execute(path="app.py", old_text="pass", new_text="return 1")).success
+    assert asyncio.run(
+        EditFileTool(ws).execute(path="app.py", old_text="pass", new_text="return 1")
+    ).success
     listing = asyncio.run(ListDirTool(ws).execute(path="."))
     assert listing.success and "app.py" in listing.output
     grep = asyncio.run(GrepTool(ws).execute(pattern="class Auth"))
@@ -315,8 +342,8 @@ def test_phase_07_coding_tools(tmp_path):
 def test_phase_08_react_agent_loop():
     """Phase 8: full event cycle — thinking → tool → delta → complete → done."""
     from tracera.agent.react_loop import AgentEventType, ReActAgent
-    from tracera.tools.registry import ToolRegistry
     from tracera.providers.base import StreamEvent, ToolCallRequest
+    from tracera.tools.registry import ToolRegistry
 
     class ToolThenTextProvider(FakeProvider):
         def __init__(self):
@@ -326,8 +353,12 @@ def test_phase_08_react_agent_loop():
         async def stream(self, messages, **kwargs):
             self.calls += 1
             if self.calls == 1:
-                yield StreamEvent(type="tool_call_complete",
-                                  tool_call=ToolCallRequest(id="c1", name="read_file", arguments={"path": "a.py"}))
+                yield StreamEvent(
+                    type="tool_call_complete",
+                    tool_call=ToolCallRequest(
+                        id="c1", name="read_file", arguments={"path": "a.py"}
+                    ),
+                )
             else:
                 yield StreamEvent(type="text_delta", text="fixed ")
                 yield StreamEvent(type="text_delta", text="it")
@@ -350,17 +381,26 @@ def test_phase_08_react_agent_loop():
 
 def test_phase_09_planning_system():
     """Phase 9: decomposition, todo state, progress, replanning."""
-    from tracera.agent.planner import TaskDecomposer, Plan, TodoStatus
+    from tracera.agent.planner import TaskDecomposer, TodoStatus
 
     class PlanProvider(FakeProvider):
         async def complete(self, messages, **kwargs):
             self.complete_calls += 1
             from tracera.providers.base import LLMResponse, TokenUsage
+
             body = '[{"title": "Read code", "priority": 0}, {"title": "Write test", "priority": 1}]'
-            if "recovery" in (messages[-1].content or "").lower() or "failed" in (messages[-1].content or "").lower():
+            if (
+                "recovery" in (messages[-1].content or "").lower()
+                or "failed" in (messages[-1].content or "").lower()
+            ):
                 body = '[{"title": "Rollback change", "priority": 0}]'
-            return LLMResponse(content=body, tool_calls=None,
-                               usage=TokenUsage(), model="fake", finish_reason="stop")
+            return LLMResponse(
+                content=body,
+                tool_calls=None,
+                usage=TokenUsage(),
+                model="fake",
+                finish_reason="stop",
+            )
 
     decomposer = TaskDecomposer(PlanProvider())
     plan = asyncio.run(decomposer.decompose("Add tests"))
@@ -381,8 +421,7 @@ def test_phase_09_planning_system():
     from tracera.tools.registry import ToolRegistry
 
     decomposer = TaskDecomposer(PlanProvider())
-    agent = ReActAgent(provider=PlanProvider(), registry=ToolRegistry(),
-                       decomposer=decomposer)
+    agent = ReActAgent(provider=PlanProvider(), registry=ToolRegistry(), decomposer=decomposer)
     events = _run_agent(agent, "Add tests")
     plan_updates = [e for e in events if e.type == AgentEventType.PLAN_UPDATE]
     assert plan_updates  # loop emitted the plan
@@ -406,14 +445,19 @@ def test_phase_10_persistent_memory(tmp_path):
     # Injection into the agent conversation (Phase 10 → 8)
     from tracera.agent.react_loop import ReActAgent
     from tracera.tools.registry import ToolRegistry
+
     conv = ConversationState(system_prompt="sys")
-    agent = ReActAgent(provider=FakeProvider(), registry=ToolRegistry(),
-                       memory_provider=lambda: m2.build_context("auth"))
+    agent = ReActAgent(
+        provider=FakeProvider(),
+        registry=ToolRegistry(),
+        memory_provider=lambda: m2.build_context("auth"),
+    )
     _run_agent(agent, "hi", conversation=conv)
     assert any(m.type == MessageType.SYSTEM and m.metadata.get("memory") for m in conv.messages)
 
     # Agent WRITES back to memory on completion (Phase 10 → 8 write path)
     from tracera.agent.react_loop import AgentEventType
+
     written: list[tuple[str, str]] = []
     writer_agent = ReActAgent(
         provider=FakeProvider(response_text="JWT middleware added."),
@@ -429,6 +473,7 @@ def test_phase_10_persistent_memory(tmp_path):
 # ═══════════════════════════════════════════════════════════════════════════════
 # CODE INTELLIGENCE ENGINE
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 def test_phase_11_repository_scanner(tmp_path):
     """Phase 11: recursive scan, .gitignore, binaries, language detection."""
@@ -463,8 +508,8 @@ def test_phase_12_language_parser():
 
 def test_phase_13_symbol_extraction():
     """Phase 13: functions, classes, methods, imports extracted."""
-    from tracera.indexer.parser import LanguageParser
     from tracera.indexer.extractor import SymbolExtractor
+    from tracera.indexer.parser import LanguageParser
     from tracera.indexer.schema import SymbolType
 
     code = b"import os\n\nclass Service:\n    def run(self):\n        pass\n\ndef helper():\n    return 1\n"
@@ -479,9 +524,9 @@ def test_phase_13_symbol_extraction():
 
 def test_phase_14_symbol_chunker():
     """Phase 14: file → class/method chunks with symbol metadata."""
-    from tracera.indexer.parser import LanguageParser
-    from tracera.indexer.extractor import SymbolExtractor
     from tracera.indexer.chunker import SymbolAwareChunker
+    from tracera.indexer.extractor import SymbolExtractor
+    from tracera.indexer.parser import LanguageParser
 
     content = "import os\n\nclass Service:\n    def run(self):\n        pass\n\ndef helper():\n    return 1\n"
     symbols = SymbolExtractor(LanguageParser()).extract_symbols(content.encode(), "python")
@@ -495,14 +540,26 @@ def test_phase_14_symbol_chunker():
 
 def test_phase_15_code_schema():
     """Phase 15: canonical index schema validates and is shared across phases."""
-    from tracera.indexer.schema import Symbol, CodeChunk, FileMetadata, LineRange, SymbolType
+    from tracera.indexer.schema import CodeChunk, FileMetadata, LineRange, Symbol, SymbolType
 
     rng = LineRange(start_line=1, end_line=4)
-    sym = Symbol(name="login", type=SymbolType.FUNCTION, range=rng,
-                 content="def login(): pass", parent_symbol=None)
-    chunk = CodeChunk(id="abc123", file_path="auth.py", language="python",
-                      content=sym.content, range=rng, primary_symbol="login",
-                      symbol_type=SymbolType.FUNCTION, tokens=8)
+    sym = Symbol(
+        name="login",
+        type=SymbolType.FUNCTION,
+        range=rng,
+        content="def login(): pass",
+        parent_symbol=None,
+    )
+    chunk = CodeChunk(
+        id="abc123",
+        file_path="auth.py",
+        language="python",
+        content=sym.content,
+        range=rng,
+        primary_symbol="login",
+        symbol_type=SymbolType.FUNCTION,
+        tokens=8,
+    )
     meta = FileMetadata(path="auth.py", language="python", size_bytes=10, sha256="x" * 64)
 
     assert chunk.id and chunk.primary_symbol == "login"
@@ -513,6 +570,7 @@ def test_phase_15_code_schema():
 # ═══════════════════════════════════════════════════════════════════════════════
 # RETRIEVAL
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 def test_phase_16_bm25_index(tmp_path):
     """Phase 16: tokenization, scoring, persistence, idempotent re-add."""
@@ -587,18 +645,30 @@ def test_phase_17_embedding_pipeline(tmp_path):
 
 def test_phase_18_vector_index_lancedb(tmp_path):
     """Phase 18: real LanceDB insert, search, filter, delete, persistence."""
-    from tracera.retrieval.vector_store import VectorStore
     from tracera.indexer.schema import CodeChunk, LineRange
+    from tracera.retrieval.vector_store import VectorStore
 
     store = VectorStore(uri=tmp_path / "lancedb", dimension=4)
     rng = LineRange(start_line=0, end_line=1)
     chunks = [
-        CodeChunk(id="c1", file_path="a.py", language="python",
-                  content="def login(): pass", range=rng,
-                  primary_symbol="login", tokens=4),
-        CodeChunk(id="c2", file_path="b.py", language="python",
-                  content="class Auth: pass", range=rng,
-                  primary_symbol="Auth", tokens=4),
+        CodeChunk(
+            id="c1",
+            file_path="a.py",
+            language="python",
+            content="def login(): pass",
+            range=rng,
+            primary_symbol="login",
+            tokens=4,
+        ),
+        CodeChunk(
+            id="c2",
+            file_path="b.py",
+            language="python",
+            content="class Auth: pass",
+            range=rng,
+            primary_symbol="Auth",
+            tokens=4,
+        ),
     ]
     store.upsert_chunks(chunks, [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]])
     assert store.count == 2
@@ -622,8 +692,9 @@ def test_phase_19_dense_retrieval():
 
     class Store:
         def search(self, query_embedding, k=10, language=None, symbol_type=None):
-            return [{"id": "c1", "content": "def login(): pass", "file_path": "a.py",
-                     "_distance": 0.5}]
+            return [
+                {"id": "c1", "content": "def login(): pass", "file_path": "a.py", "_distance": 0.5}
+            ]
 
     dense = DenseRetriever(_FakeEmbedder(), Store())
     results = dense.search("login function", k=5)
@@ -639,8 +710,16 @@ def test_phase_20_hybrid_retrieval():
 
     bm25 = BM25Index()
     bm25.add_document("b1", "def login(user): return check(user)")
-    dense = _FakeDense([{"id": "v1", "content": "class AuthMiddleware: pass",
-                         "file_path": "auth.py", "language": "python"}])
+    dense = _FakeDense(
+        [
+            {
+                "id": "v1",
+                "content": "class AuthMiddleware: pass",
+                "file_path": "auth.py",
+                "language": "python",
+            }
+        ]
+    )
     hybrid = HybridRetriever(bm25, dense, bm25_weight=0.6, dense_weight=0.4)
 
     results = hybrid.search("login", k=5)
@@ -682,8 +761,16 @@ def test_phase_22_context_expansion():
     bm25.add_document("d_import", "from auth import AuthMiddleware")
 
     expander = ContextExpander(bm25, _FakeVectorStore())
-    base = [{"id": "d_method", "symbol": "validate", "parent": "AuthMiddleware",
-             "file_path": "auth.py", "symbol_type": "method", "content": "def validate(): pass"}]
+    base = [
+        {
+            "id": "d_method",
+            "symbol": "validate",
+            "parent": "AuthMiddleware",
+            "file_path": "auth.py",
+            "symbol_type": "method",
+            "content": "def validate(): pass",
+        }
+    ]
     expanded = expander.expand(base, max_additional=3)
 
     assert len(expanded) > 1
@@ -703,9 +790,7 @@ def test_phase_23_cross_encoder_reranker(monkeypatch):
 
     reranker = CrossEncoderReranker(top_n=5)
     reranker._model = StubCrossEncoder()
-    results = [
-        {"id": f"c{i}", "content": f"chunk {i}"} for i in range(5)
-    ]
+    results = [{"id": f"c{i}", "content": f"chunk {i}"} for i in range(5)]
     ranked = reranker.rerank("query", results, k=3)
     assert len(ranked) == 3  # trimmed to k
     assert all("_rerank_score" in r for r in ranked)
@@ -720,18 +805,24 @@ def test_phase_23_cross_encoder_reranker(monkeypatch):
 
 def test_phase_24_incremental_indexer(tmp_path):
     """Phase 24: created/modified/deleted detection keeps all stores in sync."""
+    from tracera.graph.symbol_graph import SymbolGraph
     from tracera.retrieval.bm25 import BM25Index
     from tracera.retrieval.incremental import IncrementalIndexer
-    from tracera.graph.symbol_graph import SymbolGraph
 
-    ws = tmp_path / "ws"; ws.mkdir()
+    ws = tmp_path / "ws"
+    ws.mkdir()
     index_dir = tmp_path / "idx"
     bm25 = BM25Index()
     vector_store = _FakeVectorStore()
     graph = SymbolGraph()
-    indexer = IncrementalIndexer(workspace_root=ws, bm25_index=bm25,
-                                 embedder=_FakeEmbedder(), vector_store=vector_store,
-                                 index_dir=index_dir, symbol_graph=graph)
+    indexer = IncrementalIndexer(
+        workspace_root=ws,
+        bm25_index=bm25,
+        embedder=_FakeEmbedder(),
+        vector_store=vector_store,
+        index_dir=index_dir,
+        symbol_graph=graph,
+    )
 
     (ws / "auth.py").write_text("class AuthMiddleware:\n    def __init__(self): pass\n")
     stats = indexer.run()
@@ -744,7 +835,9 @@ def test_phase_24_incremental_indexer(tmp_path):
     assert stats2["skipped"] == 1 and stats2["new"] == 0
 
     # Modified → re-indexed without duplication
-    (ws / "auth.py").write_text("class AuthMiddleware:\n    def __init__(self): pass\n\nclass NewSvc:\n    pass\n")
+    (ws / "auth.py").write_text(
+        "class AuthMiddleware:\n    def __init__(self): pass\n\nclass NewSvc:\n    pass\n"
+    )
     stats3 = indexer.run()
     assert stats3["modified"] == 1
     g = SymbolGraph.load(index_dir / "symbol_graph.json")
@@ -763,22 +856,32 @@ def test_phase_24_incremental_indexer(tmp_path):
 # CODE KNOWLEDGE GRAPH
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 def _mk_sym(name, stype, start, end, parent=None):
-    from tracera.indexer.schema import Symbol, SymbolType, LineRange
-    return Symbol(name=name, type=stype, range=LineRange(start_line=start, end_line=end),
-                  content=f"def {name}: pass", parent_symbol=parent)
+    from tracera.indexer.schema import LineRange, Symbol
+
+    return Symbol(
+        name=name,
+        type=stype,
+        range=LineRange(start_line=start, end_line=end),
+        content=f"def {name}: pass",
+        parent_symbol=parent,
+    )
 
 
 def test_phase_25_symbol_relationship_graph(tmp_path):
     """Phase 25: nodes, typed edges (imports/calls/inherits/contains), persistence."""
-    from tracera.graph.symbol_graph import SymbolGraph, RelationType
+    from tracera.graph.symbol_graph import RelationType, SymbolGraph
     from tracera.indexer.schema import SymbolType
 
     g = SymbolGraph()
-    g.build_from_file_symbols("auth.py", [
-        _mk_sym("AuthMiddleware", SymbolType.CLASS, 1, 10),
-        _mk_sym("validate", SymbolType.METHOD, 2, 8, parent="AuthMiddleware"),
-    ])
+    g.build_from_file_symbols(
+        "auth.py",
+        [
+            _mk_sym("AuthMiddleware", SymbolType.CLASS, 1, 10),
+            _mk_sym("validate", SymbolType.METHOD, 2, 8, parent="AuthMiddleware"),
+        ],
+    )
     g.add_symbol("app.py", _mk_sym("handle_login", SymbolType.FUNCTION, 5, 20))
     g.add_relation("app.py::handle_login", "auth.py::AuthMiddleware", RelationType.CALLS)
 
@@ -798,10 +901,10 @@ def test_phase_25_symbol_relationship_graph(tmp_path):
 
 def test_phase_26_dependency_aware_retrieval():
     """Phase 26: graph neighbours enrich retrieval results."""
-    from tracera.graph.symbol_graph import SymbolGraph, RelationType
     from tracera.graph.graph_retrieval import GraphRetriever
-    from tracera.retrieval.bm25 import BM25Index
+    from tracera.graph.symbol_graph import RelationType, SymbolGraph
     from tracera.indexer.schema import SymbolType
+    from tracera.retrieval.bm25 import BM25Index
 
     g = SymbolGraph()
     g.add_symbol("auth.py", _mk_sym("AuthMiddleware", SymbolType.CLASS, 1, 10))
@@ -815,8 +918,15 @@ def test_phase_26_dependency_aware_retrieval():
     retriever = GraphRetriever(g, bm25)
     assert retriever.graph is g  # graph accessor used by Phase 27 tools
 
-    base = [{"id": "c_auth", "symbol": "AuthMiddleware", "file_path": "auth.py",
-             "content": "class AuthMiddleware: pass", "symbol_type": "class"}]
+    base = [
+        {
+            "id": "c_auth",
+            "symbol": "AuthMiddleware",
+            "file_path": "auth.py",
+            "content": "class AuthMiddleware: pass",
+            "symbol_type": "class",
+        }
+    ]
     expanded = retriever.expand_with_graph(base, max_depth=1, max_total=10)
     symbols = {r.get("symbol") for r in expanded}
     assert "AuthMiddleware" in symbols
@@ -827,21 +937,35 @@ def test_phase_26_dependency_aware_retrieval():
 # AGENT + CODE INTELLIGENCE
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 def test_phase_27_code_search_tools():
     """Phase 27: all six retrieval tools execute and return structured results."""
-    from tracera.tools.code_search import (
-        SearchCodeTool, FindSymbolTool, FindDefinitionTool, FindReferencesTool,
-        GetDependenciesTool, GetContextTool,
-    )
     from tracera.graph.symbol_graph import SymbolGraph
     from tracera.indexer.schema import SymbolType
+    from tracera.tools.code_search import (
+        FindDefinitionTool,
+        FindReferencesTool,
+        FindSymbolTool,
+        GetContextTool,
+        GetDependenciesTool,
+        SearchCodeTool,
+    )
 
     class FakeRetriever:
         def search(self, query, k=5, language=None):
-            return [{"id": "c1", "symbol": "AuthMiddleware", "symbol_type": "class",
-                     "file_path": "auth.py", "start_line": 1, "end_line": 10,
-                     "content": "class AuthMiddleware: ...", "language": "python",
-                     "_rrf_score": 1.0}]
+            return [
+                {
+                    "id": "c1",
+                    "symbol": "AuthMiddleware",
+                    "symbol_type": "class",
+                    "file_path": "auth.py",
+                    "start_line": 1,
+                    "end_line": 10,
+                    "content": "class AuthMiddleware: ...",
+                    "language": "python",
+                    "_rrf_score": 1.0,
+                }
+            ]
 
     class FakeExpander:
         def expand(self, results, max_additional=3):
@@ -859,7 +983,9 @@ def test_phase_27_code_search_tools():
         assert "Definition of" in def_result.output
         assert (await FindReferencesTool(g).execute(symbol="AuthMiddleware")).success
         assert (await GetDependenciesTool(g).execute(symbol="AuthMiddleware")).success
-        assert (await GetContextTool(FakeRetriever(), FakeExpander()).execute(symbol="AuthMiddleware")).success
+        assert (
+            await GetContextTool(FakeRetriever(), FakeExpander()).execute(symbol="AuthMiddleware")
+        ).success
 
     asyncio.run(_run())
 
@@ -879,8 +1005,8 @@ def test_phase_27b_find_definition_registered():
 
 def test_phase_28_retrieval_aware_agent(tmp_path, monkeypatch):
     """Phase 28: agent registry is extended with search tools when an index exists."""
-    from tracera.config import get_settings
     import tracera.main as main_mod
+    from tracera.config import get_settings
     from tracera.graph.symbol_graph import SymbolGraph
 
     settings = get_settings()
@@ -888,8 +1014,18 @@ def test_phase_28_retrieval_aware_agent(tmp_path, monkeypatch):
     settings.tracera_data_dir = tmp_path / "data"  # hermetic memory/index dirs
 
     monkeypatch.setattr("tracera.providers.create_provider", lambda **kw: FakeProvider())
-    fake_pipeline = [None, FakeRetrieverStub(), None, None, None, None, None, None, None,
-                     types.SimpleNamespace(graph=SymbolGraph())]
+    fake_pipeline = [
+        None,
+        FakeRetrieverStub(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        types.SimpleNamespace(graph=SymbolGraph()),
+    ]
 
     agent, _ws, _prov = main_mod._build_agent(settings, tmp_path, fake_pipeline)
     assert "search_code" in agent.registry.names
@@ -909,7 +1045,12 @@ def test_phase_29_context_assembly_engine():
     engine = ContextAssemblyEngine(max_tokens=1000)
     chunks = [
         {"content": "def a(): pass", "symbol": "a", "symbol_type": "function", "file_path": "a.py"},
-        {"content": "def a(): pass", "symbol": "a", "symbol_type": "function", "file_path": "a.py"},  # dup
+        {
+            "content": "def a(): pass",
+            "symbol": "a",
+            "symbol_type": "function",
+            "file_path": "a.py",
+        },  # dup
         {"content": "import os", "symbol": "os", "symbol_type": "import", "file_path": "a.py"},
         {"content": "class C: pass", "symbol": "C", "symbol_type": "class", "file_path": "a.py"},
     ]
@@ -925,9 +1066,16 @@ def test_phase_29_context_assembly_engine():
 
     class FakeRetriever:
         def search(self, query, k=5, language=None):
-            return [{"id": "c1", "symbol": "auth", "symbol_type": "function",
-                     "file_path": "auth.py", "content": "def auth(): pass",
-                     "_rrf_score": 1.0}]
+            return [
+                {
+                    "id": "c1",
+                    "symbol": "auth",
+                    "symbol_type": "function",
+                    "file_path": "auth.py",
+                    "content": "def auth(): pass",
+                    "_rrf_score": 1.0,
+                }
+            ]
 
     tool = SearchCodeTool(FakeRetriever(), context_engine=engine)
     result = asyncio.run(tool.execute(query="auth"))
@@ -940,8 +1088,14 @@ def test_phase_30_context_compression():
     from tracera.agent.compressor import ContextCompressor
 
     compressor = ContextCompressor(target_tokens=50)
-    chunks = [{"content": "def f(): " + "x = 1\n" * 60, "symbol": "f",
-               "symbol_type": "function", "_final_score": 0.9}] * 20
+    chunks = [
+        {
+            "content": "def f(): " + "x = 1\n" * 60,
+            "symbol": "f",
+            "symbol_type": "function",
+            "_final_score": 0.9,
+        }
+    ] * 20
     compressed = compressor.compress(chunks)
     total_tokens = sum(len(c["content"]) // 4 for c in compressed)
     assert total_tokens <= 200  # shrunk toward the 50-token budget
@@ -962,9 +1116,12 @@ def test_phase_30_context_compression():
     spy = SpyCompressor()
     retriever = FakeRetrieverStub()
     retriever.search = lambda query, k=5, language=None: [
-        {"content": "def auth(): pass", "symbol": "auth", "file_path": "auth.py"}]
+        {"content": "def auth(): pass", "symbol": "auth", "file_path": "auth.py"}
+    ]
     debugger = RetrievalDebugger(retriever, ContextAssemblyEngine(), compressor=spy)
-    plan = debugger.build_debug_plan(tr.TestFailure(test_name="t", error_type="E", error_message="m"), None)
+    plan = debugger.build_debug_plan(
+        tr.TestFailure(test_name="t", error_type="E", error_message="m"), None
+    )
     assert spy.called
     assert "auth" in plan.retrieved_context
 
@@ -973,9 +1130,16 @@ def test_phase_30_context_compression():
 
     class FakeRetriever2:
         def search(self, query, k=5, language=None):
-            return [{"id": "c1", "symbol": "auth", "symbol_type": "function",
-                     "file_path": "auth.py", "content": "def auth(): pass",
-                     "_rrf_score": 1.0}]
+            return [
+                {
+                    "id": "c1",
+                    "symbol": "auth",
+                    "symbol_type": "function",
+                    "file_path": "auth.py",
+                    "content": "def auth(): pass",
+                    "_rrf_score": 1.0,
+                }
+            ]
 
     class FakeExpander2:
         def expand(self, results, max_additional=3):
@@ -990,16 +1154,26 @@ def test_phase_30_context_compression():
 
 def test_phase_31_repository_aware_agent(tmp_path, monkeypatch):
     """Phase 31: system prompt instructs search-first when an index is loaded."""
-    from tracera.config import get_settings
     import tracera.main as main_mod
+    from tracera.config import get_settings
     from tracera.graph.symbol_graph import SymbolGraph
 
     settings = get_settings()
     settings.tracera_workspace = tmp_path
     settings.tracera_data_dir = tmp_path / "data"
     monkeypatch.setattr("tracera.providers.create_provider", lambda **kw: FakeProvider())
-    fake_pipeline = [None, FakeRetrieverStub(), None, None, None, None, None, None, None,
-                     types.SimpleNamespace(graph=SymbolGraph())]
+    fake_pipeline = [
+        None,
+        FakeRetrieverStub(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        types.SimpleNamespace(graph=SymbolGraph()),
+    ]
 
     agent_aware, *_ = main_mod._build_agent(settings, tmp_path, fake_pipeline)
     assert "search_code" in agent_aware.system_prompt
@@ -1014,11 +1188,13 @@ def test_phase_31_repository_aware_agent(tmp_path, monkeypatch):
 # AUTONOMOUS SOFTWARE ENGINEERING
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 def test_phase_32_test_discovery(tmp_path):
     """Phase 32: pytest / npm / cargo frameworks are auto-detected."""
     from tracera.tools.test_runner import TestDiscovery
 
-    py = tmp_path / "py"; py.mkdir()
+    py = tmp_path / "py"
+    py.mkdir()
     (py / "pyproject.toml").write_text("[project]\n")
     (py / "tests").mkdir()
     (py / "tests" / "test_x.py").write_text("def test_x(): pass")
@@ -1027,26 +1203,27 @@ def test_phase_32_test_discovery(tmp_path):
     cmd = disc.get_test_command("pytest")
     assert cmd and cmd[0] == "python"
 
-    js = tmp_path / "js"; js.mkdir()
+    js = tmp_path / "js"
+    js.mkdir()
     (js / "package.json").write_text('{"scripts": {"test": "jest"}}')
     assert TestDiscovery(js).detect_framework() == "npm"
 
-    rs = tmp_path / "rs"; rs.mkdir()
+    rs = tmp_path / "rs"
+    rs.mkdir()
     (rs / "Cargo.toml").write_text("[package]\n")
     assert TestDiscovery(rs).detect_framework() == "cargo"
 
 
 def test_phase_33_test_execution(tmp_path, monkeypatch):
     """Phase 33: TestRunner executes the suite and reports pass/fail."""
-    from tracera.tools.test_runner import TestRunner, TestDiscovery
+    from tracera.tools.test_runner import TestDiscovery, TestRunner
 
     (tmp_path / "pyproject.toml").write_text("[project]\n")
     (tmp_path / "tests").mkdir()
-    (tmp_path / "tests" / "test_ok.py").write_text(
-        "def test_ok():\n    assert 1 + 1 == 2\n"
-    )
+    (tmp_path / "tests" / "test_ok.py").write_text("def test_ok():\n    assert 1 + 1 == 2\n")
     monkeypatch.setattr(
-        TestDiscovery, "get_test_command",
+        TestDiscovery,
+        "get_test_command",
         lambda self, fw=None: [sys.executable, "-m", "pytest", "-q"],
     )
     report = TestRunner(tmp_path).run()
@@ -1089,15 +1266,22 @@ def test_phase_35_retrieval_driven_debugging():
 
     retriever = FakeRetrieverStub()
     retriever.search = lambda query, k=5, language=None: [
-        {"content": "def validate_token(token):\n    return token == 'x'",
-         "symbol": "validate_token", "file_path": "auth.py",
-         "symbol_type": "function"}]
+        {
+            "content": "def validate_token(token):\n    return token == 'x'",
+            "symbol": "validate_token",
+            "file_path": "auth.py",
+            "symbol_type": "function",
+        }
+    ]
     debugger = RetrievalDebugger(retriever, ContextAssemblyEngine())
 
-    failure = tr.TestFailure(test_name="test_validate_token",
-                             error_type="AssertionError",
-                             error_message="token validation failed",
-                             file_path="tests/test_auth.py", line_number=7)
+    failure = tr.TestFailure(
+        test_name="test_validate_token",
+        error_type="AssertionError",
+        error_message="token validation failed",
+        file_path="tests/test_auth.py",
+        line_number=7,
+    )
     plan = debugger.build_debug_plan(failure, provider=None)
     assert "auth.py" in plan.hypothesis
     assert "validate_token" in plan.retrieved_context
@@ -1130,13 +1314,20 @@ def test_phase_36_autonomous_fix_loop():
             self.calls += 1
             if self.calls >= 2:
                 return tr.TestReport(framework="pytest", passed=2, total=2, success=True)
-            return tr.TestReport(framework="pytest", passed=1, total=2, success=False,
-                                 failures=[tr.TestFailure(test_name="t", error_type="E",
-                                                          error_message="m")])
+            return tr.TestReport(
+                framework="pytest",
+                passed=1,
+                total=2,
+                success=False,
+                failures=[tr.TestFailure(test_name="t", error_type="E", error_message="m")],
+            )
 
-    loop = AutonomousFixLoop(Path("."), FailOnceRunner(),
-                             RetrievalDebugger(None, ContextAssemblyEngine()),
-                             max_iterations=3)
+    loop = AutonomousFixLoop(
+        Path("."),
+        FailOnceRunner(),
+        RetrievalDebugger(None, ContextAssemblyEngine()),
+        max_iterations=3,
+    )
     agent = _FakeAgent2()
     result = asyncio.run(loop.run("fix the bug", None, agent))
 
@@ -1151,6 +1342,7 @@ def test_phase_36_autonomous_fix_loop():
 def test_phase_37_self_review(tmp_path):
     """Phase 37: git diff + LLM critique produces a review report."""
     import git as gitpython
+
     from tracera.agent.autonomous import SelfReviewer
 
     repo = gitpython.Repo.init(tmp_path)

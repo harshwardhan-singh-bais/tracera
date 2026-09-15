@@ -14,7 +14,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from tracera.indexer.schema import Symbol, SymbolType
+from tracera.indexer.schema import Symbol
 from tracera.logging import get_logger
 
 log = get_logger("graph.symbol_graph")
@@ -26,7 +26,7 @@ class RelationType(str, Enum):
     INHERITS = "inherits"
     IMPLEMENTS = "implements"
     REFERENCES = "references"
-    CONTAINS = "contains"     # class contains method
+    CONTAINS = "contains"  # class contains method
 
 
 class SymbolGraph:
@@ -46,6 +46,7 @@ class SymbolGraph:
     def __init__(self) -> None:
         try:
             import networkx as nx
+
             self._g: Any = nx.DiGraph()
         except ImportError:
             raise RuntimeError("networkx not installed. Run: uv add networkx")
@@ -93,21 +94,24 @@ class SymbolGraph:
     def get_callers(self, node_id: str) -> list[str]:
         """Return all node IDs that call or reference this symbol."""
         return [
-            src for src, dst, data in self._g.in_edges(node_id, data=True)
+            src
+            for src, dst, data in self._g.in_edges(node_id, data=True)
             if data.get("relation") in (RelationType.CALLS.value, RelationType.REFERENCES.value)
         ]
 
     def get_callees(self, node_id: str) -> list[str]:
         """Return all node IDs called by this symbol."""
         return [
-            dst for src, dst, data in self._g.out_edges(node_id, data=True)
+            dst
+            for src, dst, data in self._g.out_edges(node_id, data=True)
             if data.get("relation") in (RelationType.CALLS.value, RelationType.REFERENCES.value)
         ]
 
     def get_children(self, node_id: str) -> list[str]:
         """Return all methods/properties contained by this class."""
         return [
-            dst for src, dst, data in self._g.out_edges(node_id, data=True)
+            dst
+            for src, dst, data in self._g.out_edges(node_id, data=True)
             if data.get("relation") == RelationType.CONTAINS.value
         ]
 
@@ -115,6 +119,7 @@ class SymbolGraph:
         """BFS traversal of all descendants up to max_depth."""
         try:
             import networkx as nx
+
             paths = nx.single_source_shortest_path(self._g, node_id, cutoff=max_depth)
             return [n for n in paths if n != node_id]
         except Exception:
@@ -124,6 +129,7 @@ class SymbolGraph:
         """BFS traversal of all ancestors (what uses this symbol)."""
         try:
             import networkx as nx
+
             reverse_g = self._g.reverse()
             paths = nx.single_source_shortest_path(reverse_g, node_id, cutoff=max_depth)
             return [n for n in paths if n != node_id]
@@ -132,17 +138,11 @@ class SymbolGraph:
 
     def find_by_name(self, symbol_name: str) -> list[str]:
         """Find all node IDs with a matching symbol name."""
-        return [
-            n for n, data in self._g.nodes(data=True)
-            if data.get("name") == symbol_name
-        ]
+        return [n for n, data in self._g.nodes(data=True) if data.get("name") == symbol_name]
 
     def find_by_file(self, file_path: str) -> list[str]:
         """Find all nodes belonging to a specific file."""
-        return [
-            n for n, data in self._g.nodes(data=True)
-            if data.get("file_path") == file_path
-        ]
+        return [n for n, data in self._g.nodes(data=True) if data.get("file_path") == file_path]
 
     # ── Building from extracted symbols ───────────────────────────────────────
 
@@ -167,15 +167,19 @@ class SymbolGraph:
     def save(self, path: Path) -> None:
         """Serialize the graph to disk as JSON (node-link format)."""
         import networkx as nx
+
         path.parent.mkdir(parents=True, exist_ok=True)
         data = nx.node_link_data(self._g, edges="edges")
         path.write_text(json.dumps(data), encoding="utf-8")
-        log.debug("Symbol graph saved: %s (%d nodes, %d edges)", path, self.node_count, self.edge_count)
+        log.debug(
+            "Symbol graph saved: %s (%d nodes, %d edges)", path, self.node_count, self.edge_count
+        )
 
     @classmethod
-    def load(cls, path: Path) -> "SymbolGraph":
+    def load(cls, path: Path) -> SymbolGraph:
         """Load a graph previously saved with save()."""
         import networkx as nx
+
         graph = cls()
         data = json.loads(path.read_text(encoding="utf-8"))
         graph._g = nx.node_link_graph(data, edges="edges")

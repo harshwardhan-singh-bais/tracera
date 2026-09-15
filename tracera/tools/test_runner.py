@@ -25,6 +25,7 @@ TestFramework = Literal["pytest", "unittest", "npm", "cargo", "unknown"]
 @dataclass
 class TestFailure:
     """Structured representation of a single test failure."""
+
     test_name: str
     error_type: str
     error_message: str
@@ -36,6 +37,7 @@ class TestFailure:
 @dataclass
 class TestReport:
     """Full test run report."""
+
     framework: TestFramework
     passed: int = 0
     failed: int = 0
@@ -116,6 +118,7 @@ class TestRunner:
     ) -> None:
         if timeout is None:
             from tracera.config.settings import get_settings
+
             try:
                 timeout = get_settings().tracera_test_timeout
             except Exception:  # settings unavailable in some test contexts
@@ -188,7 +191,9 @@ class FailureAnalyzer:
         if framework == "pytest":
             return FailureAnalyzer._parse_pytest(output)
         # Fallback for other frameworks
-        return TestReport(framework=framework, raw_output=output, success="passed" in output.lower())
+        return TestReport(
+            framework=framework, raw_output=output, success="passed" in output.lower()
+        )
 
     @staticmethod
     def _parse_pytest(output: str) -> TestReport:
@@ -226,13 +231,15 @@ class FailureAnalyzer:
             file_path = file_match.group(1) if file_match else ""
             line_num = int(file_match.group(2)) if file_match else 0
 
-            report.failures.append(TestFailure(
-                test_name=test_name,
-                error_type=error_type,
-                error_message=error_message,
-                file_path=file_path,
-                line_number=line_num,
-                stack_trace=block[:1000],
-            ))
+            report.failures.append(
+                TestFailure(
+                    test_name=test_name,
+                    error_type=error_type,
+                    error_message=error_message,
+                    file_path=file_path,
+                    line_number=line_num,
+                    stack_trace=block[:1000],
+                )
+            )
 
         return report

@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import math
 import re
-import string
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -20,8 +19,8 @@ from tracera.logging import get_logger
 log = get_logger("retrieval.bm25")
 
 # BM25 hyper-parameters (standard defaults)
-_K1 = 1.5   # term frequency saturation
-_B = 0.75   # length normalisation factor
+_K1 = 1.5  # term frequency saturation
+_B = 0.75  # length normalisation factor
 
 
 def _tokenize(text: str) -> list[str]:
@@ -136,9 +135,7 @@ class BM25Index:
                 continue
             df = len(self._inverted[term])  # document frequency
             idf = math.log((self._doc_count - df + 0.5) / (df + 0.5) + 1.0)
-            tf_norm = (tf * (_K1 + 1)) / (
-                tf + _K1 * (1 - _B + _B * dl / max(self._avg_doc_len, 1))
-            )
+            tf_norm = (tf * (_K1 + 1)) / (tf + _K1 * (1 - _B + _B * dl / max(self._avg_doc_len, 1)))
             score += idf * tf_norm
         return score
 
@@ -162,10 +159,7 @@ class BM25Index:
         for term in query_tokens:
             candidate_doc_ids.update(self._inverted.get(term, {}).keys())
 
-        scored = [
-            (doc_id, self._score(query_tokens, doc_id))
-            for doc_id in candidate_doc_ids
-        ]
+        scored = [(doc_id, self._score(query_tokens, doc_id)) for doc_id in candidate_doc_ids]
         scored.sort(key=lambda x: x[1], reverse=True)
         return scored[:k]
 
@@ -189,7 +183,7 @@ class BM25Index:
         log.debug("BM25 index saved: %s (%d docs)", path, self._doc_count)
 
     @classmethod
-    def load(cls, path: Path) -> "BM25Index":
+    def load(cls, path: Path) -> BM25Index:
         """Load index from disk."""
         data = json.loads(path.read_text(encoding="utf-8"))
         idx = cls()
