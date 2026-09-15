@@ -493,12 +493,15 @@ def _normalize_triple(subject: str, predicate: str, object: str) -> tuple[str, s
 #: Predicates that can only hold **one** value at a time.
 #:
 #: A user has one employer, one timezone, one preferred editor — a second,
-#: different value is a *replacement*, not an addition. Multi-valued relations
-#: (``likes``, ``uses``, ``knows``, ``imports``) are deliberately absent: those
-#: legitimately accumulate and must never invalidate each other.
+#: different value is a *replacement*, not an addition.
 #:
 #: Matching is **token-wise** (the predicate is split on ``_``/``-``/space), not
 #: substring, so ``analysis_result`` is not mistaken for ``is_*``.
+#:
+#: The tokens below name *slots* (``language``, ``editor``, ``database``). A slot
+#: only makes a predicate single-valued when the predicate actually reads as a
+#: slot reference — which is why :data:`MULTI_VALUED_PREDICATE_TOKENS` is checked
+#: first and vetoes the match.
 FUNCTIONAL_PREDICATE_TOKENS: frozenset[str] = frozenset(
     {
         "employer", "works", "workplace", "job", "occupation", "role", "position",
@@ -531,6 +534,37 @@ FUNCTIONAL_PREDICATE_REGEXES: tuple[re.Pattern[str], ...] = (
     re.compile(r"_(preference|choice|setting|config)$"),
 )
 
+#: Verbs that make a predicate **multi-valued no matter what noun follows**.
+#:
+#: ``likes_language``, ``uses_framework``, ``knows_person`` all end in a noun that
+#: appears in :data:`FUNCTIONAL_PREDICATE_TOKENS`, so a naive token intersection
+#: would treat them as single-valued and silently retire "User likes Rust" when
+#: the user says "User likes Go". Checking the verb first is what keeps the
+#: detector on the conservative side of its own contract.
+MULTI_VALUED_PREDICATE_TOKENS: frozenset[str] = frozenset(
+    {
+        "likes", "like", "liked", "loves", "love", "loved", "enjoys", "enjoy",
+        "uses", "use", "used", "using", "knows", "know", "knew",
+        "imports", "import", "imported", "depends", "requires", "needs",
+        "calls", "call", "invokes", "reads", "writes", "handles",
+        "contains", "includes", "supports", "targets", "mentions",
+        "references", "owns", "speaks", "studied", "learning", "maintains",
+        "authors", "visited",
+    }
+)
+
+#: Whole-phrase multi-valued predicates — the verb form that token-splitting
+#: cannot recover (``works_with`` splits to ``{works, with}``, and ``works``
+#: alone is functional because of ``works_at``).
+MULTI_VALUED_PREDICATE_EXACT: frozenset[str] = frozenset(
+    {
+        "works_with", "worked_on", "works_on", "contributes_to",
+        "collaborates_with", "friends_with", "member_of", "subscribes_to",
+        "interested_in", "familiar_with", "learning_about", "visited_place",
+        "has_skill", "has_experience", "speaks_language", "known_for",
+    }
+)
+
 _PREDICATE_SPLIT = re.compile(r"[^a-z0-9]+")
 
 
@@ -540,16 +574,21 @@ def _is_functional_predicate(predicate: str) -> bool:
 
     Conservative by design: a false negative merely keeps two facts side by
     side (the pre-v1 behaviour), while a false positive would silently erase a
-    belief the user actually holds.
+    belief the user actually holds. Hence the multi-valued verb veto runs
+    before the slot-noun heuristic.
     """
     p = (predicate or "").strip().lower()
     if not p:
+        return False
+    if p in MULTI_VALUED_PREDICATE_EXACT:
         return False
     if p in FUNCTIONAL_PREDICATE_EXACT:
         return True
     if any(rx.search(p) for rx in FUNCTIONAL_PREDICATE_REGEXES):
         return True
     tokens = {t for t in _PREDICATE_SPLIT.split(p) if t}
+    if tokens & MULTI_VALUED_PREDICATE_TOKENS:
+        return False
     return bool(tokens & FUNCTIONAL_PREDICATE_TOKENS)
 
 

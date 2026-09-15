@@ -85,6 +85,16 @@ MEMORY_TOOLS = [
     "list_sessions",
     "search_memory",
     "get_memory_graph",
+    # Agent-native layer (v2): bi-temporal facts, canonical entity graph,
+    # relevance feedback, decay/GC, portable export/import.
+    "memory_timeline",
+    "memory_entities",
+    "memory_update",
+    "memory_feedback",
+    "memory_maintenance",
+    "memory_explain",
+    "memory_export",
+    "memory_import",
 ]
 
 SAFETY_TOOLS = [
@@ -130,7 +140,12 @@ SERVER_INSTRUCTIONS = (
     "  get_session_stats, get_repo_map\n\n"
     "MEMORY:\n"
     "  recall_memory, remember_memory, forget_memory, list_sessions,\n"
-    "  search_memory, get_memory_graph\n\n"
+    "  search_memory, get_memory_graph\n"
+    "  memory_timeline (how a fact changed over time, incl. superseded),\n"
+    "  memory_entities (canonical entity graph), memory_update (supersede\n"
+    "  while keeping history), memory_feedback (rate a recall useful/harmful),\n"
+    "  memory_explain (why a memory exists / why a query recalled it),\n"
+    "  memory_maintenance (decay + GC + dedup), memory_export, memory_import\n\n"
     "SAFETY:\n"
     "  check_edit_safe, check_delete_safe, plan_refactoring,\n"
     "  get_pr_risk_profile, get_symbol_provenance, audit_agent_config\n\n"
@@ -174,6 +189,8 @@ class TraceraMCPServer:
         self._triple_store: Any = None
         self._context_recall: Any = None
         self._legacy_memory: Any = None
+        # Agent-native memory layer (v2: temporal + graph + feedback)
+        self._memory_layer: Any = None
 
         # Server-side security configuration (Phase 4)
         self._api_keys: set[str] = set()
@@ -276,6 +293,7 @@ class TraceraMCPServer:
         # Clean up all lazy-loaded components
         self._pipeline = None
         self._enhanced_memory = None
+        self._memory_layer = None
         self._session_manager = None
         self._triple_store = None
         self._context_recall = None
@@ -331,6 +349,15 @@ class TraceraMCPServer:
         self._mcp.add_tool(self.list_sessions, name="list_sessions")
         self._mcp.add_tool(self.search_memory, name="search_memory")
         self._mcp.add_tool(self.get_memory_graph, name="get_memory_graph")
+        # Memory — agent-native layer (temporal, graph, feedback, maintenance)
+        self._mcp.add_tool(self.memory_timeline, name="memory_timeline")
+        self._mcp.add_tool(self.memory_entities, name="memory_entities")
+        self._mcp.add_tool(self.memory_update, name="memory_update")
+        self._mcp.add_tool(self.memory_feedback, name="memory_feedback")
+        self._mcp.add_tool(self.memory_maintenance, name="memory_maintenance")
+        self._mcp.add_tool(self.memory_explain, name="memory_explain")
+        self._mcp.add_tool(self.memory_export, name="memory_export")
+        self._mcp.add_tool(self.memory_import, name="memory_import")
         # Safety
         self._mcp.add_tool(self.check_edit_safe, name="check_edit_safe")
         self._mcp.add_tool(self.check_delete_safe, name="check_delete_safe")
@@ -1291,6 +1318,320 @@ class TraceraMCPServer:
                 return "\n".join(lines)
         except Exception as e:
             return f"ERROR: Memory graph failed: {e}"
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # AGENT-NATIVE MEMORY LAYER (v2) — temporal, graph, feedback, maintenance
+    # ══════════════════════════════════════════════════════════════════════════
+    #
+    # The tools above read the legacy JSON-backed store. These expose the
+    # SQLite agent-native layer: bi-temporal facts, canonical entity graph,
+    # relevance feedback, decay/GC, and portable export/import.
+
+    def _ensure_layer(self) -> str | None:
+        """Lazily build the agent-native memory layer. Returns error or None."""
+        if self._memory_layer is not None:
+            return None
+        try:
+            from tracera.memory.layer.factory import create_memory_layer
+
+            layer = create_memory_layer(self._settings)
+            if layer is None:
+                return "Agent-native memory layer is disabled (TRACERA_MEMORY_ENABLED=false)."
+            self._memory_layer = layer
+            log.info("Agent-native memory layer loaded for MCP server")
+            return None
+        except Exception as e:  # noqa: BLE001
+            return f"Agent-native memory layer unavailable: {e}"
+
+    def _memory_facade(self, entity: str = "") -> tuple[Any, str | None]:
+        """Return (facade, error) scoped to ``entity`` (defaults to settings)."""
+        err = self._ensure_layer()
+        if err:
+            return None, err
+        from tracera.memory.layer.attribution import set_attribution
+        from tracera.memory.layer.facade import AgentMemory
+
+        entity_id = entity or self._settings.tracera_memory_entity
+        set_attribution(entity_id, "mcp-server")
+        return AgentMemory(self._memory_layer), None
+
+    async def memory_timeline(
+        self, subject: str = "", predicate: str = "", entity: str = ""
+    ) -> str:
+        """Show how a fact changed over time, including superseded versions.
+
+        Args:
+            subject: Subject to scope to (e.g. "user", "AuthMiddleware").
+            predicate: Relation to scope to (e.g. "employer").
+            entity: Memory scope (defaults to the configured entity).
+        """
+        facade, err = self._memory_facade(entity)
+        if err:
+            return f"ERROR: {err}"
+        try:
+            records = facade.timeline(subject=subject or None, predicate=predicate or None)
+            if not records:
+                return "No matching memory history found."
+            lines = ["## Memory Timeline\n"]
+            for rec in records:
+                marker = "●" if rec.is_current else "○"
+                lines.append(
+                    f"{marker} [{rec.valid_window()}] ({rec.status}) {rec.text}"
+                )
+                lines.append(f"    {rec.subject} → {rec.predicate} → {rec.object}")
+            lines.append("\n● currently believed   ○ superseded / invalidated")
+            return "\n".join(lines)
+        except Exception as e:  # noqa: BLE001
+            return f"ERROR: memory_timeline failed: {e}"
+
+    async def memory_entities(self, node: str = "", entity: str = "") -> str:
+        """List canonical entities and their relationships (the memory graph).
+
+        Args:
+            node: Focus on one entity and show its edges (empty = overview).
+            entity: Memory scope (defaults to the configured entity).
+        """
+        facade, err = self._memory_facade(entity)
+        if err:
+            return f"ERROR: {err}"
+        try:
+            graph = facade.entities(node=node or None)
+            if node:
+                lines = [f"## Memory Graph: {graph['node']}\n"]
+                if graph["outgoing"]:
+                    lines.append("**Outgoing:**")
+                    for e in graph["outgoing"][:25]:
+                        lines.append(f"  {graph['node']} → {e['predicate']} → {e['dst']}")
+                if graph["incoming"]:
+                    lines.append("\n**Incoming:**")
+                    for e in graph["incoming"][:25]:
+                        lines.append(f"  {e['src']} → {e['predicate']} → {graph['node']}")
+                if not graph["outgoing"] and not graph["incoming"]:
+                    lines.append("No edges for this node.")
+                return "\n".join(lines)
+            lines = ["## Memory Graph Overview\n", f"**Edges:** {graph['edge_count']}"]
+            if graph["nodes"]:
+                lines.append("\n**Canonical entities:**")
+                for n in graph["nodes"][:40]:
+                    lines.append(f"  {n['canonical']} ({n['kind']}, {n['mentions']} mentions)")
+            else:
+                lines.append("\nNo entities yet — they build up as memories are written.")
+            return "\n".join(lines)
+        except Exception as e:  # noqa: BLE001
+            return f"ERROR: memory_entities failed: {e}"
+
+    async def memory_update(
+        self,
+        memory_id: int,
+        text: str,
+        reason: str = "manual update",
+        entity: str = "",
+        object: str = "",
+        predicate: str = "",
+        confidence: float = 0.8,
+    ) -> str:
+        """Correct a memory, keeping the previous version queryable.
+
+        Args:
+            memory_id: The memory to correct.
+            text: The corrected content.
+            reason: Why it changed (stored in the audit trail).
+            entity: Memory scope (defaults to the configured entity).
+            object: Corrected object value (e.g. the new employer).
+            predicate: Corrected predicate, when the slot itself was wrong.
+            confidence: Confidence in the corrected value, 0.0-1.0.
+        """
+        facade, err = self._memory_facade(entity)
+        if err:
+            return f"ERROR: {err}"
+        try:
+            new = facade.update(
+                int(memory_id),
+                text=text,
+                reason=reason,
+                object=object or None,
+                predicate=predicate or None,
+                confidence=confidence,
+            )
+            if new is None:
+                return f"ERROR: memory {memory_id} not found"
+            return (
+                f"Memory {memory_id} corrected -> new memory {new.id}. "
+                "The previous version is retained in the timeline."
+            )
+        except Exception as e:  # noqa: BLE001
+            return f"ERROR: memory_update failed: {e}"
+
+    async def memory_feedback(
+        self, memory_id: int, signal: str, query: str = "", entity: str = ""
+    ) -> str:
+        """Record whether a recalled memory was useful, harmful or irrelevant.
+
+        Args:
+            memory_id: The memory being rated.
+            signal: One of "useful", "harmful", "irrelevant".
+            query: The query it was recalled for (optional, for the audit trail).
+            entity: Memory scope (defaults to the configured entity).
+        """
+        facade, err = self._memory_facade(entity)
+        if err:
+            return f"ERROR: {err}"
+        try:
+            result = facade.feedback(int(memory_id), signal, query=query or None)
+            return (
+                f"Feedback recorded: {signal} on memory {memory_id}. "
+                f"importance now {result['importance']:.2f} "
+                f"(useful={result['useful_count']}, harmful={result['harmful_count']})."
+            )
+        except Exception as e:  # noqa: BLE001
+            return f"ERROR: memory_feedback failed: {e}"
+
+    async def memory_maintenance(
+        self, entity: str = "", dry_run: bool = False
+    ) -> str:
+        """Run decay, garbage collection and duplicate consolidation.
+
+        Args:
+            entity: Scope to consolidate (empty = every entity).
+            dry_run: Report what would happen without changing anything.
+        """
+        err = self._ensure_layer()
+        if err:
+            return f"ERROR: {err}"
+        try:
+            report = self._memory_layer.run_maintenance(
+                entity_id=entity or None, dry_run=dry_run
+            )
+            lines = ["## Memory Maintenance\n"]
+            lines.append(f"**Decay scores updated:** {report['decay_updated']}")
+            gc = report["gc"]
+            lines.append(
+                f"**GC candidates:** {gc['candidates']}  archived: {gc['archived']}"
+            )
+            cons = report.get("consolidation", {})
+            lines.append(
+                f"**Consolidation:** scanned {cons.get('scanned', 0)}, "
+                f"merged {cons.get('merged', 0)}"
+            )
+            if dry_run:
+                lines.append("\n(dry run — nothing was changed)")
+            return "\n".join(lines)
+        except Exception as e:  # noqa: BLE001
+            return f"ERROR: memory_maintenance failed: {e}"
+
+    async def memory_explain(self, memory_id: int = 0, query: str = "", entity: str = "") -> str:
+        """Explain a memory's lifecycle, or why a query recalled what it did.
+
+        Args:
+            memory_id: Explain this memory's history and provenance.
+            query: Instead, show the scoring breakdown for this query.
+            entity: Memory scope (defaults to the configured entity).
+        """
+        facade, err = self._memory_facade(entity)
+        if err:
+            return f"ERROR: {err}"
+        try:
+            store = facade._layer.store
+            if memory_id:
+                info = store.explain_memory(int(memory_id))
+                if "error" in info:
+                    return f"ERROR: {info['error']}"
+                mem = info["memory"]
+                lines = [
+                    f"## Memory {mem['id']}\n",
+                    f"**Text:** {mem['text']}",
+                    f"**Triple:** {mem['triple']}",
+                    f"**Kind:** {mem['kind']}  **Status:** {mem['status']}",
+                    f"**Mentions:** {mem['mention_count']}  "
+                    f"**Confidence:** {mem['confidence']:.2f}  "
+                    f"**Importance:** {mem['importance']:.2f}",
+                    f"**Source:** {mem['source_event'] or 'unknown'}",
+                    f"\n**Summary:** {info['summary']}",
+                ]
+                if info["version_history"]:
+                    lines.append("\n**Version history:**")
+                    for v in info["version_history"]:
+                        lines.append(f"  - {v['reason']}")
+                return "\n".join(lines)
+
+            if query:
+                from tracera.memory.layer.attribution import current_attribution
+
+                debug = facade._layer._recaller.debug_recall(query, current_attribution())
+                lines = [
+                    f"## Recall Debug: '{query}'\n",
+                    f"**Candidates inspected:** {debug['returned']}  "
+                    f"**Would inject:** {debug['would_inject']}  "
+                    f"**Threshold:** {debug['min_score_threshold']}  "
+                    f"**Time:** {debug['timing_ms']}ms",
+                ]
+                for r in debug["results"][:10]:
+                    flag = "INJECT" if r["above_threshold"] else "reject"
+                    lines.append(f"\n  [{flag}] {r['final_score']:.4f}  {r['text'][:90]}")
+                    lines.append(f"        {r['why_recalled']}")
+                return "\n".join(lines)
+
+            return "ERROR: provide either memory_id or query."
+        except Exception as e:  # noqa: BLE001
+            return f"ERROR: memory_explain failed: {e}"
+
+    async def memory_export(self, entity: str = "", output_path: str = "") -> str:
+        """Export memories and the entity graph as portable JSON.
+
+        Args:
+            entity: Memory scope (defaults to the configured entity).
+            output_path: File to write (empty = return the JSON inline).
+        """
+        import json as _json
+
+        facade, err = self._memory_facade(entity)
+        if err:
+            return f"ERROR: {err}"
+        try:
+            payload = facade.export()
+            text = _json.dumps(payload, indent=2, ensure_ascii=False)
+            if output_path:
+                Path(output_path).write_text(text, encoding="utf-8")
+                return (
+                    f"Exported {len(payload['memories'])} memories and "
+                    f"{len(payload['edges'])} edges to {output_path}."
+                )
+            return text
+        except Exception as e:  # noqa: BLE001
+            return f"ERROR: memory_export failed: {e}"
+
+    async def memory_import(self, input_path: str, entity: str = "") -> str:
+        """Import a memory export produced by ``memory_export``.
+
+        Args:
+            input_path: Path to the export JSON file.
+            entity: Override the entity to import into (empty = as exported).
+        """
+        import json as _json
+
+        err = self._ensure_layer()
+        if err:
+            return f"ERROR: {err}"
+        try:
+            payload = _json.loads(Path(input_path).read_text(encoding="utf-8"))
+            if entity:
+                payload["entity_id"] = entity
+            from tracera.memory.layer.factory import LocalMemoryEmbedder
+
+            embedder = LocalMemoryEmbedder(
+                self._settings.tracera_embedding_model,
+                self._settings.tracera_embedding_device,
+                cache_dir=self._settings.memory_dir / "embed_cache",
+            )
+            stats = self._memory_layer.store.import_entity(
+                payload, embed_fn=embedder.embed
+            )
+            return (
+                f"Imported {stats['imported']} new, "
+                f"reinforced {stats['reinforced']}, skipped {stats['skipped']}."
+            )
+        except Exception as e:  # noqa: BLE001
+            return f"ERROR: memory_import failed: {e}"
 
     # ══════════════════════════════════════════════════════════════════════════
     # SAFETY TOOLS

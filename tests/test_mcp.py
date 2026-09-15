@@ -53,12 +53,22 @@ EXPECTED_CONTEXT = {
 }
 
 EXPECTED_MEMORY = {
+    # Legacy (JSON-backed) memory surface
     "recall_memory",
     "remember_memory",
     "forget_memory",
     "list_sessions",
     "search_memory",
     "get_memory_graph",
+    # Agent-native layer (v2): temporal, graph, feedback, maintenance
+    "memory_timeline",
+    "memory_entities",
+    "memory_update",
+    "memory_feedback",
+    "memory_maintenance",
+    "memory_explain",
+    "memory_export",
+    "memory_import",
 }
 
 EXPECTED_SAFETY = {
@@ -117,10 +127,10 @@ def test_tool_catalog_lists_are_complete():
     """All category lists are defined and non-overlapping."""
     assert len(CODE_INTELLIGENCE_TOOLS) == 16
     assert len(CONTEXT_TOOLS) == 5
-    assert len(MEMORY_TOOLS) == 6
+    assert len(MEMORY_TOOLS) == 14
     assert len(SAFETY_TOOLS) == 6
     assert len(REPOSITORY_TOOLS) == 2
-    assert len(ALL_MCP_TOOLS) == 36  # includes get_server_status
+    assert len(ALL_MCP_TOOLS) == 44  # includes get_server_status
 
 
 def test_no_duplicate_tools_across_categories():

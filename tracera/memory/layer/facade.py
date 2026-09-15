@@ -318,15 +318,37 @@ class AgentMemory:
         *,
         text: str,
         reason: str = "explicit update",
+        subject: str | None = None,
+        predicate: str | None = None,
+        object: str | None = None,
+        kind: str | None = None,
+        confidence: float = 0.8,
+        importance: float | None = None,
     ) -> Any:
-        """Supersede a memory with corrected text."""
-        return self._layer.store.supersede_memory(
+        """
+        Correct a memory, **keeping the previous version queryable**.
+
+        Delegates to :meth:`MemoryStore.replace_memory` (not ``supersede_memory``,
+        which overwrites the row in place). The retired row keeps its original
+        text and gains ``invalid_at``/``superseded_by``, so ``timeline()`` and
+        ``recall_as_of()`` can still answer "what did we believe before?".
+
+        Returns the new active record.
+        """
+        _old, new = self._layer.store.replace_memory(
             int(memory_id),
             new_text=text,
             new_embedding=self._embed(text),
             reason=reason,
-            source_process=self._process_id(),
+            subject=subject,
+            predicate=predicate,
+            object=object,
+            kind=kind,
+            confidence=confidence,
+            importance=importance,
+            process_id=self._process_id(),
         )
+        return new
 
     def feedback(self, memory_id: int, signal: str, *, query: str | None = None) -> dict[str, Any]:
         """Record whether a recalled memory was useful, harmful or irrelevant."""

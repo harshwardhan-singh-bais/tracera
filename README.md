@@ -29,6 +29,7 @@
 | 8 | Core ReAct agent loop with streaming |
 | 9 | Planning system — task decomposition, TODO tracking |
 | 10 | Persistent agent memory — injected into agent context |
+| 10b | **Memory layer v2** — bi-temporal facts, ADD/UPDATE/DELETE/NOOP reconciliation, canonical entity graph, decay/GC/feedback, export/import |
 | 11–15 | Repository scanner, tree-sitter parsing, symbol extraction, chunking, schema |
 | 16–20 | BM25, local embeddings, LanceDB vector index, dense + hybrid retrieval |
 | 21–24 | Symbol-aware retrieval, context expansion, cross-encoder rerank, incremental indexing |
@@ -82,6 +83,41 @@ tracera mcp serve --check
 # Run the MCP server on stdio (connect from Claude Desktop, Cursor, ...)
 tracera mcp serve
 ```
+
+## Memory Layer
+
+A Memori-style agent-native memory layer sits between the agent and the LLM:
+relevant memories are recalled into the system prompt before each call, and
+structured facts are extracted in the background after each turn.
+
+It is scoped by `(entity_id, process_id)` — **no attribution, no memory** — and
+stored in local SQLite with no external services.
+
+| Capability | Detail |
+|---|---|
+| **Bi-temporal facts** | `valid_at` / `invalid_at` / `expired_at` / `superseded_by`. `recall_as_of()` answers "what did we believe in March?"; `timeline()` shows every version of a belief in order. |
+| **Contradiction handling** | A new value for a single-valued predicate retires the old one — confidence-guarded, and multi-valued verbs (`likes`, `uses`, `knows`, `works_with`) never invalidate each other. |
+| **Reconciliation** | ADD / UPDATE / DELETE / NOOP against the nearest neighbours. LLM-driven when a provider is registered, deterministic offline, and it never raises. |
+| **Entity resolution** | `AuthMiddleware` ≡ `auth_middleware` ≡ `auth-middleware` ≡ `the user` → one canonical node. |
+| **Memory graph** | Canonical `(src, predicate, dst)` edges with validity windows, plus optional graph-expanded recall (1-hop). |
+| **Hybrid recall** | Vector (numpy matmul over cached float32 embeddings) + keyword + recency + importance + mention count, **normalised** so `min_recall_score` is a real 0–1 floor. |
+| **Forgetting** | Exponential decay, retention GC (archives, never deletes), and a `useful` / `harmful` / `irrelevant` feedback loop. |
+| **Explainability** | `memory_explain` reports every candidate inspected, its score breakdown, and why it was injected or rejected. |
+| **Portable memory** | `export_entity()` / `import_entity()` — diffable JSON, idempotent import, embeddings regenerated locally. |
+| **Performance** | 3 000 memories ingest in ≈6 s and recall in ≈3 ms on an idle machine (the index is maintained incrementally, so ingest is linear rather than O(n²)). Schema v1 → v2 migrates in place. |
+
+```bash
+# Inspect / maintain
+tracera memory list
+```
+
+14 memory MCP tools are exposed (`memory_timeline`, `memory_entities`,
+`memory_update`, `memory_feedback`, `memory_maintenance`, `memory_explain`,
+`memory_export`, `memory_import`, plus the six original ones), and the same 16
+are available to the agent as native tools. See
+[docs/MEMORY_SYSTEM.md](docs/MEMORY_SYSTEM.md) for the full reference.
+
+---
 
 ## MCP Integration (Phases 39–41)
 

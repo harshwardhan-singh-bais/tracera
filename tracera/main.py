@@ -233,8 +233,16 @@ def _build_agent(settings=None, workspace_path: Path | None = None, retrieval_pi
         ForgetMemoryTool,
         ListSessionsTool,
         MemoryConsolidateTool,
+        MemoryEntitiesTool,
+        MemoryExplainTool,
+        MemoryExportTool,
+        MemoryFeedbackTool,
         MemoryGraphTool,
+        MemoryImportTool,
+        MemoryMaintenanceTool,
         MemoryStatsTool,
+        MemoryTimelineTool,
+        MemoryUpdateTool,
         MemoryWorkerStatusTool,
         RecallMemoryTool,
         RememberMemoryTool,
@@ -242,6 +250,7 @@ def _build_agent(settings=None, workspace_path: Path | None = None, retrieval_pi
 
     registry.register_many(
         [
+            # Legacy (JSON-backed) surface
             RecallMemoryTool(context_recall),
             RememberMemoryTool(enhanced_memory),
             ForgetMemoryTool(enhanced_memory),
@@ -250,6 +259,15 @@ def _build_agent(settings=None, workspace_path: Path | None = None, retrieval_pi
             MemoryConsolidateTool(memory_layer._store if memory_layer else None),
             MemoryGraphTool(triple_store),
             MemoryWorkerStatusTool(memory_layer),
+            # Agent-native layer (v2): temporal, graph, feedback, maintenance
+            MemoryTimelineTool(memory_layer),
+            MemoryEntitiesTool(memory_layer),
+            MemoryUpdateTool(memory_layer),
+            MemoryFeedbackTool(memory_layer),
+            MemoryMaintenanceTool(memory_layer),
+            MemoryExplainTool(memory_layer),
+            MemoryExportTool(memory_layer),
+            MemoryImportTool(memory_layer),
         ]
     )
 

@@ -63,3 +63,573 @@ pre,
 code {
   font-variant-ligatures: none;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Landing page design system
+   Dark-only by construction (RootProvider forces the dark theme), so every
+   token below assumes a near-black canvas.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --accent: 142 70% 45%;
+  --accent-bright: 142 76% 58%;
+  --accent-dim: 142 60% 30%;
+  --accent-cyan: 172 66% 50%;
+  --hairline: 0 0% 100%;
+}
+
+/* ── Motion primitives ─────────────────────────────────────────────────── */
+
+@keyframes tr-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes tr-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes tr-pan {
+  from {
+    background-position: 0% 50%;
+  }
+  to {
+    background-position: 200% 50%;
+  }
+}
+
+@keyframes tr-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-7px);
+  }
+}
+
+@keyframes tr-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(1.06);
+  }
+}
+
+@keyframes tr-sheen {
+  from {
+    transform: translateX(-120%);
+  }
+  to {
+    transform: translateX(220%);
+  }
+}
+
+/* ── Scroll reveal ─────────────────────────────────────────────────────── */
+
+/*
+ * Scoped under `.js-reveal`, which an inline script in the document head adds
+ * before first paint. That ordering matters: the hidden state must only apply
+ * when JS is actually running, otherwise a failed or disabled script would
+ * leave every section below the fold permanently at `opacity: 0`. With no JS
+ * the content simply renders in place, unanimated.
+ */
+.js-reveal .reveal {
+  opacity: 0;
+  transform: translateY(18px);
+  transition:
+    opacity 0.75s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.75s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity, transform;
+}
+
+.js-reveal .reveal[data-visible='true'] {
+  opacity: 1;
+  transform: none;
+}
+
+/* ── Backdrops ─────────────────────────────────────────────────────────── */
+
+/* Faint blueprint grid, faded out at the edges so it never fights the copy. */
+.bg-blueprint {
+  background-image:
+    linear-gradient(to right, hsl(var(--hairline) / 0.045) 1px, transparent 1px),
+    linear-gradient(to bottom, hsl(var(--hairline) / 0.045) 1px, transparent 1px);
+  background-size: 56px 56px;
+  -webkit-mask-image: radial-gradient(ellipse 75% 60% at 50% 0%, #000 25%, transparent 78%);
+  mask-image: radial-gradient(ellipse 75% 60% at 50% 0%, #000 25%, transparent 78%);
+}
+
+/* Soft accent glow behind the hero. */
+.bg-aurora {
+  background:
+    radial-gradient(ellipse 52% 44% at 50% -6%, hsl(var(--accent) / 0.22), transparent 68%),
+    radial-gradient(ellipse 38% 34% at 82% 8%, hsl(var(--accent-cyan) / 0.12), transparent 70%),
+    radial-gradient(ellipse 40% 30% at 16% 14%, hsl(var(--accent) / 0.1), transparent 72%);
+}
+
+/* Hairline that fades to nothing at both ends. */
+.rule-fade {
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    hsl(var(--hairline) / 0.16),
+    transparent
+  );
+}
+
+/* ── Type ──────────────────────────────────────────────────────────────── */
+
+.text-gradient {
+  background-image: linear-gradient(
+    100deg,
+    hsl(0 0% 100%) 0%,
+    hsl(var(--accent-bright)) 46%,
+    hsl(var(--accent-cyan)) 62%,
+    hsl(0 0% 100%) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: tr-pan 9s linear infinite;
+}
+
+/* ── Surfaces ──────────────────────────────────────────────────────────── */
+
+/* Card with a gradient hairline that lights up on hover. */
+.card-edge {
+  position: relative;
+  isolation: isolate;
+}
+
+.card-edge::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    145deg,
+    hsl(var(--hairline) / 0.14),
+    hsl(var(--hairline) / 0.03) 42%,
+    transparent 70%
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+  transition: background 0.4s ease;
+}
+
+.card-edge:hover::after {
+  background: linear-gradient(
+    145deg,
+    hsl(var(--accent) / 0.55),
+    hsl(var(--accent-cyan) / 0.22) 45%,
+    transparent 74%
+  );
+}
+
+/* Accent bloom that grows on hover. */
+.card-bloom {
+  position: relative;
+  overflow: hidden;
+}
+
+.card-bloom::before {
+  content: '';
+  position: absolute;
+  inset-inline: 12%;
+  top: -45%;
+  height: 120%;
+  border-radius: 999px;
+  background: radial-gradient(closest-side, hsl(var(--accent) / 0.16), transparent);
+  opacity: 0;
+  transition: opacity 0.45s ease;
+  pointer-events: none;
+}
+
+.card-bloom:hover::before {
+  opacity: 1;
+}
+
+/* Icon tile. */
+.icon-tile {
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 0.625rem;
+  border: 1px solid hsl(var(--accent) / 0.24);
+  background: linear-gradient(
+    150deg,
+    hsl(var(--accent) / 0.16),
+    hsl(var(--accent) / 0.03)
+  );
+  color: hsl(var(--accent-bright));
+  transition:
+    border-color 0.35s ease,
+    transform 0.35s ease,
+    box-shadow 0.35s ease;
+}
+
+.group:hover .icon-tile {
+  border-color: hsl(var(--accent) / 0.55);
+  transform: translateY(-1px);
+  box-shadow: 0 0 0 4px hsl(var(--accent) / 0.07);
+}
+
+/* Primary CTA with a soft accent shadow. */
+.btn-accent {
+  background: linear-gradient(
+    180deg,
+    hsl(var(--accent-bright)),
+    hsl(var(--accent))
+  );
+  color: hsl(150 60% 6%);
+  box-shadow:
+    0 1px 0 0 hsl(0 0% 100% / 0.16) inset,
+    0 10px 30px -10px hsl(var(--accent) / 0.55);
+  transition:
+    transform 0.25s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.25s ease,
+    filter 0.25s ease;
+}
+
+.btn-accent:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.06);
+  box-shadow:
+    0 1px 0 0 hsl(0 0% 100% / 0.2) inset,
+    0 16px 40px -12px hsl(var(--accent) / 0.7);
+}
+
+.btn-accent:active {
+  transform: translateY(0);
+}
+
+/* ── Terminal ──────────────────────────────────────────────────────────── */
+
+.term-shell {
+  background:
+    radial-gradient(ellipse 80% 100% at 50% 0%, hsl(var(--accent) / 0.05), transparent 60%),
+    hsl(0 0% 3.5%);
+  box-shadow:
+    0 0 0 1px hsl(var(--hairline) / 0.08),
+    0 30px 70px -30px hsl(0 0% 0% / 0.9),
+    0 0 90px -40px hsl(var(--accent) / 0.35);
+}
+
+.caret {
+  display: inline-block;
+  width: 0.5rem;
+  height: 1.05em;
+  vertical-align: text-bottom;
+  background: hsl(var(--accent-bright));
+  animation: tr-blink 1.05s steps(1) infinite;
+}
+
+/*
+ * Right-edge fade for the horizontally scrollable monospace panels
+ * (hero terminal, showcase tabs).
+ *
+ * Measured: those panels only ever overflow below 768px — above it every
+ * line fits. So the affordance is scoped to small screens, which keeps the
+ * desktop rendering untouched and avoids advertising a scroll that cannot
+ * happen. A mask (rather than an overlay) means the fade travels with the
+ * box instead of with the scrolled content.
+ */
+@media (max-width: 767px) {
+  .scroll-fade {
+    -webkit-mask-image: linear-gradient(
+      to right,
+      #000 calc(100% - 2.25rem),
+      transparent 100%
+    );
+    mask-image: linear-gradient(
+      to right,
+      #000 calc(100% - 2.25rem),
+      transparent 100%
+    );
+  }
+}
+
+/* ── Decorative ────────────────────────────────────────────────────────── */
+
+.animate-float {
+  animation: tr-float 7s ease-in-out infinite;
+}
+
+.animate-pulse-soft {
+  animation: tr-pulse 4.5s ease-in-out infinite;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Mastra-style chrome
+   Announcement bar, minimal top nav, browser-framed product shot and the
+   multi-column footer. Additive — nothing above this line is touched.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Announcement bar ──────────────────────────────────────────────────── */
+
+/* Amber pill that hangs off the top of the page, Mastra-style. */
+.announce-pill {
+  background: linear-gradient(180deg, hsl(38 96% 62%), hsl(32 94% 54%));
+  color: hsl(28 80% 10%);
+  box-shadow:
+    0 1px 0 0 hsl(0 0% 100% / 0.35) inset,
+    0 10px 34px -12px hsl(32 94% 54% / 0.6);
+  transition:
+    filter 0.25s ease,
+    transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.announce-pill:hover {
+  filter: brightness(1.05);
+  transform: translateY(-1px);
+}
+
+/* ── Top navigation ────────────────────────────────────────────────────── */
+
+.nav-shell {
+  background: hsl(0 0% 2% / 0.72);
+  backdrop-filter: blur(14px) saturate(1.4);
+  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+}
+
+.nav-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  border-radius: 0.5rem;
+  padding: 0.4rem 0.65rem;
+  font-size: 0.875rem;
+  color: hsl(var(--hairline) / 0.72);
+  transition:
+    color 0.2s ease,
+    background 0.2s ease;
+}
+
+.nav-link:hover {
+  color: hsl(var(--hairline));
+  background: hsl(var(--hairline) / 0.06);
+}
+
+/* ── Browser-framed product shot ───────────────────────────────────────── */
+
+.browser-shell {
+  overflow: hidden;
+  border-radius: 0.875rem;
+  background: hsl(0 0% 4%);
+  box-shadow:
+    0 0 0 1px hsl(var(--hairline) / 0.08),
+    0 40px 100px -40px hsl(0 0% 0% / 0.95),
+    0 0 120px -60px hsl(var(--accent) / 0.3);
+}
+
+.browser-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-bottom: 1px solid hsl(var(--hairline) / 0.07);
+  background: hsl(0 0% 5.5%);
+  padding: 0.6rem 0.85rem;
+}
+
+/* Pill URL field in the middle of the browser bar. */
+.browser-url {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  border-radius: 999px;
+  background: hsl(0 0% 9%);
+  padding: 0.28rem 0.75rem;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: hsl(var(--hairline) / 0.5);
+  max-width: 22rem;
+  margin-inline: auto;
+}
+
+/* ── Customer / integration logo strip ─────────────────────────────────── */
+
+.logo-mark {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: hsl(var(--hairline) / 0.42);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  filter: grayscale(1);
+  transition:
+    color 0.3s ease,
+    filter 0.3s ease;
+}
+
+.logo-mark:hover {
+  color: hsl(var(--hairline) / 0.78);
+  filter: grayscale(0);
+}
+
+/* ── Footer ────────────────────────────────────────────────────────────── */
+
+.footer-shell {
+  position: relative;
+  overflow: hidden;
+  border-radius: 1.5rem 1.5rem 0 0;
+  background:
+    radial-gradient(ellipse 60% 120% at 18% 0%, hsl(var(--accent) / 0.07), transparent 62%),
+    hsl(0 0% 3%);
+  box-shadow: 0 0 0 1px hsl(var(--hairline) / 0.07);
+}
+
+/* Noise/grid wash so the footer panel doesn't read as flat black. */
+.footer-shell::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(hsl(var(--hairline) / 0.028) 1px, transparent 1px),
+    linear-gradient(90deg, hsl(var(--hairline) / 0.028) 1px, transparent 1px);
+  background-size: 46px 46px;
+  mask-image: radial-gradient(ellipse 70% 80% at 22% 30%, #000, transparent 72%);
+  -webkit-mask-image: radial-gradient(ellipse 70% 80% at 22% 30%, #000, transparent 72%);
+  pointer-events: none;
+}
+
+.footer-heading {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: hsl(var(--hairline) / 0.92);
+}
+
+.footer-link {
+  font-size: 0.8125rem;
+  color: hsl(var(--hairline) / 0.5);
+  transition: color 0.2s ease;
+}
+
+.footer-link:hover {
+  color: hsl(var(--accent-bright));
+}
+
+/* Small amber label used above the newsletter field. */
+.footer-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: hsl(38 92% 62%);
+}
+
+.footer-input {
+  flex: 1;
+  min-width: 0;
+  border-radius: 0.5rem;
+  border: 1px solid hsl(var(--hairline) / 0.1);
+  background: hsl(0 0% 7%);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8125rem;
+  color: hsl(var(--hairline) / 0.9);
+  outline: none;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.footer-input::placeholder {
+  color: hsl(var(--hairline) / 0.32);
+}
+
+.footer-input:focus {
+  border-color: hsl(var(--accent) / 0.55);
+  box-shadow: 0 0 0 3px hsl(var(--accent) / 0.14);
+}
+
+.footer-subscribe {
+  flex-shrink: 0;
+  border-radius: 0.5rem;
+  background: hsl(0 0% 92%);
+  padding: 0.5rem 0.95rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: hsl(0 0% 8%);
+  transition:
+    background 0.2s ease,
+    transform 0.2s ease;
+}
+
+.footer-subscribe:hover {
+  background: hsl(0 0% 100%);
+  transform: translateY(-1px);
+}
+
+/* Amber operational-status dot + label. */
+.status-dot {
+  display: inline-block;
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 999px;
+  background: hsl(38 96% 58%);
+  box-shadow: 0 0 0 3px hsl(38 96% 58% / 0.16);
+  animation: tr-pulse 4.5s ease-in-out infinite;
+}
+
+/* ── Reduced motion ────────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  .js-reveal .reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+
+  .text-gradient,
+  .animate-float,
+  .animate-pulse-soft,
+  .status-dot,
+  .caret {
+    animation: none;
+  }
+
+  .card-bloom::before {
+    transition: none;
+  }
+
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+  }
+}
