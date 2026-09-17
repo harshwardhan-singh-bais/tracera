@@ -8,7 +8,7 @@ __pycache__/
 
 *.MD
 
-# Distribution / packaging
+# Distribution  
 .Python
 build/
 develop-eggs/
