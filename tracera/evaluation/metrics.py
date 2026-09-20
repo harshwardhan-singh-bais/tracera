@@ -55,13 +55,18 @@ def recall_at_k(
     """
     Recall@k: |relevant ∩ top-k| / |ground truth|.
     If ground truth is empty, returns 0.0 (nothing to recall).
+
+    Counts **distinct ground-truth items** that were hit, not hits. Counting
+    hits lets a single ground-truth file with several retrieved chunks report
+    more than 1.0 — this benchmark was returning recall@10 of 1.45, which is
+    not a number recall can take.
     """
     gt = list(ground_truth)
     if not gt:
         return 0.0
     top = hits[:k] if k is not None else hits
-    relevant = sum(1 for h in top if is_relevant(h, gt))
-    return relevant / len(gt)
+    matched = sum(1 for item in gt if any(is_relevant(h, [item]) for h in top))
+    return matched / len(gt)
 
 
 def precision_at_k(
