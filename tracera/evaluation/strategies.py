@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from tracera.logging import get_logger
+from tracera.retrieval.dedupe import dedupe_by_file, overfetch_k
 
 log = get_logger("evaluation.strategies")
 
@@ -97,13 +98,30 @@ class RetrievalStrategy:
     name: str = "strategy"
     kind: str = "hybrid"
 
-    def __init__(self) -> None:
+    def __init__(self, *, max_per_file: int | None = None) -> None:
         self.last_latency_ms: float = 0.0
         self.last_result_bytes: int = 0
+        #: Cap on chunks returned per file. None disables it, which is how every
+        #: baseline ran before this existed. Hybrid's top-5 on this repository was
+        #: regularly only two or three distinct files, so the freed slots go to
+        #: files that would otherwise have been cut off.
+        #:
+        #: Measured at k=10 over the 120-query set: cap 2 is recall-neutral
+        #: (hybrid recall@5 0.9458 -> 0.9417) for -12% context bytes; cap 1 takes
+        #: -31% bytes but costs recall@10 (0.983 -> 0.950), because a file's
+        #: symbol can live only on a dropped duplicate chunk. Full numbers and the
+        #: precision caveat are in tracera/retrieval/dedupe.py.
+        self.max_per_file = max_per_file
 
     def retrieve(self, query: str, k: int = 10) -> list[RetrievalHit]:
         t0 = time.perf_counter()
-        hits = self._retrieve(query, k)
+        # Over-fetch when deduplicating: requesting exactly k and then dropping
+        # duplicates would return fewer than k, the opposite of the intent.
+        fetch_k = overfetch_k(k, filtering=bool(self.max_per_file))
+        hits = self._retrieve(query, fetch_k)
+        hits = dedupe_by_file(
+            hits, max_per_file=self.max_per_file, file_path_of=lambda h: h.file_path
+        )[:k]
         self.last_latency_ms = (time.perf_counter() - t0) * 1000
         self.last_result_bytes = sum(len(h.content) for h in hits)
         return hits
@@ -459,6 +477,7 @@ def build_strategies(
     reranker: Any = None,
     resolve_doc: Callable[[str], str | None] | None = None,
     include: list[str] | None = None,
+    max_per_file: int | None = None,
 ) -> dict[str, RetrievalStrategy]:
     """
     Build the strategy dict for a benchmark.
@@ -474,6 +493,7 @@ def build_strategies(
         reranker: CrossEncoderReranker instance.
         resolve_doc: doc_id → file_path resolver for BM25.
         include: subset of strategy names to build (default: all available).
+        max_per_file: cap on chunks returned per file (None disables it).
     """
     builders: dict[str, Callable[[], RetrievalStrategy]] = {}
     if workspace is not None:
@@ -488,4 +508,9 @@ def build_strategies(
         builders["hybrid+reranker"] = lambda: RerankedHybridStrategy(hybrid, reranker)
 
     want = set(include) if include else set(builders)
-    return {name: builders[name]() for name in want if name in builders}
+    strategies = {name: builders[name]() for name in want if name in builders}
+    # Applied uniformly after construction so an A/B on this policy compares
+    # the policy and not the strategy set: every arm gets the same cap.
+    for strategy in strategies.values():
+        strategy.max_per_file = max_per_file
+    return strategies
