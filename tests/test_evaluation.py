@@ -468,3 +468,105 @@ def test_agent_task_runner_populates_every_field_the_benchmark_reads() -> None:
     failed = asyncio.run(_run_agent_task(ErrorAgent(), "t"))
     assert failed["success"] is False, "an errored task was counted as a success"
     assert failed["error"] == "boom"
+
+
+def test_failed_run_still_reports_the_tokens_it_burned() -> None:
+    """
+    A run that fails after several LLM calls cost real money.
+
+    Usage used to be published only on the success completion, so the error and
+    max-iterations exits reported nothing at all. That zero is not a measurement,
+    it is a *missing* one — and averaging it in makes whichever arm fails most
+    look cheapest, which is precisely the comparison a benchmark exists to make
+    honestly.
+    """
+    import asyncio
+
+    from tracera.agent.react_loop import AgentEvent, AgentEventType
+    from tracera.main import _run_agent_task
+
+    class FailsAfterSpending:
+        async def run(self, task: str):
+            async def events():
+                yield AgentEvent(
+                    type=AgentEventType.DONE,
+                    iteration=3,
+                    metadata={
+                        "terminated_by_error": True,
+                        "iterations": 3,
+                        "tool_calls": 2,
+                        "tokens_in": 4200,
+                        "tokens_out": 55,
+                        "usage_reported": True,
+                    },
+                )
+                yield AgentEvent(type=AgentEventType.ERROR, iteration=3, text="rate limited")
+
+            return events()
+
+    outcome = asyncio.run(_run_agent_task(FailsAfterSpending(), "t"))
+
+    assert outcome["tokens_in"] == 4200, "the tokens a failed run burned went unreported"
+    assert outcome["tokens_out"] == 55
+    assert outcome["tool_calls"] == 2
+    assert outcome["success"] is False
+
+
+def test_a_run_that_never_completes_is_not_a_success() -> None:
+    """
+    ``success`` must start False.
+
+    The benchmark reads ``outcome.get("success", True)``, so a runner that never
+    sets the key turns an unfinished run into a success — at zero tokens, which
+    makes it the best-looking result in the report.
+    """
+    import asyncio
+
+    from tracera.agent.react_loop import AgentEvent, AgentEventType
+    from tracera.main import _run_agent_task
+
+    class Silent:
+        async def run(self, task: str):
+            async def events():
+                yield AgentEvent(type=AgentEventType.THINKING, iteration=1, text="...")
+
+            return events()
+
+    outcome = asyncio.run(_run_agent_task(Silent(), "t"))
+
+    assert outcome["success"] is False, "a run that produced nothing counted as a success"
+
+
+def test_benchmark_flags_tasks_whose_usage_was_never_reported() -> None:
+    """
+    A zero nobody measured must not be averaged in silently.
+
+    The report has to state how many tasks were actually measured, or the token
+    mean reads as though every task contributed to it.
+    """
+    import asyncio
+
+    from tracera.evaluation.agent_benchmark import AgentBenchmark
+
+    async def runner(task: str) -> dict:
+        if task == "measured":
+            return {
+                "output": "x",
+                "success": True,
+                "tokens_in": 1000,
+                "tokens_out": 100,
+                "usage_reported": True,
+            }
+        # No usage_reported key: the benchmark must infer "not measured" from the
+        # numbers rather than assume the zero is real.
+        return {"output": "y", "success": True, "tokens_in": 0, "tokens_out": 0}
+
+    report = asyncio.run(AgentBenchmark(runner, tasks=["measured", "silent"]).run())
+
+    assert report.tasks_with_usage == 1
+    assert report.to_dict()["tasks_with_usage"] == 1
+    assert report.results[1].usage_reported is False, "an unmeasured zero was taken as measured"
+
+    markdown = report.to_markdown()
+    assert "measured on 1/2 tasks" in markdown
+    assert "1 of 2 task(s) reported no token usage" in markdown
