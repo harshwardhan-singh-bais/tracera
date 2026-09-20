@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "tracera": {
+      "command": "C:\\Users\\Acer\\Desktop\\tracera\\.venv\\Scripts\\python.exe",
+      "args": [
+        "-X",
+        "utf8",
+        "-m",
+        "tracera.main",
+        "mcp",
+        "serve",
+        "--workspace",
+        "C:\\Users\\Acer\\Desktop\\tracera"
+      ],
+      "env": {
+        "PYTHONUTF8": "1"
+      },
+      "cwd": "C:\\Users\\Acer\\Desktop\\tracera"
+    }
+  }
+}
