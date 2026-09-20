@@ -16,6 +16,7 @@ from typing import Any
 
 from tracera.graph.symbol_graph import SymbolGraph
 from tracera.logging import get_logger
+from tracera.retrieval.dedupe import dedupe_by_file, overfetch_k
 from tracera.tools.base import Tool, ToolResult
 
 log = get_logger("tools.code_search")
@@ -56,6 +57,7 @@ def _apply_result_filters(
     file_pattern: str | None,
     file_extensions: list[str] | None,
     path: str | None,
+    max_per_file: int | None,
 ) -> list[dict[str, Any]]:
     """
     Narrow a retrieved pool by glob, extension, and path prefix.
@@ -84,6 +86,10 @@ def _apply_result_filters(
                 for r in results
                 if prefix in str(r.get("file_path") or "").replace("\\", "/")
             ]
+
+    results = dedupe_by_file(
+        results, max_per_file=max_per_file, file_path_of=lambda r: r.get("file_path")
+    )
 
     # Always cap at k, filter or no filter. The caller over-fetches when a
     # filter is present, and a retriever that returns more than it was asked
@@ -141,6 +147,13 @@ class SearchCodeTool(Tool):
                 "type": "string",
                 "description": "Optional path prefix; only chunks under it are returned.",
             },
+            "max_per_file": {
+                "type": "integer",
+                "description": (
+                    "Maximum chunks to return from any one file (default 2). Results "
+                    "are otherwise dominated by whichever file matches most often."
+                ),
+            },
         },
         "required": ["query"],
     }
@@ -170,6 +183,7 @@ class SearchCodeTool(Tool):
         file_extensions: list[str] | None = None,
         max_results: int | None = None,
         path: str | None = None,
+        max_per_file: int | None = 2,
     ) -> ToolResult:
         # `max_results` is what the other search tools in this repo call it, and
         # models mix the two names up constantly. Accepting it keeps the
@@ -184,8 +198,8 @@ class SearchCodeTool(Tool):
             # Filtering happens after retrieval, so over-fetch: asking for k and
             # then discarding non-matching files would silently return a
             # near-empty result set for a narrow pattern.
-            narrow = bool(file_pattern or file_extensions or path)
-            fetch_k = max(k * 4, k + 20) if narrow else k
+            narrow = bool(file_pattern or file_extensions or path or max_per_file)
+            fetch_k = overfetch_k(k, filtering=narrow)
 
             results = self._retriever.search(
                 query, k=fetch_k, language=expand_language_filter(language)
@@ -196,6 +210,7 @@ class SearchCodeTool(Tool):
                 file_pattern=file_pattern,
                 file_extensions=file_extensions,
                 path=path,
+                max_per_file=max_per_file,
             )
 
             if not results:
