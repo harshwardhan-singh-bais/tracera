@@ -32,11 +32,35 @@ class SymbolExtractor:
             (method_definition name: (property_identifier) @name) @method
             (import_statement (import_clause (identifier) @name)) @import
         """,
+        # NOTE on `name: (_)`: the TypeScript grammar types class, interface and
+        # abstract-class names as `type_identifier`, not `identifier`. Naming
+        # `identifier` there makes the whole query an *impossible pattern*, and
+        # a single impossible pattern invalidates the entire Query — so every
+        # .ts/.tsx file silently extracted zero symbols. The wildcard is robust
+        # to that field being re-typed in a future grammar release.
         "typescript": """
-            (class_declaration name: (identifier) @name) @class
+            (class_declaration name: (_) @name) @class
+            (abstract_class_declaration name: (_) @name) @class
+            (interface_declaration name: (_) @name) @interface
             (function_declaration name: (identifier) @name) @function
+            (generator_function_declaration name: (identifier) @name) @function
             (method_definition name: (property_identifier) @name) @method
-            (interface_declaration name: (identifier) @name) @interface
+            (public_field_definition name: (property_identifier) @name) @variable
+            (variable_declarator name: (identifier) @name value: (arrow_function)) @function
+            (import_statement (import_clause (identifier) @name)) @import
+        """,
+        # TSX is a distinct grammar (it understands JSX). Parsing .tsx with the
+        # plain TypeScript grammar leaves every component file with
+        # has_error=True, so .tsx needs its own language and query.
+        "tsx": """
+            (class_declaration name: (_) @name) @class
+            (abstract_class_declaration name: (_) @name) @class
+            (interface_declaration name: (_) @name) @interface
+            (function_declaration name: (identifier) @name) @function
+            (generator_function_declaration name: (identifier) @name) @function
+            (method_definition name: (property_identifier) @name) @method
+            (public_field_definition name: (property_identifier) @name) @variable
+            (variable_declarator name: (identifier) @name value: (arrow_function)) @function
             (import_statement (import_clause (identifier) @name)) @import
         """,
     }
