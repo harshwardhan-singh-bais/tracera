@@ -14,6 +14,7 @@ Commands:
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 from pathlib import Path
@@ -915,11 +916,65 @@ def status(
         Path | None,
         typer.Option("--workspace", "-w"),
     ] = None,
+    json_out: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON (for agent harnesses)."),
+    ] = False,
 ) -> None:
-    """Show TRACERA system status."""
+    """
+    Show TRACERA system status.
+
+    Pass --json for a machine-readable snapshot — this is the form agent
+    harnesses and scripts should consume.
+    """
     _setup()
     settings = _get_settings()
     workspace_path = (workspace or settings.tracera_workspace).resolve()
+
+    # Index status
+    index_manifest = settings.index_dir / "index_manifest.json"
+    indexed = index_manifest.exists()
+
+    # Memory stats
+    from tracera.agent.memory import AgentMemory
+
+    memory = AgentMemory(settings.memory_dir)
+
+    from tracera.providers import list_available_providers
+
+    providers_info = list_available_providers(settings)
+
+    if json_out:
+        console.print_json(
+            json.dumps(
+                {
+                    "profile": settings.tracera_profile,
+                    "workspace": str(workspace_path),
+                    "data_dir": str(settings.tracera_data_dir),
+                    "default_provider": settings.tracera_default_provider,
+                    "default_model": settings.tracera_default_model,
+                    "max_iterations": settings.tracera_max_iterations,
+                    "max_tool_calls": settings.tracera_max_tool_calls,
+                    "index": {
+                        "indexed": indexed,
+                        "manifest": str(index_manifest),
+                    },
+                    "memory": {"entries": memory.count},
+                    "providers": [
+                        {
+                            "name": p["name"],
+                            "rank": p["rank"],
+                            "available": p["available"],
+                            "key_env": p["key_env"],
+                            "model": p["model"],
+                            "active": p["name"] == settings.tracera_default_provider,
+                        }
+                        for p in providers_info
+                    ],
+                }
+            )
+        )
+        return
 
     table = Table(title="TRACERA Status", border_style="cyan", show_header=True)
     table.add_column("Property", style="cyan bold")
@@ -932,25 +987,13 @@ def status(
     table.add_row("Default Model", settings.tracera_default_model)
     table.add_row("Max Iterations", str(settings.tracera_max_iterations))
     table.add_row("Max Tool Calls", str(settings.tracera_max_tool_calls))
-
-    # Index status
-    index_manifest = settings.index_dir / "index_manifest.json"
-    index_status = (
+    table.add_row(
+        "Code Index",
         "[bold green]indexed[/]"
-        if index_manifest.exists()
-        else "[dim yellow]not indexed (run: tracera index)[/]"
+        if indexed
+        else "[dim yellow]not indexed (run: tracera index)[/]",
     )
-    table.add_row("Code Index", index_status)
-
-    # Memory stats
-    from tracera.agent.memory import AgentMemory
-
-    memory = AgentMemory(settings.memory_dir)
     table.add_row("Memory Entries", str(memory.count))
-
-    from tracera.providers import list_available_providers
-
-    providers_info = list_available_providers(settings)
 
     provider_table = Table(
         title="Provider Status (ranked by quality)", border_style="cyan", show_header=True
@@ -1706,18 +1749,33 @@ def search(
         bool,
         typer.Option("--debug", help="Show retrieval scores."),
     ] = False,
+    json_out: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON (for agent harnesses)."),
+    ] = False,
 ) -> None:
     """
     Search the indexed codebase using Hybrid BM25 + Dense retrieval.
 
     Phases used: 16 (BM25) + 17-18 (Embed+Vector) + 19-21 (Dense+Hybrid+Symbol)
     Optionally applies Phase 23 (cross-encoder reranking).
+
+    Pass --json for a machine-readable result list — the form agent harnesses
+    without MCP support should consume.
     """
     _setup()
     settings = _get_settings()
     ws_path = (workspace or settings.tracera_workspace).resolve()
 
-    console.print(f"\n[bold cyan]Search:[/] [white]{query}[/]")
+    # On --json, keep stdout pure JSON: progress and status lines go to stderr
+    # so a harness can pipe stdout straight into a JSON parser.
+    out = console
+    if json_out:
+        from tracera.logging import get_console
+
+        out = get_console()
+    else:
+        out.print(f"\n[bold cyan]Search:[/] [white]{query}[/]")
 
     try:
         pipeline = _build_retrieval_pipeline(settings, ws_path)
@@ -1728,12 +1786,23 @@ def search(
             pipeline[-1],
         )
     except Exception as e:
+        if json_out:
+            console.print_json(
+                json.dumps({"query": query, "error": f"pipeline init failed: {e}", "results": []})
+            )
+            raise typer.Exit(1)
         console.print(f"[bold red]Pipeline init failed:[/] {e}")
         raise typer.Exit(1)
 
-    with console.status("[bold green]Searching...[/]"):
+    # An umbrella name covers every dialect indexed under it — "typescript"
+    # must also match .tsx, which is stored under its own language key.
+    from tracera.indexer.parser import expand_language_filter
+
+    lang_filter = expand_language_filter(language)
+
+    with out.status("[bold green]Searching...[/]"):
         try:
-            results = symbol_retriever.search(query, k=k * 2, language=language)
+            results = symbol_retriever.search(query, k=k * 2, language=lang_filter)
             # Phase 22: Context expansion
             results = expander.expand(results, max_additional=3)
             # Phase 26: dependency-aware graph expansion (when a graph exists)
@@ -1744,8 +1813,28 @@ def search(
             else:
                 results = results[:k]
         except Exception as e:
+            if json_out:
+                console.print_json(
+                    json.dumps({"query": query, "error": f"search failed: {e}", "results": []})
+                )
+                raise typer.Exit(1)
             console.print(f"[bold red]Search failed:[/] {e}")
             raise typer.Exit(1)
+
+    if json_out:
+        console.print_json(
+            json.dumps(
+                {
+                    "query": query,
+                    "workspace": str(ws_path),
+                    "count": len(results),
+                    "reranked": rerank,
+                    "results": [_search_record(r) for r in results],
+                },
+                default=str,
+            )
+        )
+        return
 
     if not results:
         console.print("[yellow]No results. Run [bold]tracera index[/] first to build the index.[/]")
@@ -1778,6 +1867,27 @@ def search(
 
         syntax = Syntax(content[:800], lang, theme="monokai", line_numbers=False)
         console.print(RPanel(syntax, title=title, border_style="cyan"))
+
+
+def _search_record(r: dict) -> dict:
+    """
+    Normalise a retrieval hit into a stable JSON shape.
+
+    Harnesses should not have to know our internal key names, and the raw hit
+    carries private ``_``-prefixed scoring keys that are noise in an agent
+    context. Location, symbol and content are what an agent actually needs.
+    """
+    return {
+        "file": r.get("file_path"),
+        "start_line": r.get("start_line"),
+        "end_line": r.get("end_line"),
+        "symbol": r.get("symbol"),
+        "symbol_type": r.get("symbol_type"),
+        "language": r.get("language"),
+        "score": r.get("_final_score", r.get("_rrf_score")),
+        "expansion_reason": r.get("_expansion_reason") or None,
+        "content": r.get("content", ""),
+    }
 
 
 # ── fix ──────────────────────────────────────────────────────────────────────
@@ -2255,6 +2365,375 @@ def eval_ablation(
     console.print(report.to_markdown())
     report.save(output)
     console.print(f"\n[bold green]OK[/] Report saved to [cyan]{output}[/]")
+
+
+# ── integrate ────────────────────────────────────────────────────────────────
+
+integrate_app = typer.Typer(
+    name="integrate",
+    help="Wire TRACERA into any agent harness (Claude Code, Cursor, Codex, Cline, …).",
+    no_args_is_help=True,
+)
+app.add_typer(integrate_app)
+
+
+def _harness_status_style(status: str) -> str:
+    return {
+        "installed": "green",
+        "created": "green",
+        "updated": "green",
+        "unchanged": "cyan",
+        "missing": "yellow",
+        "no-block": "yellow",
+        "outdated": "yellow",
+        "would-install": "magenta",
+        "would-installed": "magenta",
+        "would-updated": "magenta",
+        "skipped": "yellow",
+        "error": "red",
+        "unreadable": "red",
+        "n/a": "dim",
+    }.get(status, "white")
+
+
+@integrate_app.command("list")
+def integrate_list(
+    json_out: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON."),
+    ] = False,
+) -> None:
+    """
+    List every supported agent harness and what integrating it writes.
+
+    Shows the harness, whether it speaks MCP, the instruction file TRACERA
+    will write its agent brief into, and whether the harness looks installed
+    on this machine.
+    """
+    from tracera.mcp.harness import HARNESSES, catalog
+
+    _setup()
+    settings = _get_settings()
+    ws_path = settings.tracera_workspace.resolve()
+
+    rows = catalog()
+    detected = {h.key: h.detected(ws_path) for h in HARNESSES.values()}
+
+    if json_out:
+        for row in rows:
+            row["detected"] = detected[row["key"]]
+        console.print_json(json.dumps(rows))
+        return
+
+    table = Table(
+        title=f"Supported agent harnesses ({len(rows)})",
+        border_style="cyan",
+        show_header=True,
+    )
+    table.add_column("Key", style="bold cyan")
+    table.add_column("Harness", style="white")
+    table.add_column("MCP", width=5)
+    table.add_column("Instruction file(s)", style="dim")
+    table.add_column("Seen", width=5)
+
+    for row in rows:
+        files = ", ".join(i["display"] for i in row["instructions"]) or "[dim]—[/]"
+        table.add_row(
+            str(row["key"]),
+            str(row["name"]),
+            "[green]yes[/]" if row["mcp_supported"] else "[yellow]no[/]",
+            files,
+            "[green]yes[/]" if detected[row["key"]] else "[dim]no[/]",
+        )
+    console.print(table)
+    console.print(
+        "[dim]'Seen' is a heuristic — it looks for each harness's config dir and "
+        "project markers. Run [bold]tracera integrate apply --all[/] to wire the "
+        "detected ones, or name keys explicitly to override detection.[/]"
+    )
+
+
+@integrate_app.command("apply")
+def integrate_apply(
+    harnesses: Annotated[
+        list[str] | None,
+        typer.Argument(
+            help="Harness keys to integrate. Pass 'all' for every detected harness.",
+        ),
+    ] = None,
+    workspace: Annotated[
+        Path | None,
+        typer.Option("--workspace", "-w", help="Repository to wire up."),
+    ] = None,
+    all_harnesses: Annotated[
+        bool,
+        typer.Option("--all", help="Target every detected harness (same as passing 'all')."),
+    ] = False,
+    scope: Annotated[
+        str,
+        typer.Option(
+            "--scope",
+            help="project | user | both — which instruction files to write.",
+        ),
+    ] = "project",
+    no_mcp: Annotated[
+        bool,
+        typer.Option("--no-mcp", help="Write the agent brief only; skip MCP registration."),
+    ] = False,
+    no_instructions: Annotated[
+        bool,
+        typer.Option("--no-instructions", help="Register MCP only; skip the agent brief."),
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", "-n", help="Report what would change without writing."),
+    ] = False,
+    force: Annotated[
+        bool,
+        typer.Option("--force", "-f", help="Rewrite even when the content looks current."),
+    ] = False,
+) -> None:
+    """
+    Wire TRACERA into one or more agent harnesses.
+
+    Two things happen per harness: the TRACERA MCP server is registered in the
+    harness's own config (so the agent can call it), and an agent brief is
+    spliced into the instruction file the harness reads (so the agent knows
+    to). Existing config is preserved, managed blocks are used for instruction
+    files, and a .bak sidecar is written before every change.
+
+    Defaults to project scope: nothing under your home directory is touched
+    unless you pass --scope user. Re-running is safe — already-current targets
+    report 'unchanged' and are left alone.
+    """
+    from tracera.mcp.harness import HARNESSES, resolve_keys
+    from tracera.mcp import integrate
+
+    _setup()
+    settings = _get_settings()
+    ws_path = (workspace or settings.tracera_workspace).resolve()
+
+    keys = list(harnesses or [])
+    if all_harnesses or (len(keys) == 1 and keys[0].lower() == "all"):
+        keys = []
+
+    unknown: list[str] = []
+    if keys:
+        known, unknown = resolve_keys(keys)
+        keys = known
+        for k in unknown:
+            console.print(f"[yellow]Unknown harness:[/] {k} — see 'tracera integrate list'")
+
+    scope_value: str | None = scope
+    if scope == "both":
+        scope_value = None
+    elif scope not in ("project", "user", None):
+        console.print(f"[bold red]Invalid --scope:[/] {scope} (expected project | user | both)")
+        raise typer.Exit(1)
+
+    report = integrate.apply(
+        keys or None,
+        repo_root=ws_path,
+        instructions=not no_instructions,
+        mcp=not no_mcp,
+        scope=scope_value,
+        detected_only=not keys,
+        dry_run=dry_run,
+        force=force,
+    )
+
+    if not report.actions:
+        console.print(
+            "[yellow]No harness matched.[/] Nothing was detected — pass explicit keys "
+            "or run [bold]tracera integrate list[/]."
+        )
+        raise typer.Exit(1)
+
+    table = Table(
+        title=(
+            f"TRACERA integrate{' (dry run)' if dry_run else ''} — workspace={ws_path}"
+        ),
+        border_style="magenta" if dry_run else "green",
+        show_header=True,
+    )
+    table.add_column("Harness", style="bold")
+    table.add_column("What", style="cyan", width=6)
+    table.add_column("Target", style="white")
+    table.add_column("Status")
+    table.add_column("Detail", style="dim")
+
+    for a in report.actions:
+        table.add_row(
+            a.harness_name,
+            a.kind,
+            a.target,
+            f"[{_harness_status_style(a.status)}]{a.status}[/]",
+            a.detail,
+        )
+    console.print(table)
+    console.print(f"[bold]{integrate.summary_line(report)}[/]")
+
+    if dry_run:
+        console.print("[dim]Dry run — nothing was written. Re-run without -n to apply.[/]")
+    elif report.changed:
+        console.print(
+            "[dim]Restart the harness to pick up the MCP server. The agent brief is "
+            "read on the next request. .bak files sit next to anything modified.[/]"
+        )
+
+    if report.errors:
+        raise typer.Exit(1)
+
+
+@integrate_app.command("instructions")
+def integrate_instructions(
+    harness: Annotated[
+        str,
+        typer.Argument(help="Harness key, or 'agents' for the universal AGENTS.md brief."),
+    ] = "agents",
+    mcp: Annotated[
+        bool,
+        typer.Option("--mcp/--cli", help="Render the MCP tool brief or the CLI bridge brief."),
+    ] = True,
+    workspace: Annotated[
+        Path | None,
+        typer.Option("--workspace", "-w"),
+    ] = None,
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", "-o", help="Write to a file instead of stdout."),
+    ] = None,
+) -> None:
+    """
+    Print the agent brief TRACERA would write, without touching any file.
+
+    Useful for pasting into a harness we do not have a target for, or for
+    reviewing the wording before running 'apply'.
+    """
+    from tracera.mcp import agent_brief
+    from tracera.mcp.harness import HARNESSES
+
+    _setup()
+    settings = _get_settings()
+    ws_path = (workspace or settings.tracera_workspace).resolve()
+
+    if harness.lower() in ("agents", "agents-md", "universal"):
+        use_mcp = mcp
+    else:
+        h = HARNESSES.get(harness.lower())
+        if h is None:
+            console.print(
+                f"[bold red]Unknown harness:[/] {harness} — see 'tracera integrate list'"
+            )
+            raise typer.Exit(1)
+        use_mcp = h.mcp_supported
+
+    body = agent_brief.brief_body(mcp=use_mcp, workspace=str(ws_path))
+    rendered = agent_brief.render(body, "markdown")
+
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(rendered, encoding="utf-8")
+        console.print(f"[green]Wrote[/] {output}")
+        return
+
+    # Plain print: this is meant to be piped or copy-pasted, so no Rich markup.
+    print(rendered)
+
+
+@integrate_app.command("doctor")
+def integrate_doctor(
+    harnesses: Annotated[
+        list[str] | None,
+        typer.Argument(help="Limit the check to these harness keys."),
+    ] = None,
+    workspace: Annotated[
+        Path | None,
+        typer.Option("--workspace", "-w"),
+    ] = None,
+    json_out: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON."),
+    ] = False,
+) -> None:
+    """
+    Check what is already wired, without changing anything.
+
+    Reports per harness whether it looks installed, whether the agent brief is
+    present and current, and whether the MCP server is registered — plus the
+    index state, which is what the tools actually read.
+    """
+    from tracera.mcp import agent_brief, integrate
+    from tracera.mcp.harness import resolve_keys
+
+    _setup()
+    settings = _get_settings()
+    ws_path = (workspace or settings.tracera_workspace).resolve()
+
+    keys = list(harnesses or [])
+    if keys:
+        keys, unknown = resolve_keys(keys)
+        for k in unknown:
+            console.print(f"[yellow]Unknown harness:[/] {k}")
+
+    rows = integrate.doctor(ws_path, keys or None)
+
+    index_manifest = settings.index_dir / "index_manifest.json"
+    index_state = "indexed" if index_manifest.exists() else "not indexed"
+
+    if json_out:
+        console.print_json(
+            json.dumps(
+                {
+                    "workspace": str(ws_path),
+                    "index": index_state,
+                    "brief": agent_brief.describe(),
+                    "harnesses": rows,
+                }
+            )
+        )
+        return
+
+    table = Table(
+        title=f"TRACERA integration status — workspace={ws_path}",
+        border_style="cyan",
+        show_header=True,
+    )
+    table.add_column("Harness", style="bold")
+    table.add_column("Seen", width=5)
+    table.add_column("MCP server", width=12)
+    table.add_column("Agent brief", style="dim")
+
+    for row in rows:
+        briefs = row["briefs"]
+        if not briefs:
+            brief_text = "[dim]— (MCP only)[/]"
+        else:
+            parts = []
+            for b in briefs:
+                parts.append(
+                    f"{b['target']} [{_harness_status_style(b['state'])}]{b['state']}[/]"
+                )
+            brief_text = "\n".join(parts)
+
+        table.add_row(
+            str(row["name"]),
+            "[green]yes[/]" if row["detected"] else "[dim]no[/]",
+            f"[{_harness_status_style(str(row['mcp']))}]{row['mcp']}[/]",
+            brief_text,
+        )
+    console.print(table)
+
+    console.print(
+        f"[bold]Code index:[/] [{_harness_status_style('installed' if index_state == 'indexed' else 'missing')}]"
+        f"{index_state}[/]"
+        + ("" if index_state == "indexed" else " — run [bold]tracera index[/] first")
+    )
+    console.print(
+        f"[dim]Brief v{agent_brief.BRIEF_VERSION} · "
+        f"{agent_brief.describe()['tool_count']} MCP tools · "
+        "run [bold]tracera integrate apply --all[/] to wire up what is detected.[/]"
+    )
 
 
 # ── mcp ──────────────────────────────────────────────────────────────────────

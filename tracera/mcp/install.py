@@ -15,13 +15,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from tracera.mcp.hosts import Host, stdio_server_entry
+from tracera.mcp.hosts import Host
 
 
 @dataclass
@@ -30,6 +31,90 @@ class InstallResult:
     path: Path
     status: str  # "installed" | "updated" | "unchanged" | "created"
     detail: str
+
+
+# ── JSONC tolerance ──────────────────────────────────────────────────────────
+
+#: Hosts whose config file is JSON-with-comments rather than strict JSON.
+#: Zed ships `settings.json` with a commented header explaining the format,
+#: so a plain `json.loads` fails on a *default* install.
+_JSONC_HOSTS = frozenset({"zed"})
+
+
+def _strip_jsonc(text: str) -> str:
+    """
+    Remove ``//`` and ``/* */`` comments and trailing commas.
+
+    String-aware: a ``//`` inside a value (``"https://…"``) must survive, so we
+    track quoting and escapes rather than regexing the text blindly.
+    """
+    out: list[str] = []
+    i, n = 0, len(text)
+    in_string = False
+
+    while i < n:
+        ch = text[i]
+        if in_string:
+            out.append(ch)
+            if ch == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if ch == '"':
+                in_string = False
+            i += 1
+            continue
+
+        if ch == '"':
+            in_string = True
+            out.append(ch)
+            i += 1
+            continue
+
+        if ch == "/" and i + 1 < n and text[i + 1] == "/":
+            while i < n and text[i] not in "\r\n":
+                i += 1
+            continue
+
+        if ch == "/" and i + 1 < n and text[i + 1] == "*":
+            i += 2
+            while i + 1 < n and not (text[i] == "*" and text[i + 1] == "/"):
+                i += 1
+            i += 2
+            continue
+
+        out.append(ch)
+        i += 1
+
+    # A removed comment can leave a dangling comma before the closing brace.
+    return re.sub(r",(\s*[}\]])", r"\1", "".join(out))
+
+
+def _load_config(path: Path, *, jsonc: bool = False) -> tuple[dict[str, Any] | None, bool, str]:
+    """
+    Parse a config file.
+
+    Returns ``(data, had_comments, error)``. ``data`` is None when the file
+    cannot be parsed. ``had_comments`` is True when comments had to be
+    stripped — the caller reports that, because writing the file back as
+    plain JSON drops them (the ``.bak`` keeps the original).
+    """
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as e:
+        return None, False, f"cannot read {path.name}: {e}"
+
+    had_comments = jsonc and ("//" in raw or "/*" in raw)
+    text = _strip_jsonc(raw) if jsonc else raw
+
+    try:
+        data = json.loads(text)
+    except ValueError as e:
+        return None, had_comments, f"cannot parse {path.name}: {e}"
+
+    if not isinstance(data, dict):
+        return None, had_comments, f"{path.name} root is not a JSON object"
+    return data, had_comments, ""
 
 
 def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
@@ -42,17 +127,21 @@ def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
 
 
 def _entry_matches(existing: Any, entry: dict[str, Any]) -> bool:
+    """
+    True when the on-disk entry already equals what we would write.
+
+    Compares the whole mapping rather than just ``command``/``args`` so it stays
+    correct for hosts whose entry shape differs (Zed nests under ``command``,
+    OpenCode uses a single argv array) — those have no top-level ``args`` key.
+    """
     if not isinstance(existing, dict):
         return False
-    return existing.get("command") == entry.get("command") and existing.get("args") == entry.get(
-        "args"
-    )
+    return existing == entry
 
 
 def install_into_host(host: Host, repo_root: Path, *, force: bool = False) -> InstallResult:
     """Write the TRACERA stdio entry into ``host``'s JSON config."""
-    entry = stdio_server_entry(repo_root)
-    entry.update(host.entry_extras)
+    entry = host.build_entry(repo_root)
 
     path = host.config_path()
     if host.project_relative is not None:
@@ -65,12 +154,9 @@ def install_into_host(host: Host, repo_root: Path, *, force: bool = False) -> In
             host.key, path, "created", f"created {path.name} with the tracera server"
         )
 
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            raise ValueError("config root is not a JSON object")
-    except (OSError, ValueError) as e:
-        return InstallResult(host.key, path, "skipped", f"cannot parse {path.name}: {e}")
+    data, had_comments, error = _load_config(path, jsonc=host.key in _JSONC_HOSTS)
+    if data is None:
+        return InstallResult(host.key, path, "skipped", error)
 
     container = data.setdefault(host.container_key, {})
     if not isinstance(container, dict):
@@ -87,12 +173,59 @@ def install_into_host(host: Host, repo_root: Path, *, force: bool = False) -> In
     had_previous = "tracera" in container
     container["tracera"] = entry
     _atomic_write_json(path, data)
+    detail = f"{'updated existing' if had_previous else 'added'} 'tracera' server in {path}"
+    if had_comments:
+        detail += " (comments normalised; original kept in the .bak)"
     return InstallResult(
         host.key,
         path,
         "updated" if had_previous else "installed",
-        f"{'updated existing' if had_previous else 'added'} 'tracera' server in {path}",
+        detail,
     )
+
+
+def host_config_path(host: Host, repo_root: Path) -> Path:
+    """Where ``host``'s config lives for this workspace (project hosts included)."""
+    if host.project_relative is not None:
+        return repo_root / host.project_relative
+    return host.config_path()
+
+
+def inspect_host(host: Host, repo_root: Path) -> tuple[str, str]:
+    """
+    Read-only check of whether TRACERA is registered in ``host``.
+
+    Returns ``(status, detail)`` with status one of ``installed`` (entry present
+    and current), ``outdated`` (present but differs from what we would write),
+    ``missing``, or ``unreadable``. Used by ``tracera integrate doctor`` and by
+    ``apply`` to avoid rewriting a config that is already correct.
+    """
+    path = host_config_path(host, repo_root)
+
+    if host.key == "codex":
+        if not path.exists():
+            return "missing", f"{path} does not exist"
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError as e:
+            return "unreadable", f"cannot read {path}: {e}"
+        if "[mcp_servers.tracera]" not in content:
+            return "missing", "no [mcp_servers.tracera] block"
+        if _toml_server_block(repo_root).strip() in content:
+            return "installed", str(path)
+        return "outdated", "block present but points elsewhere"
+
+    if not path.exists():
+        return "missing", f"{path} does not exist"
+    data, _had_comments, error = _load_config(path, jsonc=host.key in _JSONC_HOSTS)
+    if data is None:
+        return "unreadable", error
+    container = data.get(host.container_key)
+    if not isinstance(container, dict) or "tracera" not in container:
+        return "missing", f"no 'tracera' entry under '{host.container_key}'"
+    if _entry_matches(container["tracera"], host.build_entry(repo_root)):
+        return "installed", str(path)
+    return "outdated", "entry present but differs from the current layout"
 
 
 # ── Codex CLI (TOML) ──────────────────────────────────────────────────────────
@@ -151,4 +284,10 @@ def install_codex(repo_root: Path, *, force: bool = False) -> InstallResult:
     return InstallResult(host, path, "created", f"created {path} with the tracera block")
 
 
-__all__ = ["InstallResult", "install_into_host", "install_codex"]
+__all__ = [
+    "InstallResult",
+    "host_config_path",
+    "inspect_host",
+    "install_codex",
+    "install_into_host",
+]

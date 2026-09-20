@@ -40,6 +40,17 @@ class Host:
     entry_extras: dict[str, Any] = field(default_factory=dict)
     #: VS Code mcp.json lives in the project, not next to the host config
     project_relative: str | None = None
+    #: reshape the canonical stdio entry into whatever this host expects.
+    #: Default (None) writes it verbatim.
+    entry_transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None
+
+    def build_entry(self, repo_root: Path) -> dict[str, Any]:
+        """Canonical stdio entry, shaped for this host."""
+        entry = dict(stdio_server_entry(repo_root))
+        entry.update(self.entry_extras)
+        if self.entry_transform is not None:
+            entry = self.entry_transform(entry)
+        return entry
 
 
 def _home(*parts: str) -> Path:
@@ -118,6 +129,100 @@ def _antigravity_path() -> Path:
     return _home(".antigravity", "mcp_config.json")
 
 
+def _vscode_globalstorage(ext_id: str, filename: str) -> Path:
+    """Shared helper for VS Code extension globalStorage configs."""
+    if sys.platform == "win32":
+        appdata = os.environ.get("APPDATA", str(_home("AppData", "Roaming")))
+        base = Path(appdata) / "Code" / "User" / "globalStorage"
+    elif sys.platform == "darwin":
+        base = _home("Library", "Application Support", "Code", "User", "globalStorage")
+    else:
+        base = _home(".config", "Code", "User", "globalStorage")
+    return base / ext_id / "settings" / filename
+
+
+def _roo_path() -> Path:
+    return _vscode_globalstorage(
+        "rooveterinaryinc.roo-cline", "cline_mcp_settings.json"
+    )
+
+
+def _kilo_path() -> Path:
+    return _vscode_globalstorage("kilocode.kilo-code", "mcp_settings.json")
+
+
+def _zed_path() -> Path:
+    """Zed uses `context_servers`, not `mcpServers`."""
+    if sys.platform == "win32":
+        appdata = os.environ.get("APPDATA", str(_home("AppData", "Roaming")))
+        return Path(appdata) / "Zed" / "settings.json"
+    if sys.platform == "darwin":
+        return _home("Library", "Application Support", "Zed", "settings.json")
+    return _home(".config", "zed", "settings.json")
+
+
+def _continue_path() -> Path:
+    return _home(".continue", "config.json")
+
+
+def _amazonq_path() -> Path:
+    return _home(".aws", "amazonq", "mcp.json")
+
+
+def _opencode_path() -> Path:
+    """OpenCode stores MCP servers under a top-level `mcp` key."""
+    if sys.platform == "win32":
+        appdata = os.environ.get("APPDATA", str(_home("AppData", "Roaming")))
+        return Path(appdata) / "opencode" / "opencode.json"
+    return _home(".config", "opencode", "opencode.json")
+
+
+def _qwen_path() -> Path:
+    return _home(".qwen", "settings.json")
+
+
+def _kiro_path() -> Path:
+    return _home(".kiro", "settings", "mcp.json")
+
+
+def _claude_code_project() -> Path:
+    return Path(".mcp.json")
+
+
+def _cursor_project() -> Path:
+    return Path(".cursor") / "mcp.json"
+
+
+def _zed_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    """
+    Zed keeps MCP servers under `context_servers` and wants a flat command.
+
+    Shape follows Zed's documented ``context_servers`` entry; if the server does
+    not appear, check Zed's current docs — this schema has changed across
+    releases.
+    """
+    return {
+        "source": "custom",
+        "command": entry["command"],
+        "args": list(entry.get("args", [])),
+        "env": dict(entry.get("env", {})),
+    }
+
+
+def _argv_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    """
+    OpenCode wants one argv array plus an explicit transport `type`.
+
+    Shape follows OpenCode's documented ``mcp`` schema (``type: "local"``).
+    """
+    return {
+        "type": "local",
+        "command": [entry["command"], *entry.get("args", [])],
+        "enabled": True,
+        "environment": dict(entry.get("env", {})),
+    }
+
+
 HOSTS: dict[str, Host] = {
     "claude-desktop": Host("claude-desktop", "Claude Desktop", "user", _claude_desktop_path),
     "claude-code": Host("claude-code", "Claude Code", "user", _claude_code_path),
@@ -141,6 +246,48 @@ HOSTS: dict[str, Host] = {
     "cline": Host("cline", "Cline (VS Code)", "user", _cline_path),
     "gemini-cli": Host("gemini-cli", "Gemini CLI", "user", _gemini_path),
     "antigravity": Host("antigravity", "Google Antigravity", "user", _antigravity_path),
+    # ── project-scoped variants ───────────────────────────────────────────
+    # Preferred where a host supports them: the wiring travels with the repo
+    # instead of depending on the user's home-directory layout.
+    "claude-code-project": Host(
+        "claude-code-project",
+        "Claude Code (project .mcp.json)",
+        "project",
+        _claude_code_project,
+        project_relative=".mcp.json",
+    ),
+    "cursor-project": Host(
+        "cursor-project",
+        "Cursor (project .cursor/mcp.json)",
+        "project",
+        _cursor_project,
+        project_relative=".cursor/mcp.json",
+    ),
+    # ── other VS Code-family agents ───────────────────────────────────────
+    "roo": Host("roo", "Roo Code (VS Code)", "user", _roo_path),
+    "kilo": Host("kilo", "Kilo Code (VS Code)", "user", _kilo_path),
+    # ── hosts with a non-standard entry shape ─────────────────────────────
+    "zed": Host(
+        "zed",
+        "Zed",
+        "user",
+        _zed_path,
+        container_key="context_servers",
+        entry_transform=_zed_entry,
+    ),
+    "opencode": Host(
+        "opencode",
+        "OpenCode",
+        "user",
+        _opencode_path,
+        container_key="mcp",
+        entry_transform=_argv_entry,
+    ),
+    # ── other JSON-config hosts ───────────────────────────────────────────
+    "continue": Host("continue", "Continue", "user", _continue_path),
+    "amazonq": Host("amazonq", "Amazon Q Developer", "user", _amazonq_path),
+    "qwen": Host("qwen", "Qwen Code", "user", _qwen_path),
+    "kiro": Host("kiro", "Kiro", "user", _kiro_path),
 }
 
 
