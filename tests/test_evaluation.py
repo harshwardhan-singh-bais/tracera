@@ -570,3 +570,87 @@ def test_benchmark_flags_tasks_whose_usage_was_never_reported() -> None:
     markdown = report.to_markdown()
     assert "measured on 1/2 tasks" in markdown
     assert "1 of 2 task(s) reported no token usage" in markdown
+
+
+def test_a_hung_task_is_abandoned_instead_of_hanging_the_run() -> None:
+    """
+    A provider call that never returns must not silence the whole benchmark.
+
+    A real `eval agent` run was killed at 9m45s with its log frozen after a
+    successful HTTP 200 and no report written at all. The budget abandons that
+    task and lets the run finish with something to read.
+    """
+    import asyncio
+
+    from tracera.evaluation.agent_benchmark import AgentBenchmark
+
+    async def never_returns(task: str) -> dict:
+        await asyncio.sleep(3600)
+        return {"success": True}
+
+    report = asyncio.run(
+        AgentBenchmark(never_returns, tasks=["stuck"], task_timeout_s=0.05).run()
+    )
+
+    result = report.results[0]
+    assert result.timed_out is True, "a hung task was not marked as timed out"
+    assert result.success is False, "a timed-out task counted as a success"
+    assert "timed out" in (result.error or "")
+    assert report.tasks_timed_out == 1
+    assert report.to_dict()["tasks_timed_out"] == 1
+    assert "1 of 1 task(s) timed out" in report.to_markdown()
+
+
+def test_a_runner_that_ignores_cancellation_cannot_stall_the_guard() -> None:
+    """
+    The cancelled task is deliberately not awaited.
+
+    ``asyncio.wait_for`` waits for the cancellation to complete, so a runner that
+    catches ``CancelledError`` and carries on would hang inside the very guard
+    meant to prevent hanging. This asserts the benchmark returns on its own
+    budget regardless of what the abandoned task does.
+
+    The runner below ignores cancellation for 0.3s — long enough to be caught,
+    short enough that ``asyncio.run``'s shutdown does not stall the test suite.
+    """
+    import asyncio
+    import time
+
+    from tracera.evaluation.agent_benchmark import AgentBenchmark
+
+    async def swallows_cancellation(task: str) -> dict:
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            await asyncio.sleep(0.3)
+        return {"success": True}
+
+    async def scenario() -> tuple[object, float]:
+        bench = AgentBenchmark(swallows_cancellation, tasks=["stuck"], task_timeout_s=0.05)
+        started = time.perf_counter()
+        report = await bench.run()
+        return report, time.perf_counter() - started
+
+    report, elapsed = asyncio.run(scenario())
+
+    assert report.tasks_timed_out == 1
+    assert elapsed < 0.25, (
+        f"the guard waited {elapsed:.2f}s for a runner that ignored cancellation"
+    )
+
+
+def test_a_budget_of_zero_disables_the_timeout() -> None:
+    """0 means "no limit", so a slow-but-working task is never cut off."""
+    import asyncio
+
+    from tracera.evaluation.agent_benchmark import AgentBenchmark
+
+    async def quick(task: str) -> dict:
+        await asyncio.sleep(0.01)
+        return {"success": True, "tokens_in": 5, "tokens_out": 1, "usage_reported": True}
+
+    report = asyncio.run(AgentBenchmark(quick, tasks=["t"], task_timeout_s=0).run())
+
+    assert report.results[0].success is True
+    assert report.results[0].timed_out is False
+    assert report.tasks_timed_out == 0
