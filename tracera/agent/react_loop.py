@@ -506,6 +506,11 @@ class ReActAgent:
                     "iterations": iteration + 1,
                     "tool_calls": self._tool_call_count,
                     "total_tokens": conversation.stats.total_tokens,
+                    # Split in/out as well as the sum: the benchmark reports
+                    # tokens_in and tokens_out separately, and a runner that can
+                    # only see the total has to invent the split or report zero.
+                    "tokens_in": conversation.stats.total_tokens_in,
+                    "tokens_out": conversation.stats.total_tokens_out,
                     "total_latency_ms": conversation.stats.total_latency_ms,
                     # The model the API actually reported for THIS response —
                     # lets the UI prove which backend really answered.
