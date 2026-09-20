@@ -7,9 +7,36 @@ Defines the Tool ABC and ToolResult that all coding tools implement.
 from __future__ import annotations
 
 import abc
+import inspect
 import time
 from dataclasses import dataclass, field
 from typing import Any
+
+from tracera.logging import get_logger
+
+log = get_logger("tools.base")
+
+
+def _accepted_kwargs(func: Any) -> set[str] | None:
+    """
+    Names ``func`` accepts as keyword arguments, or None if it takes ``**kwargs``.
+
+    None means "do not filter": a tool that declares ``**kwargs`` has opted into
+    whatever it is handed.
+    """
+    try:
+        signature = inspect.signature(func)
+    except (TypeError, ValueError):  # pragma: no cover — builtins, C callables
+        return None
+    for parameter in signature.parameters.values():
+        if parameter.kind is inspect.Parameter.VAR_KEYWORD:
+            return None
+    return {
+        name
+        for name, parameter in signature.parameters.items()
+        if parameter.kind
+        in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+    }
 
 
 @dataclass
@@ -117,8 +144,29 @@ class Tool(abc.ABC):
         """
         Validate arguments and execute the tool.
         Catches all exceptions and wraps them in ToolResult.fail().
+
+        Unknown keyword arguments are dropped with a warning rather than left to
+        raise ``TypeError``. Models confuse similar tools' parameter names often
+        enough to matter — a live run passed ``grep``'s
+        ``file_extensions``/``max_results``/``path`` to ``search_code`` — and a
+        hard failure there costs the entire turn even though the arguments it did
+        send were usually exactly what the tool wanted.
+
+        A missing *required* argument still raises, so genuine misuse is not
+        hidden: only the surplus is discarded.
         """
         t0 = time.perf_counter()
+        accepted = _accepted_kwargs(self.execute)
+        if accepted is not None:
+            unknown = sorted(name for name in arguments if name not in accepted)
+            if unknown:
+                log.warning(
+                    "Tool %s: ignoring unknown argument(s) %s (accepts: %s)",
+                    self.name,
+                    ", ".join(unknown),
+                    ", ".join(sorted(accepted)),
+                )
+                arguments = {k: v for k, v in arguments.items() if k in accepted}
         try:
             result = await self.execute(**arguments)
         except Exception as e:
