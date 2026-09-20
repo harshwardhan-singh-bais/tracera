@@ -75,11 +75,21 @@ def _setup() -> None:
     WorkspaceLifecycle(settings.tracera_data_dir).initialise()
 
 
-def _build_agent(settings=None, workspace_path: Path | None = None, retrieval_pipeline=None):
+def _build_agent(
+    settings=None,
+    workspace_path: Path | None = None,
+    retrieval_pipeline=None,
+    tool_filter=None,
+):
     """Build a ReActAgent from current settings.
 
     If retrieval_pipeline is provided, the agent is extended with code-search
     tools (Phase 28) and a retrieval-aware system prompt (Phase 31).
+
+    tool_filter is a predicate over tool names; a tool is kept only when it
+    returns True. It is applied *after* the retrieval tools are added, so an
+    ablation arm can drop them. Without it the "no retrieval" arm and the
+    "+hybrid" arm are the same agent, and the study silently measures nothing.
     """
     if settings is None:
         settings = _get_settings()
@@ -116,6 +126,14 @@ def _build_agent(settings=None, workspace_path: Path | None = None, retrieval_pi
             retrieval_pipeline=retrieval_pipeline,
             workspace=workspace,
         )
+
+    # Ablation support: drop the tools an arm is meant to do without. Applied
+    # *after* the retrieval tools are registered, so the filter can see them —
+    # filtering earlier would leave every arm with the same tool set.
+    if tool_filter is not None:
+        for tool_name in list(registry.names):
+            if not tool_filter(tool_name):
+                registry.unregister(tool_name)
 
     # Provider with automatic failover across all configured APIs
     provider = _build_provider(settings)
@@ -2285,7 +2303,11 @@ def eval_agent(
 
     from tracera.evaluation.agent_benchmark import AgentBenchmark
 
-    agent, _, prov = _build_agent(settings, ws_path)
+    # The benchmark exists to measure an agent *with* code intelligence. Without
+    # the pipeline the agent is built with no retrieval tools at all, so the
+    # report would describe a plain agent while claiming to describe TRACERA.
+    pipeline = _build_retrieval_pipeline(settings, ws_path)
+    agent, _, prov = _build_agent(settings, ws_path, pipeline)
 
     async def runner(task: str) -> dict:
         outcome = {"tool_names": set()}
@@ -2341,12 +2363,20 @@ def eval_ablation(
     from tracera.evaluation.ablation import AblationConfig, AblationFramework
 
     # Build an agent runner per ablation config, then benchmark it.
+    pipeline = _build_retrieval_pipeline(settings, ws_path)
+
     async def build_agent(config: AblationConfig):
-        agent, _, prov = _build_agent(settings, ws_path)
-        enabled = config
+        # A "no retrieval" arm must actually lack the retrieval tools. The
+        # filter was previously computed and then dropped on the floor, and the
+        # pipeline was never passed, so every arm ran the identical agent and
+        # the study compared six copies of itself.
         tool_filter = None
-        if not (enabled.bm25 or enabled.dense or enabled.hybrid):
-            tool_filter = lambda name: not name.startswith(("search_", "find_", "get_"))
+        if not (config.bm25 or config.dense or config.hybrid):
+            tool_filter = lambda name: not name.startswith(("search_", "find_", "get_"))  # noqa: E731
+
+        agent, _, prov = _build_agent(
+            settings, ws_path, pipeline, tool_filter=tool_filter
+        )
 
         async def runner(task: str) -> dict:
             outcome = {"tool_names": set()}

@@ -120,6 +120,15 @@ class AblationReport:
         best = self.best_arm()
         if best:
             lines.append(f"\n**Best arm: {best}**")
+        lines.append(
+            "\n> **Read the arms with care.** `_build_retrieval_pipeline` takes no "
+            "per-component flags, so every arm that enables retrieval today is "
+            "built from the *same* pipeline. Only `agent` (no retrieval tools at "
+            "all) genuinely differs; the `+bm25` / `+dense` / `+hybrid` / "
+            "`+reranker` / `+graph` rows are one configuration printed five "
+            "times. Do not read them as component attribution until the pipeline "
+            "builder accepts an ablation config."
+        )
         return "\n".join(lines)
 
     def to_dict(self) -> dict[str, Any]:
