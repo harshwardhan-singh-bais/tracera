@@ -18,6 +18,10 @@ log = get_logger("retrieval.vector_store")
 
 _TABLE_NAME = "code_chunks"
 
+#: LanceDB `WHERE` clauses are parsed per statement, so a single delete holding
+#: tens of thousands of ids is both a long expression and a long scan. Batch it.
+_DELETE_BATCH = 500
+
 
 def _quote(value: str) -> str:
     """
@@ -166,6 +170,53 @@ class VectorStore:
 
         table.add(rows)
         log.debug("Upserted %d chunks into LanceDB", len(rows))
+
+    def evict_files_not_in(self, keep: set[str]) -> int:
+        """
+        Drop every row whose ``file_path`` is not in ``keep``.
+
+        ``upsert_chunks`` overwrites by *id*, so a file that is simply no longer
+        *scanned* — because a `.gitignore` was edited (`.next/` was added to the
+        scanner defaults for exactly this reason) or because a directory was
+        renamed — leaves its old chunks behind forever. Nothing else removes
+        them: ``delete_by_file`` is only called for files a run watched
+        disappear. Measured on this workspace, that had accumulated 21,351
+        stale ``docs-site/.next/**`` rows against 11,916 live ones — 63.9% of
+        the table, all of it reachable by dense search.
+
+        ``keep`` must be the complete set of currently-indexable files. Passing
+        a partial set (e.g. only changed files) would delete the rest of the
+        index, so callers should take it straight from a full scan.
+
+        Returns the number of rows removed.
+        """
+        before = self.count
+        if before == 0:
+            return 0
+        table = self._get_or_create_table()
+        # LanceDB has no "NOT IN", so delete by id. Ids come from our own
+        # indexer (12 hex chars), never from user input, but quote anyway.
+        table_arrow = table.to_arrow()
+        stale_ids = [
+            str(chunk_id)
+            for chunk_id, path in zip(
+                table_arrow.column("id").to_pylist(),
+                table_arrow.column("file_path").to_pylist(),
+            )
+            if str(path) not in keep
+        ]
+        if not stale_ids:
+            log.debug("Vector store eviction: nothing stale")
+            return 0
+        for start in range(0, len(stale_ids), _DELETE_BATCH):
+            batch = stale_ids[start : start + _DELETE_BATCH]
+            id_list = ", ".join(f"'{i}'" for i in batch)
+            table.delete(f"id IN ({id_list})")
+        removed = before - self.count
+        log.info(
+            "Evicted %d stale vectors (%d rows referenced dropped files)", removed, len(stale_ids)
+        )
+        return removed
 
     # ── Search ────────────────────────────────────────────────────────────────
 

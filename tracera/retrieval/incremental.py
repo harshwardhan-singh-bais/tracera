@@ -249,6 +249,7 @@ class IncrementalIndexer:
             "deleted": len(deleted_paths),
             "skipped": len(current_files) - len(new_files) - len(modified_files),
             "chunks_indexed": 0,
+            "vectors_evicted": 0,
         }
 
         # Process deletions
@@ -256,6 +257,17 @@ class IncrementalIndexer:
             self._remove_file(path)
             self._graph.remove_file(path)
             manifest.pop(path, None)
+
+        # Evict vectors for files the scanner no longer yields. `deleted_paths`
+        # above only covers files this run watched disappear from the manifest;
+        # a file that stops being *scanned* — because a .gitignore gained a
+        # pattern, or a directory was renamed — is never in `deleted_paths` and
+        # so was previously never removed. That is how .next/ build output grew
+        # to 63.9% of the table. `current_files` is a full scan, so the keep-set
+        # is complete and this cannot drop anything still live.
+        keep = {f.path for f in current_files}
+        evicted = self._vector_store.evict_files_not_in(keep)
+        stats["vectors_evicted"] = evicted
 
         # Process new + modified files
         to_index = new_files + modified_files
