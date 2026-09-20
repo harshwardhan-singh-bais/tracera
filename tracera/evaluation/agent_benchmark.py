@@ -57,6 +57,10 @@ class AgentTaskResult:
     tokens_out: int = 0
     latency_ms: float = 0.0
     cost_usd: float = 0.0
+    #: False when the provider reported no usage. Without this a run that failed
+    #: after five tool calls is indistinguishable from a free one, and its 0 gets
+    #: averaged in as though it were a measurement.
+    usage_reported: bool = False
 
     @property
     def total_tokens(self) -> int:
@@ -73,6 +77,7 @@ class AgentTaskResult:
             "retrieval_calls": self.retrieval_calls,
             "tokens_in": self.tokens_in,
             "tokens_out": self.tokens_out,
+            "usage_reported": self.usage_reported,
             "latency_ms": round(self.latency_ms, 2),
             "cost_usd": round(self.cost_usd, 6),
         }
@@ -121,6 +126,16 @@ class AgentBenchmarkReport:
         return self._mean("retrieval_calls")
 
     @property
+    def tasks_with_usage(self) -> int:
+        """
+        How many tasks actually reported token usage.
+
+        Printed beside the mean so a 0 cannot be read as "this arm was free"
+        when it really means "the provider told us nothing".
+        """
+        return sum(1 for r in self.results if r.usage_reported)
+
+    @property
     def mean_tokens(self) -> float:
         return self._mean("total_tokens")
 
@@ -144,12 +159,14 @@ class AgentBenchmarkReport:
             "mean_tool_calls": round(self.mean_tool_calls, 2),
             "mean_retrieval_calls": round(self.mean_retrieval_calls, 2),
             "mean_tokens": round(self.mean_tokens, 1),
+            "tasks_with_usage": self.tasks_with_usage,
             "mean_latency_ms": round(self.mean_latency_ms, 2),
             "mean_cost_usd": round(self.mean_cost_usd, 6),
             "results": [r.to_dict() for r in self.results],
         }
 
     def to_markdown(self) -> str:
+        unmeasured = self.n - self.tasks_with_usage
         lines = [
             f"# Agent benchmark: {self.name}",
             "",
@@ -159,11 +176,21 @@ class AgentBenchmarkReport:
             f"- Mean iterations: {self.mean_iterations:.1f}",
             f"- Mean tool calls: {self.mean_tool_calls:.1f} "
             f"(retrieval: {self.mean_retrieval_calls:.1f})",
-            f"- Mean tokens: {self.mean_tokens:,.0f}",
+            f"- Mean tokens: {self.mean_tokens:,.0f} "
+            f"(measured on {self.tasks_with_usage}/{self.n} tasks)",
             f"- Mean latency: {self.mean_latency_ms:.0f} ms",
             f"- Mean cost: ${self.mean_cost_usd:.4f}",
             "",
         ]
+        if unmeasured:
+            lines += [
+                f"> **{unmeasured} of {self.n} task(s) reported no token usage.** "
+                "Their `0` is *unknown*, not measured — a run that spent several "
+                "iterations and tool calls cannot have cost nothing. Read the "
+                "token mean as covering only the "
+                f"{self.tasks_with_usage} task(s) that reported usage.",
+                "",
+            ]
         return "\n".join(lines)
 
 
@@ -216,6 +243,12 @@ class AgentBenchmark:
         result.tool_calls = int(outcome.get("tool_calls", 0))
         result.tokens_in = int(outcome.get("tokens_in", 0))
         result.tokens_out = int(outcome.get("tokens_out", 0))
+        # Trust the runner's flag when it supplies one; otherwise infer from the
+        # numbers, so a third-party runner still gets the warning rather than
+        # silently reporting zero as fact.
+        result.usage_reported = bool(
+            outcome.get("usage_reported", result.tokens_in or result.tokens_out)
+        )
 
         tool_names = set(outcome.get("tool_names") or [])
         result.retrieval_calls = (
