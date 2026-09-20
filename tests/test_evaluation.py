@@ -5,6 +5,8 @@ retrieval benchmark, agent benchmark, ablation framework.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from tracera.evaluation.ablation import (
@@ -238,3 +240,99 @@ async def test_ablation_framework_runs_arms():
     assert report.best_arm() is not None
     md = report.to_markdown()
     assert "Configuration" in md
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Regression: the benchmark must be able to measure something
+# ════════════════════════════════════════════════════════════════════════════
+
+
+def test_recall_cannot_exceed_one_when_chunks_repeat_a_file() -> None:
+    """
+    Recall counts *ground-truth items* hit, not hits.
+
+    Retrieval normally returns several chunks from the same file. Counting hits
+    let one ground-truth file contribute more than once, and the benchmark
+    reported recall@10 of 1.45 — a value recall cannot take.
+    """
+    hits = [
+        RetrievalHit(doc_id=f"c{i}", score=1.0, file_path="a/b.py")
+        for i in range(5)
+    ]
+    # Two ground-truth items; only one of them (the file) is present.
+    assert recall_at_k(hits, ["a/b.py", "SomeSymbol"], k=10) == 0.5
+
+    # Even with a single item and many hits, recall is capped at 1.0.
+    assert recall_at_k(hits, ["a/b.py"], k=10) == 1.0
+
+
+def test_grep_baseline_reports_relative_paths_and_content(tmp_path) -> None:
+    """
+    The grep baseline must be matchable, and must report the context it costs.
+
+    It returned absolute Windows paths while ground truth is workspace-relative,
+    so it scored 0.000 on every query despite costing ~33s each — which reads as
+    "grep is terrible" rather than "the baseline can never match". It also
+    reported empty content, so its context size was structurally 0 bytes and the
+    token comparison could not be made at all.
+    """
+    from tracera.evaluation.strategies import GrepStrategy
+
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "scanner.py").write_text(
+        "def scan():\n    pass\n# nested gitignore handling\n", encoding="utf-8"
+    )
+    (tmp_path / "other.py").write_text("unrelated = True\n", encoding="utf-8")
+
+    hits = GrepStrategy(tmp_path)._retrieve("nested gitignore handling", 5)
+
+    assert hits, "grep returned nothing for a query whose terms are present"
+    top = hits[0]
+    assert not Path(top.file_path).is_absolute(), top.file_path
+    assert top.file_path == "pkg/scanner.py", top.file_path
+    assert top.content, "empty content means the baseline reports 0 context bytes"
+
+
+def test_grep_baseline_ignores_function_words(tmp_path) -> None:
+    """
+    A natural-language query must not match every file on the word "the".
+
+    The baseline previously required *all* query tokens to appear, so a query
+    containing function words matched nothing; relaxing that naively would have
+    matched everything instead.
+    """
+    from tracera.evaluation.strategies import GrepStrategy
+
+    (tmp_path / "hit.py").write_text("nested = 1\n", encoding="utf-8")
+    (tmp_path / "miss.py").write_text("nothing = 1\n", encoding="utf-8")
+
+    hits = GrepStrategy(tmp_path)._retrieve("how does the nested work", 5)
+
+    assert [h.file_path for h in hits] == ["hit.py"]
+
+
+def test_grep_baseline_never_enters_skipped_directories(tmp_path) -> None:
+    """
+    The skip-list must prune the walk, not just filter its results.
+
+    ``rglob("*")`` descended into ``.venv`` / ``node_modules`` and discarded the
+    entries afterwards, so any repo carrying one paid a full traversal of tens of
+    thousands of files on *every* query (~15s each here — the whole reason a
+    120-query run had to be abandoned). Vendored trees must never be entered.
+    """
+    from tracera.evaluation.strategies import GrepStrategy
+
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "real.py").write_text("nested = 1\n", encoding="utf-8")
+    for skipped in ("node_modules", ".venv", ".next", "__pycache__"):
+        vendored = tmp_path / skipped
+        vendored.mkdir()
+        (vendored / "vendored.py").write_text("nested = 1\n", encoding="utf-8")
+
+    strategy = GrepStrategy(tmp_path)
+    found = strategy._source_files()
+
+    assert [p.relative_to(tmp_path).as_posix() for p in found] == ["pkg/real.py"]
+    # Discovered once, not re-walked per query.
+    assert strategy._source_files() is found
+    assert [h.file_path for h in strategy._retrieve("nested", 5)] == ["pkg/real.py"]

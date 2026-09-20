@@ -20,6 +20,8 @@ hybrid + cross-encoder reranker (Phase 47).
 
 from __future__ import annotations
 
+import os
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -29,6 +31,41 @@ from typing import Any
 from tracera.logging import get_logger
 
 log = get_logger("evaluation.strategies")
+
+#: Function words dropped before matching. Without this, a query like "how does
+#: the scanner handle nested gitignore files" matches nearly every file in the
+#: repo on "the", and the baseline degrades into a stopword-counting contest.
+_STOPWORDS = frozenset({
+    "the", "and", "for", "are", "was", "were", "does", "did", "how", "what",
+    "where", "which", "that", "this", "with", "from", "into", "when", "why",
+    "who", "its", "not", "but", "all", "any", "can", "has", "have", "had",
+    "they", "them", "then", "than", "over", "under", "each", "more", "most",
+    "some", "such", "only", "also", "is", "be", "to", "of", "in", "on", "at",
+    "as", "by", "or", "it",
+})
+
+
+def tokenize(query: str) -> list[str]:
+    """Split a query into lowercase word tokens."""
+    return [t for t in re.split(r"[^a-z0-9_]+", query.lower()) if t]
+
+
+def _matching_lines(text: str, terms: set[str], *, limit: int = 20) -> str:
+    """
+    The lines that matched, capped — i.e. what ``grep -n`` would print.
+
+    The baseline is deliberately given *only* its matching lines, not the whole
+    file. Handing it whole files would inflate its context size and flatter
+    TRACERA; understating our own advantage is the safer error.
+    """
+    out: list[str] = []
+    for number, line in enumerate(text.splitlines(), 1):
+        low = line.lower()
+        if any(term in low for term in terms):
+            out.append(f"{number}:{line}")
+            if len(out) >= limit:
+                break
+    return "\n".join(out)
 
 
 @dataclass
@@ -152,47 +189,105 @@ class GrepStrategy(RetrievalStrategy):
         super().__init__()
         self.workspace = Path(workspace)
         self._search_fn = search_fn
+        #: File text, read once and reused across queries. Without this the
+        #: baseline re-reads the whole corpus per query (~35s each on a 250-file
+        #: repo), which made a 100-query benchmark take over an hour. A real
+        #: grep tool gets the same benefit from the OS page cache.
+        self._text_cache: dict[Path, str] = {}
+        #: Greppable files, discovered once. Re-walking the tree per query made
+        #: the baseline quadratic in repo size.
+        self._files: list[Path] | None = None
 
     def _search(self, query: str) -> list[str]:
+        """Workspace-relative posix paths of matching files, best match first."""
+        return [path for path, _ in self._search_with_content(query)]
+
+    def _source_files(self) -> list[Path]:
+        """
+        Every greppable source file, discovered once and cached.
+
+        ``rglob("*")`` walks *into* skipped directories before the filter ever
+        sees them, so a repo with a ``.venv`` or ``node_modules`` paid the full
+        traversal on **every** query — ~15s each here, almost entirely inside
+        directories the baseline is not allowed to read. ``os.walk`` prunes in
+        place, so those trees are never entered at all.
+        """
+        if self._files is None:
+            found: list[Path] = []
+            for root, dirnames, filenames in os.walk(self.workspace):
+                dirnames[:] = [
+                    d
+                    for d in dirnames
+                    if d not in self._SKIP_DIRS and not d.startswith(".")
+                ]
+                for name in filenames:
+                    path = Path(root) / name
+                    if path.suffix in self._SOURCE_SUFFIXES:
+                        found.append(path)
+            found.sort()
+            self._files = found
+        return self._files
+
+    def _search_with_content(self, query: str) -> list[tuple[str, str]]:
+        """
+        Grep the workspace; return ``(relative_path, matching_text)`` pairs.
+
+        Paths come back **workspace-relative and posix-normalised**, the same
+        form every ground-truth entry and every other strategy uses. Returning
+        absolute Windows paths made the baseline unmatchable: it scored 0.000 on
+        every query while still costing 33s each, which reads as "grep is
+        terrible" rather than "the baseline can never match".
+
+        Matching is "any query term", ranked by how many distinct terms a file
+        contains. The previous all-terms rule required every word including
+        function words, so a natural-language query matched nothing at all.
+        """
         if self._search_fn is not None:
             try:
-                return list(self._search_fn(query))
+                # An injected search function returns paths only.
+                return [(str(p), "") for p in self._search_fn(query)]
             except Exception:
                 pass  # fall back to plain grep
-        # Plain recursive grep over source-ish files (no index required).
-        tokens = query.lower().split()
-        if not tokens:
+
+        terms = {t for t in tokenize(query) if len(t) >= 3 and t not in _STOPWORDS}
+        if not terms:
             return []
-        hits: list[str] = []
-        for path in self.workspace.rglob("*"):
-            if path.is_dir():
-                continue
-            parts = path.parts
-            # Never walk vendored deps / build output / hidden dirs — the
-            # baseline would read tens of thousands of files (e.g. .venv).
-            if any(part in self._SKIP_DIRS or part.startswith(".") for part in parts[:-1]):
-                continue
-            if path.suffix not in self._SOURCE_SUFFIXES:
+
+        scored: list[tuple[int, str, str]] = []
+        for path in self._source_files():
+            text = self._text_cache.get(path)
+            if text is None:
+                try:
+                    text = path.read_text(encoding="utf-8", errors="ignore")
+                except Exception:
+                    continue
+                self._text_cache[path] = text
+
+            lowered = text.lower()
+            matched = {t for t in terms if t in lowered}
+            if not matched:
                 continue
             try:
-                text = path.read_text(encoding="utf-8", errors="ignore")
-            except Exception:
-                continue
-            if all(t in text.lower() for t in tokens):
-                hits.append(str(path))
-        return hits
+                rel = path.relative_to(self.workspace).as_posix()
+            except ValueError:  # pragma: no cover - workspace is always a parent
+                rel = path.as_posix()
+            scored.append((len(matched), rel, _matching_lines(text, matched)))
+
+        # Most distinct query terms first; ties broken by path for determinism.
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        return [(rel, snippet) for _, rel, snippet in scored]
 
     def _retrieve(self, query: str, k: int) -> list[RetrievalHit]:
-        files = self._search(query)[:k]
+        found = self._search_with_content(query)[:k]
         return [
             RetrievalHit(
-                doc_id=str(f),
+                doc_id=rel,
                 score=1.0,
-                file_path=str(f),
-                content="",
+                file_path=rel,
+                content=snippet,
                 symbol=None,
             )
-            for f in files
+            for rel, snippet in found
         ]
 
 
