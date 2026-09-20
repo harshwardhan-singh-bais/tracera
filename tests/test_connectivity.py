@@ -99,6 +99,7 @@ class _FakeVectorStore:
     def __init__(self):
         self.chunks = []
         self.deleted = []
+        self.evicted_keep_sets = []
 
     def upsert_chunks(self, chunks, embeddings):
         self.chunks.extend(chunks)
@@ -108,6 +109,16 @@ class _FakeVectorStore:
 
     def search(self, query_embedding, k=10, language=None, symbol_type=None):
         return []
+
+    def evict_files_not_in(self, keep):
+        """
+        Record the keep-set; the fake stores no rows, so it evicts nothing.
+
+        Records it anyway so a caller that passes a partial set (which would
+        delete live data in the real store) is visible to the tests.
+        """
+        self.evicted_keep_sets.append(set(keep))
+        return 0
 
 
 class _FakeDense:
@@ -850,6 +861,17 @@ def test_phase_24_incremental_indexer(tmp_path):
     assert stats4["deleted"] == 1
     assert bm25.doc_count < before
     assert not SymbolGraph.load(index_dir / "symbol_graph.json").find_by_name("AuthMiddleware")
+
+    # Every run evicts against the *full* scan, never a partial set — a partial
+    # keep-set would delete live vectors from the real store. Four runs happen
+    # above, so this checks the sequence rather than a single value.
+    assert len(vector_store.evicted_keep_sets) == 4, "eviction must run every time"
+    assert all(
+        "auth.py" in keep for keep in vector_store.evicted_keep_sets[:3]
+    ), "while auth.py exists it must be in the keep-set"
+    assert vector_store.evicted_keep_sets[-1] == set(), (
+        "once auth.py is deleted the full scan is empty, so nothing may be kept"
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -86,6 +86,10 @@ def test_incremental_deletion_cleans_bm25(tmp_path: Path):
         def delete_by_file(self, file_path):
             self.deleted.append(file_path)
 
+        def evict_files_not_in(self, keep):
+            """No rows stored, nothing to evict; the indexer only needs it to exist."""
+            return 0
+
     from tracera.graph.symbol_graph import SymbolGraph
     from tracera.retrieval.bm25 import BM25Index
     from tracera.retrieval.incremental import IncrementalIndexer

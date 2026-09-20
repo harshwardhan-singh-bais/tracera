@@ -122,6 +122,10 @@ def test_incremental_indexer_builds_graph(tmp_path: Path):
         def delete_by_file(self, file_path):
             pass
 
+        def evict_files_not_in(self, keep):
+            """No rows stored, nothing to evict; the indexer only needs it to exist."""
+            return 0
+
     from tracera.retrieval.incremental import IncrementalIndexer
 
     ws = tmp_path / "ws"
