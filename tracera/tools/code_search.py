@@ -41,6 +41,57 @@ def glob_matches_path(file_path: str | None, pattern: str) -> bool:
     )
 
 
+def _suffix(file_path: Any) -> str:
+    """Extension of a path, tolerating either separator. '' when there is none."""
+    name = str(file_path or "").replace("\\", "/").rsplit("/", 1)[-1]
+    if "." not in name:
+        return ""
+    return f".{name.rsplit('.', 1)[-1]}"
+
+
+def _apply_result_filters(
+    results: list[dict[str, Any]],
+    *,
+    k: int,
+    file_pattern: str | None,
+    file_extensions: list[str] | None,
+    path: str | None,
+) -> list[dict[str, Any]]:
+    """
+    Narrow a retrieved pool by glob, extension, and path prefix.
+
+    The caller over-fetches whenever a filter is present: filtering *after*
+    retrieval while having asked for only ``k`` would silently return a
+    near-empty set for a narrow filter.
+
+    Extensions are normalised, so ``py`` and ``.py`` both work — models write it
+    either way and a silent mismatch would look like "no results".
+    """
+    if file_pattern:
+        results = [r for r in results if glob_matches_path(r.get("file_path"), file_pattern)]
+
+    if file_extensions:
+        wanted = {
+            (e if str(e).startswith(".") else f".{e}").lower() for e in file_extensions
+        }
+        results = [r for r in results if _suffix(r.get("file_path")).lower() in wanted]
+
+    if path:
+        prefix = path.replace("\\", "/").strip("/")
+        if prefix:
+            results = [
+                r
+                for r in results
+                if prefix in str(r.get("file_path") or "").replace("\\", "/")
+            ]
+
+    # Always cap at k, filter or no filter. The caller over-fetches when a
+    # filter is present, and a retriever that returns more than it was asked
+    # for must not leak the surplus into the answer — capping only in the
+    # filtered branch let `max_results=1` return three results.
+    return results[:k]
+
+
 class SearchCodeTool(Tool):
     """Search the codebase using hybrid BM25+Dense retrieval."""
 
@@ -75,6 +126,21 @@ class SearchCodeTool(Tool):
                     "'*/auth/*'). Only chunks whose file path matches are returned."
                 ),
             },
+            "file_extensions": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Optional extensions to keep, e.g. ['.py', '.ts'] ('py' also works)."
+                ),
+            },
+            "max_results": {
+                "type": "integer",
+                "description": "Number of results to return. Alias for 'k'.",
+            },
+            "path": {
+                "type": "string",
+                "description": "Optional path prefix; only chunks under it are returned.",
+            },
         },
         "required": ["query"],
     }
@@ -101,7 +167,15 @@ class SearchCodeTool(Tool):
         k: int = 5,
         language: str | None = None,
         file_pattern: str | None = None,
+        file_extensions: list[str] | None = None,
+        max_results: int | None = None,
+        path: str | None = None,
     ) -> ToolResult:
+        # `max_results` is what the other search tools in this repo call it, and
+        # models mix the two names up constantly. Accepting it keeps the
+        # retrieval call alive instead of costing the turn to a TypeError.
+        if max_results is not None:
+            k = max_results
         try:
             # An umbrella name covers every dialect indexed under it, so an
             # agent asking for "typescript" still finds .tsx components.
@@ -110,15 +184,19 @@ class SearchCodeTool(Tool):
             # Filtering happens after retrieval, so over-fetch: asking for k and
             # then discarding non-matching files would silently return a
             # near-empty result set for a narrow pattern.
-            fetch_k = k if file_pattern is None else max(k * 4, k + 20)
+            narrow = bool(file_pattern or file_extensions or path)
+            fetch_k = max(k * 4, k + 20) if narrow else k
 
             results = self._retriever.search(
                 query, k=fetch_k, language=expand_language_filter(language)
             )
-            if file_pattern:
-                results = [
-                    r for r in results if glob_matches_path(r.get("file_path"), file_pattern)
-                ][:k]
+            results = _apply_result_filters(
+                results,
+                k=k,
+                file_pattern=file_pattern,
+                file_extensions=file_extensions,
+                path=path,
+            )
 
             if not results:
                 return ToolResult.ok(
