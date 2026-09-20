@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from tracera.evaluation.agent_benchmark import (
+    DEFAULT_TASK_TIMEOUT_S,
     AgentBenchmark,
     AgentBenchmarkReport,
 )
@@ -171,12 +172,14 @@ class AblationFramework:
         *,
         verify_tests: Callable[[], bool] | None = None,
         name: str = "ablation",
+        task_timeout_s: float = DEFAULT_TASK_TIMEOUT_S,
     ) -> None:
         self.tasks = list(tasks)
         self.build_agent = build_agent
         self.configs = configs or default_ablation_configs()
         self.verify_tests = verify_tests
         self.name = name
+        self.task_timeout_s = task_timeout_s
 
     async def run(self) -> AblationReport:
         report = AblationReport(task_count=len(self.tasks))
@@ -188,6 +191,9 @@ class AblationFramework:
                 tasks=self.tasks,
                 verify_tests=self.verify_tests,
                 name=f"{self.name}:{config.name}",
+                # One arm hitting an unresponsive provider must not stall the
+                # whole study — every later arm would simply never run.
+                task_timeout_s=self.task_timeout_s,
             )
             report.arms[config.name] = await bench.run()
         return report

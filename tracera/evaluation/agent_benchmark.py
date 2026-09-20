@@ -18,6 +18,7 @@ mean tokens, mean latency, mean cost.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -41,6 +42,11 @@ RETRIEVAL_TOOLS = {
 DEFAULT_COST_PER_1M_IN = 0.30
 DEFAULT_COST_PER_1M_OUT = 1.20
 
+#: Wall-clock budget for one task. A provider call that never returns used
+#: to hang the whole benchmark silently: a real run was killed at 9m45s with
+#: its log frozen after a successful HTTP 200 and no report written.
+DEFAULT_TASK_TIMEOUT_S = 300.0
+
 
 @dataclass
 class AgentTaskResult:
@@ -61,6 +67,10 @@ class AgentTaskResult:
     #: after five tool calls is indistinguishable from a free one, and its 0 gets
     #: averaged in as though it were a measurement.
     usage_reported: bool = False
+    #: True when the task was abandoned on the wall-clock budget. Kept
+    #: separate from a plain error: a timeout means the provider never
+    #: answered, which is an infrastructure fact, not a wrong answer.
+    timed_out: bool = False
 
     @property
     def total_tokens(self) -> int:
@@ -78,6 +88,7 @@ class AgentTaskResult:
             "tokens_in": self.tokens_in,
             "tokens_out": self.tokens_out,
             "usage_reported": self.usage_reported,
+            "timed_out": self.timed_out,
             "latency_ms": round(self.latency_ms, 2),
             "cost_usd": round(self.cost_usd, 6),
         }
@@ -126,6 +137,11 @@ class AgentBenchmarkReport:
         return self._mean("retrieval_calls")
 
     @property
+    def tasks_timed_out(self) -> int:
+        """Tasks abandoned on the wall-clock budget rather than answered."""
+        return sum(1 for r in self.results if r.timed_out)
+
+    @property
     def tasks_with_usage(self) -> int:
         """
         How many tasks actually reported token usage.
@@ -160,6 +176,7 @@ class AgentBenchmarkReport:
             "mean_retrieval_calls": round(self.mean_retrieval_calls, 2),
             "mean_tokens": round(self.mean_tokens, 1),
             "tasks_with_usage": self.tasks_with_usage,
+            "tasks_timed_out": self.tasks_timed_out,
             "mean_latency_ms": round(self.mean_latency_ms, 2),
             "mean_cost_usd": round(self.mean_cost_usd, 6),
             "results": [r.to_dict() for r in self.results],
@@ -182,6 +199,14 @@ class AgentBenchmarkReport:
             f"- Mean cost: ${self.mean_cost_usd:.4f}",
             "",
         ]
+        if self.tasks_timed_out:
+            lines += [
+                f"> **{self.tasks_timed_out} of {self.n} task(s) timed out** and were "
+                "abandoned on the wall-clock budget. Their numbers describe an "
+                "unanswered provider call rather than the agent's behaviour — each "
+                "timed-out task's error field records how long it waited.",
+                "",
+            ]
         if unmeasured:
             lines += [
                 f"> **{unmeasured} of {self.n} task(s) reported no token usage.** "
@@ -216,6 +241,7 @@ class AgentBenchmark:
         name: str = "agent-benchmark",
         cost_per_1m_in: float = DEFAULT_COST_PER_1M_IN,
         cost_per_1m_out: float = DEFAULT_COST_PER_1M_OUT,
+        task_timeout_s: float = DEFAULT_TASK_TIMEOUT_S,
     ) -> None:
         self.runner = runner
         self.tasks = list(tasks or [])
@@ -225,12 +251,34 @@ class AgentBenchmark:
         self.name = name
         self.cost_per_1m_in = cost_per_1m_in
         self.cost_per_1m_out = cost_per_1m_out
+        self.task_timeout_s = task_timeout_s
 
     async def run_task(self, task: str) -> AgentTaskResult:
         result = AgentTaskResult(task=task)
         t0 = time.perf_counter()
+
+        # Run the task as its own future so the budget can be enforced without
+        # awaiting the cancellation. `asyncio.wait_for` waits for the
+        # cancellation to finish, so a runner that swallowed CancelledError would
+        # hang inside the very guard meant to prevent hanging. A budget of 0 or
+        # less means "no limit".
+        pending_task = asyncio.ensure_future(self.runner(task))
+        if self.task_timeout_s > 0:
+            done, _ = await asyncio.wait({pending_task}, timeout=self.task_timeout_s)
+            if not done:
+                pending_task.cancel()
+                result.timed_out = True
+                result.error = (
+                    f"timed out after {self.task_timeout_s:.0f}s — the provider never returned"
+                )
+                result.latency_ms = (time.perf_counter() - t0) * 1000
+                log.warning(
+                    "Task %-40s TIMED OUT after %.1fs", task[:40], self.task_timeout_s
+                )
+                return result
+
         try:
-            outcome = await self.runner(task)
+            outcome = await pending_task
         except Exception as e:
             result.error = str(e)
             result.latency_ms = (time.perf_counter() - t0) * 1000
