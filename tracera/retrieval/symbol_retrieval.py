@@ -9,6 +9,7 @@ rather than raw text chunks.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 
 from tracera.logging import get_logger
 from tracera.retrieval.hybrid import HybridRetriever
@@ -50,10 +51,13 @@ class SymbolAwareRetriever:
         self,
         query: str,
         k: int = 10,
-        language: str | None = None,
+        language: str | Sequence[str] | None = None,
     ) -> list[dict]:
         """
         Symbol-aware search.
+
+        ``language`` may be one key or several — see
+        :func:`~tracera.indexer.parser.expand_language_filter`.
 
         Returns results enriched with a '_final_score' that accounts for
         symbol name matches and type relevance.

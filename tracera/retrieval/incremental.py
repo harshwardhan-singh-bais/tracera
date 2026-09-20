@@ -190,9 +190,20 @@ class IncrementalIndexer:
         if not chunks:
             return
 
-        # BM25 — add docs
+        # BM25 — add docs. Metadata is what lets a BM25-only hit be filtered by
+        # language and located at all; without it hybrid retrieval can only
+        # rebuild such a hit as a partial row with an empty file_path.
         for chunk in chunks:
-            self._bm25.add_document(chunk.id, chunk.content)
+            self._bm25.add_document(
+                chunk.id,
+                chunk.content,
+                metadata={
+                    "file_path": chunk.file_path,
+                    "language": chunk.language,
+                    "symbol": chunk.primary_symbol or "",
+                    "symbol_type": chunk.symbol_type.value if chunk.symbol_type else "",
+                },
+            )
 
         # Dense — batch embed
         texts = [c.content for c in chunks]

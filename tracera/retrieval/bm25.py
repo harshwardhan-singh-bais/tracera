@@ -58,6 +58,11 @@ class BM25Index:
         self._inverted: dict[str, dict[str, int]] = defaultdict(dict)
         # doc_id → token count (doc length)
         self._doc_lengths: dict[str, int] = {}
+        # doc_id → chunk metadata (language, file_path, symbol…). Without this
+        # a BM25-only hit cannot be filtered by language or even located, so
+        # hybrid retrieval had to rebuild it as a partial row with an empty
+        # file_path.
+        self._metadata: dict[str, dict[str, Any]] = {}
         self._avg_doc_len: float = 0.0
         self._doc_count: int = 0
 
@@ -82,6 +87,8 @@ class BM25Index:
         self._docs[doc_id] = text
         self._tokenized[doc_id] = tokens
         self._doc_lengths[doc_id] = len(tokens)
+        if metadata:
+            self._metadata[doc_id] = dict(metadata)
         if not existed:
             self._doc_count += 1
 
@@ -109,6 +116,7 @@ class BM25Index:
         tokens = self._tokenized.pop(doc_id, [])
         self._docs.pop(doc_id, None)
         self._doc_lengths.pop(doc_id, None)
+        self._metadata.pop(doc_id, None)
         self._doc_count = max(0, self._doc_count - 1)
 
         for token in set(tokens):
@@ -166,6 +174,16 @@ class BM25Index:
     def get_document(self, doc_id: str) -> str | None:
         return self._docs.get(doc_id)
 
+    def get_metadata(self, doc_id: str) -> dict[str, Any] | None:
+        """
+        Chunk metadata recorded at index time, or None.
+
+        None means "unknown", not "empty" — an index written before metadata
+        existed returns None for every doc, and callers must treat that as
+        unfilterable rather than as a match.
+        """
+        return self._metadata.get(doc_id)
+
     # ── Persistence ───────────────────────────────────────────────────────────
 
     def save(self, path: Path) -> None:
@@ -176,6 +194,7 @@ class BM25Index:
             "tokenized": self._tokenized,
             "inverted": {k: dict(v) for k, v in self._inverted.items()},
             "doc_lengths": self._doc_lengths,
+            "metadata": self._metadata,
             "avg_doc_len": self._avg_doc_len,
             "doc_count": self._doc_count,
         }
@@ -191,6 +210,9 @@ class BM25Index:
         idx._tokenized = data["tokenized"]
         idx._inverted = defaultdict(dict, {k: dict(v) for k, v in data["inverted"].items()})
         idx._doc_lengths = data["doc_lengths"]
+        # Older indexes predate metadata; they load with none and their
+        # BM25-only hits stay unfilterable until the next re-index.
+        idx._metadata = data.get("metadata", {})
         idx._avg_doc_len = data["avg_doc_len"]
         idx._doc_count = data["doc_count"]
         log.debug("BM25 index loaded: %s (%d docs)", path, idx._doc_count)

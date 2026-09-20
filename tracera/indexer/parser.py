@@ -6,11 +6,37 @@ Integrates tree-sitter to parse source files into ASTs.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import tree_sitter
 
 from tracera.logging import get_logger
 
 log = get_logger("indexer.parser")
+
+
+# Umbrella names a user or an agent types at the CLI, mapped to the language
+# keys the index actually stores. ``.tsx`` is indexed under its own key because
+# TSX is a distinct tree-sitter grammar (only it understands JSX), so without
+# this alias ``--lang typescript`` silently returns zero frontend results.
+# ``.jsx`` needs no entry: the scanner already maps it to ``javascript``.
+LANGUAGE_ALIASES: dict[str, tuple[str, ...]] = {
+    "ts": ("typescript", "tsx"),
+    "typescript": ("typescript", "tsx"),
+}
+
+
+def expand_language_filter(name: str | None) -> list[str] | None:
+    """
+    Resolve a user-supplied ``--lang`` value into the language keys to match.
+
+    Returns ``None`` for "no filter" so callers can keep passing the value
+    straight through, and a one-element list for a language with no alias.
+    """
+    if not name:
+        return None
+    key = name.strip().lower()
+    return list(LANGUAGE_ALIASES.get(key, (key,)))
 
 
 class LanguageParser:
@@ -37,8 +63,14 @@ class LanguageParser:
             elif lang_name == "typescript":
                 import tree_sitter_typescript as ts_lang
 
-                # Typescript actually has ts and tsx, we use typescript
                 lang = tree_sitter.Language(ts_lang.language_typescript())
+            elif lang_name == "tsx":
+                import tree_sitter_typescript as ts_lang
+
+                # TSX is a separate grammar: only it understands JSX, and
+                # parsing a component file with the plain TS grammar yields a
+                # tree full of errors.
+                lang = tree_sitter.Language(ts_lang.language_tsx())
             else:
                 return None
 

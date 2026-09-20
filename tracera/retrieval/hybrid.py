@@ -7,6 +7,8 @@ Reciprocal Rank Fusion (RRF) for a configurable final ranking.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from tracera.logging import get_logger
 from tracera.retrieval.bm25 import BM25Index
 from tracera.retrieval.dense import DenseRetriever
@@ -53,19 +55,38 @@ class HybridRetriever:
         self,
         query: str,
         k: int = 10,
-        language: str | None = None,
+        language: str | Sequence[str] | None = None,
     ) -> list[dict]:
         """
         Fused hybrid search.
+
+        ``language`` may be one key or several — see
+        :func:`~tracera.indexer.parser.expand_language_filter`. Both sides are
+        filtered: BM25 candidates carry language metadata recorded at index time,
+        and a candidate whose language is *unknown* (an index predating metadata)
+        is dropped under a filter rather than guessed at.
 
         Returns:
             List of merged result dicts, sorted by descending RRF score.
             Each dict has an extra '_rrf_score' field.
         """
+        wanted = (
+            {language} if isinstance(language, str) else set(language) if language else None
+        )
+
         # --- BM25 results ---
         bm25_hits = self._bm25.search(query, k=self._fetch_k)
         bm25_scores: dict[str, float] = {}
+        bm25_meta: dict[str, dict] = {}
         for rank, (doc_id, score) in enumerate(bm25_hits):
+            meta = self._bm25.get_metadata(doc_id)
+            if wanted is not None:
+                if meta is None or meta.get("language") not in wanted:
+                    # Unfilterable or from another language — either way it does
+                    # not belong in a language-filtered result set.
+                    continue
+            if meta:
+                bm25_meta[doc_id] = meta
             bm25_scores[doc_id] = _rrf_score(rank) * self._bm25_weight
 
         # --- Dense results ---
@@ -93,9 +114,19 @@ class HybridRetriever:
             if doc_id in dense_docs:
                 row = dict(dense_docs[doc_id])
             else:
-                # BM25-only hit — reconstruct partial record
+                # BM25-only hit. Metadata recorded at index time gives it a real
+                # file_path and language; without that it used to be emitted as
+                # a locatable-nowhere partial row.
                 text = self._bm25.get_document(doc_id) or ""
-                row = {"id": doc_id, "content": text, "file_path": "", "language": ""}
+                meta = bm25_meta.get(doc_id, {})
+                row = {
+                    "id": doc_id,
+                    "content": text,
+                    "file_path": meta.get("file_path", ""),
+                    "language": meta.get("language", ""),
+                    "symbol": meta.get("symbol", ""),
+                    "symbol_type": meta.get("symbol_type", ""),
+                }
 
             row["_rrf_score"] = rrf_score
             row["_bm25_score"] = bm25_scores.get(doc_id, 0.0)

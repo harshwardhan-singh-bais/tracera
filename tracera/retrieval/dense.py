@@ -7,6 +7,8 @@ most semantically similar CodeChunks from the LanceDB vector store.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from tracera.logging import get_logger
 from tracera.retrieval.embedder import EmbeddingPipeline
 from tracera.retrieval.vector_store import VectorStore
@@ -33,7 +35,7 @@ class DenseRetriever:
         self,
         query: str,
         k: int = 10,
-        language: str | None = None,
+        language: str | Sequence[str] | None = None,
         symbol_type: str | None = None,
     ) -> list[dict]:
         """
@@ -42,7 +44,8 @@ class DenseRetriever:
         Args:
             query: Natural language or code query.
             k: Number of results.
-            language: Optional language filter.
+            language: Optional language filter; one key or several (an umbrella
+                name such as ``typescript`` expands to ``tsx`` as well).
             symbol_type: Optional symbol type filter (class/function/method).
 
         Returns:

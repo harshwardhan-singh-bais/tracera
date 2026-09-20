@@ -7,6 +7,7 @@ similarity search with optional metadata filtering.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,28 @@ from tracera.logging import get_logger
 log = get_logger("retrieval.vector_store")
 
 _TABLE_NAME = "code_chunks"
+
+
+def _quote(value: str) -> str:
+    """
+    Quote a value for a LanceDB ``where`` clause.
+
+    These values come straight from a CLI flag, so they are user-controlled and
+    previously landed in the clause unescaped — a value containing a quote
+    could break out of the literal.
+    """
+    return "'" + str(value).replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def _in_clause(column: str, values: Sequence[str]) -> str:
+    """``column = 'x'`` for one value, ``column IN ('x', 'y')`` for several."""
+    cleaned = [v for v in values if v]
+    if not cleaned:
+        raise ValueError(f"{column} filter requires at least one value")
+    quoted = ", ".join(_quote(v) for v in cleaned)
+    if len(cleaned) == 1:
+        return f"{column} = {quoted}"
+    return f"{column} IN ({quoted})"
 
 
 class VectorStore:
@@ -150,11 +173,15 @@ class VectorStore:
         self,
         query_embedding: list[float],
         k: int = 10,
-        language: str | None = None,
+        language: str | Sequence[str] | None = None,
         symbol_type: str | None = None,
     ) -> list[dict[str, Any]]:
         """
         Search for nearest neighbours.
+
+        ``language`` accepts either one key or a sequence of them (an umbrella
+        name like ``typescript`` expands to ``typescript`` + ``tsx``), which is
+        matched with ``IN`` rather than ``=``.
 
         Returns list of row dicts sorted by similarity (descending).
         """
@@ -162,9 +189,10 @@ class VectorStore:
 
         query = table.search(query_embedding).limit(k)
         if language:
-            query = query.where(f"language = '{language}'", prefilter=True)
+            langs = [language] if isinstance(language, str) else list(language)
+            query = query.where(_in_clause("language", langs), prefilter=True)
         if symbol_type:
-            query = query.where(f"symbol_type = '{symbol_type}'", prefilter=True)
+            query = query.where(_in_clause("symbol_type", [symbol_type]), prefilter=True)
 
         results = query.to_list()
         return results
