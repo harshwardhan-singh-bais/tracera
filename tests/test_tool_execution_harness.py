@@ -359,3 +359,38 @@ def test_search_code_extension_filter_normalises_and_actually_filters() -> None:
     limited = asyncio.run(tool.execute("q", max_results=1))
     assert limited.success, limited.error
     assert limited.metadata.get("count", 1) == 1 or limited.output.count("### [") == 1
+
+
+def test_search_code_caps_chunks_per_file_by_default() -> None:
+    """
+    Without a cap, one file that matches often takes the entire window.
+
+    The tool defaults to 2 chunks per file, so k=5 spans three files. Asserting
+    only that the call succeeds would pass with no cap at all, so the returned
+    file set is what gets checked.
+    """
+    import re
+
+    from tracera.tools.code_search import SearchCodeTool
+
+    class Clustered:
+        def search(self, query, k=5, language=None):
+            pool = [
+                {"file_path": f"src/{letter}.py", "content": "x" * 50, "symbol": letter}
+                for letter in ("a", "b", "c")
+                for _ in range(10)
+            ]
+            return pool[:k]
+
+    tool = SearchCodeTool(Clustered())
+
+    result = asyncio.run(tool.execute("q"))
+    assert result.success, result.error
+    files = re.findall(r"in `([^`]+)`", result.output)
+    assert len(files) == 5, f"the window was not filled: {files}"
+    assert len(set(files)) == 3, f"one file monopolised the window: {files}"
+
+    uncapped = asyncio.run(tool.execute("q", max_per_file=0))
+    assert uncapped.success, uncapped.error
+    uncapped_files = re.findall(r"in `([^`]+)`", uncapped.output)
+    assert len(set(uncapped_files)) == 1, "max_per_file=0 must disable the cap"

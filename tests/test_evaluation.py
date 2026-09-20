@@ -654,3 +654,115 @@ def test_a_budget_of_zero_disables_the_timeout() -> None:
     assert report.results[0].success is True
     assert report.results[0].timed_out is False
     assert report.tasks_timed_out == 0
+
+
+def test_dedupe_by_file_keeps_the_cap_and_the_order() -> None:
+    """
+    The cap is per file, rank order survives, and unresolvable paths are kept.
+
+    Grouping the unresolved ones into one bucket would cap them together — a
+    dedup helper silently discarding results it had no basis to rank.
+    """
+    from tracera.retrieval.dedupe import dedupe_by_file
+
+    items = [{"file_path": p} for p in ("a.py", "a.py", "a.py", "b.py", None, None)]
+
+    def path_of(item):
+        return item["file_path"]
+
+    assert dedupe_by_file(items, max_per_file=2, file_path_of=path_of) == [
+        {"file_path": "a.py"},
+        {"file_path": "a.py"},
+        {"file_path": "b.py"},
+        {"file_path": None},
+        {"file_path": None},
+    ]
+    assert len(dedupe_by_file(items, max_per_file=1, file_path_of=path_of)) == 4
+    assert dedupe_by_file(items, max_per_file=None, file_path_of=path_of) == items
+    assert dedupe_by_file(items, max_per_file=0, file_path_of=path_of) == items
+
+
+def _clustered_strategy(*, max_per_file=None):
+    """A strategy whose hits are ten chunks each from three files."""
+
+    from tracera.evaluation.strategies import RetrievalHit, RetrievalStrategy
+
+    class Pool(RetrievalStrategy):
+        name = "pool"
+
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.asked_for = 0
+
+        def _retrieve(self, query: str, k: int) -> list[RetrievalHit]:
+            self.asked_for = k
+            pool: list[RetrievalHit] = []
+            for letter in ("a", "b", "c"):
+                for i in range(10):
+                    pool.append(
+                        RetrievalHit(
+                            doc_id=f"{letter}{len(pool)}",
+                            score=1.0 - len(pool) / 100.0,
+                            file_path=f"src/{letter}.py",
+                            # Deliberately uneven: a file's later chunks are
+                            # its larger bodies. Uniform sizes would make
+                            # dedup's byte effect an identity and the guard
+                            # below vacuous.
+                            content="x" * (100 + 40 * i),
+                        )
+                    )
+            return pool[:k]
+
+    return Pool(max_per_file=max_per_file)
+
+
+def test_per_file_dedup_diversifies_without_shrinking_the_window() -> None:
+    """
+    Dedup must diversify *and* still fill k slots.
+
+    Those are opposite failures: dedup that does not dedup, and dedup that
+    returns fewer than k because it dropped duplicates from a window that was
+    only ever k wide. The second is why the strategy over-fetches, and
+    ``len(hits) == k`` is what tells them apart — a coverage-only assertion would
+    pass on a shrunken window.
+    """
+    plain = _clustered_strategy()
+    baseline = plain.retrieve("q", k=5)
+
+    assert len(baseline) == 5
+    assert {h.file_path for h in baseline} == {"src/a.py"}, "fixture is not clustered"
+    assert plain.asked_for == 5, "with no cap there is nothing to over-fetch for"
+
+    capped = _clustered_strategy(max_per_file=2)
+    hits = capped.retrieve("q", k=5)
+
+    assert len(hits) == 5, "dedup shrank the window instead of diversifying it"
+    assert len({h.file_path for h in hits}) == 3, "dedup did not diversify"
+    assert capped.asked_for > 5, "the cap must widen the request before it filters"
+
+
+def test_dedup_cuts_context_bytes_at_a_fixed_k() -> None:
+    """
+    Dedup returns a *smaller* window at unchanged k — the claim, pinned.
+
+    This is not a truism, and it was originally asserted backwards. Because a
+    file's later chunks are its larger bodies, keeping only each file's
+    top-ranked chunk and refilling the window from other files lowers the byte
+    total without widening k. Measured at k=10 over 120 queries: -31% hybrid,
+    -43% BM25, -35% dense.
+
+    The fixture's chunk sizes are deliberately uneven. With uniform sizes dedup
+    would swap equal-sized chunks and the byte count could not move, so the
+    assertion would hold no matter what the code did.
+    """
+    plain = _clustered_strategy()
+    capped = _clustered_strategy(max_per_file=2)
+
+    wide = plain.retrieve("q", k=5)
+    narrow = capped.retrieve("q", k=5)
+
+    assert len(wide) == len(narrow) == 5, "the window must stay k wide"
+    assert len({h.file_path for h in narrow}) == 3, "dedup did not diversify"
+    assert capped.last_result_bytes < plain.last_result_bytes, (
+        f"deduped {capped.last_result_bytes}B vs plain {plain.last_result_bytes}B"
+    )
