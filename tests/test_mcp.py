@@ -9,8 +9,11 @@ Phase 41: the *unified registry* merges native + MCP tools into one list.
 
 from __future__ import annotations
 
+import inspect
+import json
 import os
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -182,6 +185,107 @@ async def test_server_tool_schemas_are_valid(mcp_settings, tmp_path):
     check_edit_schema = by_name["check_edit_safe"].inputSchema
     assert check_edit_schema["type"] == "object"
     assert "symbol" in check_edit_schema["properties"]
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# MCP handler ↔ tool signature drift
+# ════════════════════════════════════════════════════════════════════════════
+
+
+def _sentinel_pipeline() -> tuple:
+    """
+    A stand-in for `_build_retrieval_pipeline`'s 10-tuple.
+
+    Tools only ever *store* these, so sentinels let us build every tool without
+    a real index. Position 1 is the symbol retriever and position -1 must expose
+    ``.graph`` — those are the two slots the server actually reads by position.
+    """
+    graph_retriever = types.SimpleNamespace(graph=types.SimpleNamespace())
+    return tuple([object() for _ in range(9)] + [graph_retriever])
+
+
+async def test_retrieval_tools_receive_the_retriever_not_the_indexer(
+    mcp_settings, tmp_path
+):
+    """
+    The pipeline's first element is the *indexer*, not a retriever.
+
+    Unpacking it as the symbol retriever hands every retrieval tool an
+    ``IncrementalIndexer``, which has no ``.search`` — so ``search_code`` failed
+    on every call while still passing every unit test.
+    """
+    server = TraceraMCPServer(mcp_settings, tmp_path)
+    pipeline = _sentinel_pipeline()
+    server._pipeline = pipeline
+
+    tool = server._get_retrieval_tool("search_code")
+    assert tool is not None, "search_code tool was not constructed"
+    assert tool._retriever is pipeline[1], (
+        "search_code got the pipeline's first element instead of the symbol "
+        "retriever — the pipeline tuple starts with the indexer"
+    )
+    assert not hasattr(pipeline[0], "search"), "sanity: indexer has no .search"
+
+
+async def test_every_handler_forwards_only_kwargs_the_tool_accepts(
+    mcp_settings, tmp_path
+):
+    """
+    Every kwarg an MCP handler forwards must be accepted by the tool's execute.
+
+    The handler signature and the tool signature live in different files and
+    drift apart: handlers advertised ``file_pattern``, ``max_depth``,
+    ``case_sensitive`` and ``include_definitions`` while the tools accepted none
+    of them, so four tools raised ``TypeError`` on *every* invocation. Nothing
+    short of actually calling them catches this, because the failure happens at
+    binding time inside the generic runner.
+    """
+    server = TraceraMCPServer(mcp_settings, tmp_path)
+    server._pipeline = _sentinel_pipeline()
+
+    forwarded: list[tuple[str, dict]] = []
+
+    async def capture(getter, tool_name, **kwargs):
+        forwarded.append((getter, tool_name, kwargs))
+        return json.dumps({"success": True})
+
+    server._run_tool = capture  # type: ignore[method-assign]
+
+    for name in ALL_MCP_TOOLS:
+        handler = getattr(server, name, None)
+        if handler is None:
+            continue
+        args = {
+            p.name: "x"
+            for p in inspect.signature(handler).parameters.values()
+            if p.default is inspect.Parameter.empty
+        }
+        try:
+            await handler(**args)
+        except Exception:  # noqa: BLE001
+            # A handler may touch the filesystem or memory before delegating;
+            # we only care about the ones that reach _run_tool.
+            continue
+
+    assert forwarded, "no handler reached _run_tool — the guard is not testing anything"
+
+    checked = 0
+    for getter, tool_name, kwargs in forwarded:
+        tool = getter(tool_name)
+        if tool is None:
+            continue
+        signature = inspect.signature(tool.execute)
+        try:
+            signature.bind(**kwargs)
+        except TypeError as exc:
+            pytest.fail(
+                f"{tool_name}: handler forwards arguments the tool does not "
+                f"accept ({exc}). forwarded={sorted(kwargs)}; "
+                f"execute accepts={list(signature.parameters)}"
+            )
+        checked += 1
+
+    assert checked >= 10, f"only validated {checked} tools — expected most"
 
 
 async def test_server_search_code_without_index_returns_hint(mcp_settings, tmp_path):

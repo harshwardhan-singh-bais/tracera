@@ -503,7 +503,13 @@ class TraceraMCPServer:
             SearchCodeTool,
         )
 
-        symbol_retriever, expander, _, _, context_engine, compressor, *_ = pipeline
+        # `_build_retrieval_pipeline` returns
+        # (indexer, symbol_retriever, expander, reranker, context_engine,
+        #  compressor, embedder, vector_store, bm25, graph_retriever) — the
+        # leading indexer is *not* a retriever, so it must be consumed first.
+        # Skipping it hands every retrieval tool an IncrementalIndexer, which
+        # has no `.search` and fails at call time rather than at construction.
+        _, symbol_retriever, expander, _, context_engine, compressor, *_ = pipeline
         graph_retriever = pipeline[-1]
         graph = graph_retriever.graph
 
@@ -547,6 +553,7 @@ class TraceraMCPServer:
             CalculatePageRankTool,
             FindDeadCodeTool,
             FindImplementationsTool,
+            FindImportersTool,
             FindReferencesTool,
             GetBlastRadiusTool,
             GetCallHierarchyTool,
@@ -573,6 +580,11 @@ class TraceraMCPServer:
             "find_dead_code": lambda: FindDeadCodeTool(pipeline),
             "get_changed_symbols": lambda: GetChangedSymbolsTool(None, pipeline),
             "get_hotspots": lambda: GetHotspotsTool(None, pipeline),
+            # Advertised but never wired: without these two entries the getter
+            # returns None and the tool reports "run tracera index first" no
+            # matter how fresh the index is.
+            "find_importers": lambda: FindImportersTool(pipeline),
+            "search_ast": lambda: StructuralSearchTool(pipeline),
             "find_references": lambda: FindReferencesTool(pipeline),
             "find_implementations": lambda: FindImplementationsTool(pipeline),
             "search_symbols": lambda: SearchSymbolsTool(pipeline),
@@ -971,33 +983,33 @@ class TraceraMCPServer:
             self._get_ast_tool, "find_importers", path=path, max_results=max_results
         )
 
-    async def get_blast_radius(self, symbol: str, max_depth: int = 4) -> str:
+    async def get_blast_radius(self, symbol: str, depth: int = 4) -> str:
         """Compute blast radius — what breaks if a symbol changes.
 
         Args:
             symbol: Symbol name to compute blast radius for.
-            max_depth: Maximum traversal depth (default 4).
+            depth: Maximum traversal depth (default 4).
         """
         return await self._run_tool(
-            self._get_ast_tool, "get_blast_radius", symbol=symbol, max_depth=max_depth
+            self._get_ast_tool, "get_blast_radius", symbol=symbol, depth=depth
         )
 
     async def get_call_hierarchy(
-        self, symbol: str, direction: str = "both", max_depth: int = 3
+        self, symbol: str, direction: str = "both", depth: int = 3
     ) -> str:
         """Trace callers and callees N levels deep through the call graph.
 
         Args:
             symbol: Symbol to trace.
             direction: "callers", "callees", or "both" (default both).
-            max_depth: Maximum depth (default 3).
+            depth: Maximum depth (default 3).
         """
         return await self._run_tool(
             self._get_ast_tool,
             "get_call_hierarchy",
             symbol=symbol,
             direction=direction,
-            max_depth=max_depth,
+            depth=depth,
         )
 
     async def find_dead_code(self) -> str:
@@ -1016,22 +1028,18 @@ class TraceraMCPServer:
         """
         return await self._run_tool(self._get_ast_tool, "get_hotspots", top_n=top_n)
 
-    async def search_ast(
-        self, query: str, preset: str | None = None, language: str | None = None
-    ) -> str:
-        """Cross-language AST pattern matching (anti-patterns, structural queries).
+    async def search_ast(self, query: str, max_results: int = 30) -> str:
+        """Structural AST search over the symbol graph.
 
         Args:
-            query: Pattern to search for (e.g. 'call:*.unwrap()', 'string:/password/i').
-            preset: Preset detector (empty_catch, bare_except, hardcoded_secret, eval_exec, todo_fixme, magic_number).
-            language: Language filter (python, javascript, typescript, etc.).
+            query: Structural pattern. Understood forms are
+                ``<fn> calls <target>``, ``<class> inherits <base>``,
+                ``try/except`` and ``unsafe`` (eval/exec call sites).
+            max_results: Maximum number of matches to return (default 30).
         """
-        kwargs: dict[str, Any] = {"query": query}
-        if preset:
-            kwargs["preset"] = preset
-        if language:
-            kwargs["language"] = language
-        return await self._run_tool(self._get_ast_tool, "search_ast", **kwargs)
+        return await self._run_tool(
+            self._get_ast_tool, "search_ast", pattern=query, max_results=max_results
+        )
 
     async def get_class_hierarchy(self, class_name: str) -> str:
         """Traverse inheritance: base classes, subclasses, and methods.

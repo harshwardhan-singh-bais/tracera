@@ -11,6 +11,7 @@ Exposes the retrieval pipeline as native tools that the ReAct agent can call:
 
 from __future__ import annotations
 
+import fnmatch
 from typing import Any
 
 from tracera.graph.symbol_graph import SymbolGraph
@@ -18,6 +19,26 @@ from tracera.logging import get_logger
 from tracera.tools.base import Tool, ToolResult
 
 log = get_logger("tools.code_search")
+
+
+def glob_matches_path(file_path: str | None, pattern: str) -> bool:
+    """
+    Match an indexed file path against a user-supplied glob.
+
+    Indexed paths come back with whatever separator the OS used, so both sides
+    are normalised to ``/`` first. ``fnmatch``'s ``*`` already crosses ``/``, so
+    ``src/**/*.py`` and ``*.py`` both behave the way an agent expects — matching
+    a bare ``*.py`` at any depth rather than only at the repo root.
+    """
+    if not file_path or not pattern:
+        return False
+    path = file_path.replace("\\", "/")
+    pat = pattern.replace("\\", "/")
+    return (
+        fnmatch.fnmatch(path, pat)
+        or fnmatch.fnmatch(path, f"*/{pat}")
+        or fnmatch.fnmatch(path.rsplit("/", 1)[-1], pat)
+    )
 
 
 class SearchCodeTool(Tool):
@@ -42,7 +63,17 @@ class SearchCodeTool(Tool):
             },
             "language": {
                 "type": "string",
-                "description": "Optional language filter (python, javascript, typescript, etc.).",
+                "description": (
+                    "Optional language filter (python, javascript, typescript, etc.). "
+                    "'typescript' and 'ts' also match .tsx files."
+                ),
+            },
+            "file_pattern": {
+                "type": "string",
+                "description": (
+                    "Optional glob pattern to filter files (e.g. 'src/**/*.py', "
+                    "'*/auth/*'). Only chunks whose file path matches are returned."
+                ),
             },
         },
         "required": ["query"],
@@ -64,9 +95,31 @@ class SearchCodeTool(Tool):
     def parameters_schema(self) -> dict[str, Any]:
         return self.parameters
 
-    async def execute(self, query: str, k: int = 5, language: str | None = None) -> ToolResult:
+    async def execute(
+        self,
+        query: str,
+        k: int = 5,
+        language: str | None = None,
+        file_pattern: str | None = None,
+    ) -> ToolResult:
         try:
-            results = self._retriever.search(query, k=k, language=language)
+            # An umbrella name covers every dialect indexed under it, so an
+            # agent asking for "typescript" still finds .tsx components.
+            from tracera.indexer.parser import expand_language_filter
+
+            # Filtering happens after retrieval, so over-fetch: asking for k and
+            # then discarding non-matching files would silently return a
+            # near-empty result set for a narrow pattern.
+            fetch_k = k if file_pattern is None else max(k * 4, k + 20)
+
+            results = self._retriever.search(
+                query, k=fetch_k, language=expand_language_filter(language)
+            )
+            if file_pattern:
+                results = [
+                    r for r in results if glob_matches_path(r.get("file_path"), file_pattern)
+                ][:k]
+
             if not results:
                 return ToolResult.ok(
                     tool_name=self.name,
@@ -255,6 +308,14 @@ class FindSymbolTool(Tool):
                 "description": "Type of symbol to look for.",
                 "default": "any",
             },
+            "case_sensitive": {
+                "type": "boolean",
+                "description": (
+                    "Match the symbol name exactly, including case. "
+                    "Default false, so 'memorystore' still finds 'MemoryStore'."
+                ),
+                "default": False,
+            },
         },
         "required": ["name"],
     }
@@ -267,18 +328,23 @@ class FindSymbolTool(Tool):
     def parameters_schema(self) -> dict[str, Any]:
         return self.parameters
 
-    async def execute(self, name: str, symbol_type: str = "any") -> ToolResult:
+    async def execute(
+        self, name: str, symbol_type: str = "any", case_sensitive: bool = False
+    ) -> ToolResult:
         try:
             query = f"definition of {name}"
             if symbol_type != "any":
                 query = f"{symbol_type} {name}"
 
             results = self._retriever.search(query, k=5)
-            # Prioritize exact symbol name matches
-            results.sort(
-                key=lambda r: (r.get("symbol") or "").lower() == name.lower(),
-                reverse=True,
-            )
+            # Prioritize exact symbol name matches. Default is case-insensitive
+            # so `memorystore` still finds `MemoryStore`; an agent that knows
+            # the exact spelling can opt into strict matching.
+            if case_sensitive:
+                exact = lambda r: (r.get("symbol") or "") == name  # noqa: E731
+            else:
+                exact = lambda r: (r.get("symbol") or "").lower() == name.lower()  # noqa: E731
+            results.sort(key=exact, reverse=True)
 
             if not results:
                 return ToolResult.ok(
@@ -439,6 +505,19 @@ class FindReferencesTool(Tool):
                 "type": "string",
                 "description": "Name of the symbol to find references for.",
             },
+            "include_definitions": {
+                "type": "boolean",
+                "description": (
+                    "Also report symbols that match by name but have no recorded "
+                    "callers. Default false — those only prove the symbol exists."
+                ),
+                "default": False,
+            },
+            "max_results": {
+                "type": "integer",
+                "description": "Maximum number of matching symbols to report (default 50).",
+                "default": 50,
+            },
         },
         "required": ["symbol"],
     }
@@ -450,7 +529,12 @@ class FindReferencesTool(Tool):
     def parameters_schema(self) -> dict[str, Any]:
         return self.parameters
 
-    async def execute(self, symbol: str) -> ToolResult:
+    async def execute(
+        self,
+        symbol: str,
+        include_definitions: bool = False,
+        max_results: int = 50,
+    ) -> ToolResult:
         try:
             node_ids = self._graph.find_by_name(symbol)
             if not node_ids:
@@ -462,12 +546,18 @@ class FindReferencesTool(Tool):
                 )
 
             lines: list[str] = []
-            for node_id in node_ids[:10]:
+            for node_id in node_ids[:max_results]:
                 node = self._graph.get_node(node_id)
                 where = f"{node['file_path']}:{node['start_line']}" if node else node_id
                 callers = self._graph.get_callers(node_id)
                 if not callers:
-                    lines.append(f"### `{symbol}` defined at `{where}` — no recorded callers.")
+                    # A definition with no recorded callers. Off by default:
+                    # an agent asking "who calls this" does not want matches
+                    # that merely prove the symbol exists.
+                    if include_definitions:
+                        lines.append(
+                            f"### `{symbol}` defined at `{where}` — no recorded callers."
+                        )
                     continue
 
                 lines.append(f"### `{symbol}` defined at `{where}` — referenced by:")
