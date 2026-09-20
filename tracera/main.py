@@ -2217,6 +2217,18 @@ def eval_retrieval(
     include: Annotated[
         str | None, typer.Option("--include", help="Comma-separated strategy names.")
     ] = None,
+    max_per_file: Annotated[
+        int,
+        typer.Option(
+            "--max-per-file",
+            help=(
+                "Cap chunks returned per file (0 disables). Frees the window for "
+                "files that would otherwise have been cut off. Measured at k=10: "
+                "cap 2 is recall-neutral for -12% context bytes; cap 1 takes -31% "
+                "bytes but costs recall@10. See tracera/retrieval/dedupe.py."
+            ),
+        ),
+    ] = 0,
 ) -> None:
     """
     Phases 46-48 — run the retrieval benchmark.
@@ -2262,6 +2274,7 @@ def eval_retrieval(
         reranker=reranker,
         resolve_doc=build_doc_resolver(vector_store),
         include=include_list,
+        max_per_file=max_per_file or None,
     )
     if not strategies:
         console.print("[bold red]No strategies could be built — is the code index present?[/]")
