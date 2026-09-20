@@ -336,3 +336,76 @@ def test_grep_baseline_never_enters_skipped_directories(tmp_path) -> None:
     # Discovered once, not re-walked per query.
     assert strategy._source_files() is found
     assert [h.file_path for h in strategy._retrieve("nested", 5)] == ["pkg/real.py"]
+
+
+def test_ablation_arms_can_actually_differ() -> None:
+    """
+    The ablation baseline must be built *without* the retrieval tools.
+
+    ``tool_filter`` was computed in ``eval_ablation`` and then never passed to
+    ``_build_agent`` — and the retrieval pipeline was never passed either. Every
+    arm therefore ran the identical agent with **no retrieval tools at all**: the
+    study compared six copies of itself, and nothing in its output reveals that.
+    An ablation whose arms cannot differ is not an ablation, it is a table.
+
+    This is a source-level check because the defect is a dropped argument, which
+    no runtime assertion in the benchmark can observe.
+    """
+    import ast
+
+    src = (Path(__file__).resolve().parents[1] / "tracera" / "main.py").read_text(
+        encoding="utf-8"
+    )
+    tree = ast.parse(src)
+
+    builder = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "_build_agent"
+    )
+    assert "tool_filter" in [a.arg for a in builder.args.args], (
+        "_build_agent cannot accept a tool filter, so no arm can differ"
+    )
+
+    def calls_in(func_name: str) -> list[ast.Call]:
+        func = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == func_name
+        )
+        return [
+            node
+            for node in ast.walk(func)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_build_agent"
+        ]
+
+    for func_name in ("eval_agent", "eval_ablation"):
+        calls = calls_in(func_name)
+        assert calls, f"{func_name} no longer builds an agent"
+        for call in calls:
+            assert len(call.args) >= 3, (
+                f"{func_name} calls _build_agent at line {call.lineno} with no "
+                "retrieval pipeline — the agent under test has no retrieval tools"
+            )
+
+    forwarded = [
+        kw
+        for call in calls_in("eval_ablation")
+        for kw in call.keywords
+        if kw.arg == "tool_filter"
+    ]
+    assert forwarded, (
+        "eval_ablation never forwards tool_filter, so every arm gets the same "
+        "tool set and the study measures nothing"
+    )
+    # Forwarding a literal None is the same as not forwarding it at all, and a
+    # presence-only check cannot tell the two apart.
+    assert not any(
+        isinstance(kw.value, ast.Constant) and kw.value.value is None
+        for kw in forwarded
+    ), (
+        "eval_ablation forwards `tool_filter=None`, which is indistinguishable "
+        "from omitting it — the ablation arms cannot differ"
+    )
