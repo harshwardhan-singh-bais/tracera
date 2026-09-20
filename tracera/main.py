@@ -2276,6 +2276,26 @@ def eval_retrieval(
     console.print(f"\n[bold green]OK[/] Report saved to [cyan]{output}[/]")
 
 
+def _merge_usage(outcome: dict, meta: dict, *, overwrite: bool) -> None:
+    """
+    Copy usage/progress fields from an event's metadata into the outcome.
+
+    ``overwrite=False`` is for the terminal DONE event: on a successful run it
+    arrives after ``response_complete`` and must only fill gaps, never replace a
+    good number with a later copy of itself.
+    """
+    for key in (
+        "iterations",
+        "tool_calls",
+        "tokens_in",
+        "tokens_out",
+        "total_tokens",
+        "usage_reported",
+    ):
+        if key in meta and (overwrite or key not in outcome):
+            outcome[key] = meta[key]
+
+
 async def _run_agent_task(agent, task: str) -> dict:
     """
     Run one task and return the outcome dict the agent benchmarks read.
@@ -2288,17 +2308,26 @@ async def _run_agent_task(agent, task: str) -> dict:
 
     Shared by ``eval agent`` and ``eval ablation`` on purpose — two hand-copied
     runners is exactly how the two drift apart.
+
+    ``success`` starts **False**: a run that ends without either a completion or
+    an error has not succeeded, and the benchmark's own
+    ``outcome.get("success", True)`` default would otherwise count it as one — at
+    zero tokens, making it look like the cheapest run in the report.
     """
-    outcome: dict = {"tool_names": set()}
+    outcome: dict = {"tool_names": set(), "success": False}
     async for event in await agent.run(task):
         meta = event.metadata or {}
         if event.type.value == "response_complete":
             outcome["output"] = event.text or ""
             outcome["success"] = True
-            outcome["iterations"] = meta.get("iterations", 0)
-            outcome["tool_calls"] = meta.get("tool_calls", 0)
-            outcome["tokens_in"] = meta.get("tokens_in", 0)
-            outcome["tokens_out"] = meta.get("tokens_out", 0)
+            _merge_usage(outcome, meta, overwrite=True)
+        elif event.type.value == "done":
+            # Terminal events carry usage on every exit path now, including the
+            # error and max-iterations exits. A run that failed after several
+            # LLM calls still cost tokens, and reporting zero for it would make
+            # whichever arm fails most look cheapest — the one comparison a
+            # benchmark must not get wrong.
+            _merge_usage(outcome, meta, overwrite=False)
         elif event.type.value == "tool_end":
             outcome["tool_names"].add(event.tool_name or "")
         elif event.type.value == "error":

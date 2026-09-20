@@ -94,6 +94,40 @@ When you have completed the task, provide a clear summary of what was done.
 # ── ReAct Agent ───────────────────────────────────────────────────────────────
 
 
+def _usage_metadata(
+    conversation: ConversationState,
+    *,
+    iterations: int,
+    tool_calls: int,
+    model: str | None = None,
+) -> dict[str, Any]:
+    """
+    Usage and progress fields for a terminal agent event.
+
+    Published on **every** exit path, not only success. A run that errored or
+    hit the iteration cap still spent tokens on the calls it did make, and
+    reporting zero there makes whichever arm fails most look cheapest — the one
+    comparison a benchmark must not get wrong.
+    """
+    stats = conversation.stats
+    return {
+        "iterations": iterations,
+        "tool_calls": tool_calls,
+        "total_tokens": stats.total_tokens,
+        # Split in/out as well as the sum: the benchmark reports tokens_in and
+        # tokens_out separately, and a runner that can only see the total has
+        # to invent the split or report zero.
+        "tokens_in": stats.total_tokens_in,
+        "tokens_out": stats.total_tokens_out,
+        "total_latency_ms": stats.total_latency_ms,
+        "model": model,
+        # False when the provider told us nothing. A consumer that only sees the
+        # numbers cannot tell "this run was free" from "this run was not
+        # measured", and the second one averaged in silently corrupts a mean.
+        "usage_reported": bool(stats.total_tokens),
+    }
+
+
 class ReActAgent:
     """
     Core ReAct (Reason + Act) agent loop.
@@ -502,20 +536,14 @@ class ReActAgent:
                 type=AgentEventType.RESPONSE_COMPLETE,
                 iteration=iteration,
                 text=final_text,
-                metadata={
-                    "iterations": iteration + 1,
-                    "tool_calls": self._tool_call_count,
-                    "total_tokens": conversation.stats.total_tokens,
-                    # Split in/out as well as the sum: the benchmark reports
-                    # tokens_in and tokens_out separately, and a runner that can
-                    # only see the total has to invent the split or report zero.
-                    "tokens_in": conversation.stats.total_tokens_in,
-                    "tokens_out": conversation.stats.total_tokens_out,
-                    "total_latency_ms": conversation.stats.total_latency_ms,
+                metadata=_usage_metadata(
+                    conversation,
+                    iterations=iteration + 1,
+                    tool_calls=self._tool_call_count,
                     # The model the API actually reported for THIS response —
                     # lets the UI prove which backend really answered.
-                    "model": response.model,
-                },
+                    model=response.model,
+                ),
             )
             yield AgentEvent(type=AgentEventType.DONE, iteration=iteration)
             return
@@ -526,7 +554,14 @@ class ReActAgent:
             yield AgentEvent(
                 type=AgentEventType.DONE,
                 iteration=self.max_iterations,
-                metadata={"terminated_by_error": True},
+                metadata={
+                    "terminated_by_error": True,
+                    **_usage_metadata(
+                        conversation,
+                        iterations=iteration + 1,
+                        tool_calls=self._tool_call_count,
+                    ),
+                },
             )
             return
 
@@ -546,7 +581,15 @@ class ReActAgent:
             iteration=self.max_iterations,
             text=str(err),
         )
-        yield AgentEvent(type=AgentEventType.DONE, iteration=self.max_iterations)
+        yield AgentEvent(
+            type=AgentEventType.DONE,
+            iteration=self.max_iterations,
+            metadata=_usage_metadata(
+                conversation,
+                iterations=self.max_iterations,
+                tool_calls=self._tool_call_count,
+            ),
+        )
 
     async def _stream_response(
         self,
