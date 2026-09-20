@@ -331,3 +331,134 @@ def test_vector_store_passes_a_language_list_through(tmp_path, monkeypatch):
 
     assert any("language IN ('typescript', 'tsx')" in c for c in captured)
     assert any("symbol_type = 'class'" in c for c in captured)
+
+
+# ── Vector store eviction ────────────────────────────────────────────────────
+
+
+class _FakeArrowTable:
+    """Just enough Arrow to drive ``evict_files_not_in``."""
+
+    def __init__(self, ids: list[str], paths: list[str]):
+        self._columns = {"id": ids, "file_path": paths}
+
+    def column(self, name: str):
+        return _FakeColumn(self._columns[name])
+
+
+class _FakeColumn:
+    def __init__(self, values: list[str]):
+        self._values = values
+
+    def to_pylist(self):
+        return self._values
+
+
+class _EvictTable:
+    """
+    A table that really honours ``delete`` clauses.
+
+    Asserting on the generated SQL would pass even if the id list were built by
+    zipping the wrong columns, so this applies the filter instead.
+    """
+
+    def __init__(self, ids: list[str], paths: list[str]):
+        self.ids = list(ids)
+        self.paths = list(paths)
+        self.deletes: list[str] = []
+
+    def to_arrow(self):
+        return _FakeArrowTable(self.ids, self.paths)
+
+    def count_rows(self):
+        return len(self.ids)
+
+    def delete(self, clause: str):
+        self.deletes.append(clause)
+        keep_ids = _parse_id_in_clause(clause)
+        survivors = [
+            (i, p) for i, p in zip(self.ids, self.paths, strict=True) if i not in keep_ids
+        ]
+        self.ids = [i for i, _ in survivors]
+        self.paths = [p for _, p in survivors]
+
+
+def _parse_id_in_clause(clause: str) -> set[str]:
+    """Extract the ids from ``id IN ('a', 'b')`` — the deletion target."""
+    assert clause.startswith("id IN ("), clause
+    body = clause[len("id IN (") : -1]
+    return {part.strip().strip("'") for part in body.split(",") if part.strip()}
+
+
+def test_evict_drops_rows_for_files_the_scanner_no_longer_yields(tmp_path, monkeypatch):
+    """
+    A file that stops being *scanned* must lose its vectors.
+
+    ``upsert_chunks`` rewrites by id, so a file excluded by a new .gitignore
+    pattern is never mentioned again — nothing else removes it. On this
+    workspace that left 21,351 stale `docs-site/.next/**` rows behind, 63.9%
+    of the table and all of it reachable by dense search.
+    """
+    import tracera.retrieval.vector_store as vs
+
+    table = _EvictTable(
+        ids=["live1", "live2", "stale1", "stale2", "stale3"],
+        paths=["tracera/a.py", "tracera/b.py", "x/.next/c.js", "x/.next/d.js", "x/.next/e.js"],
+    )
+    monkeypatch.setattr(vs.VectorStore, "_get_or_create_table", lambda self: table)
+    store = vs.VectorStore(tmp_path / "lance")
+
+    removed = store.evict_files_not_in({"tracera/a.py", "tracera/b.py"})
+
+    assert removed == 3
+    assert table.paths == ["tracera/a.py", "tracera/b.py"], "live rows must survive"
+
+
+def test_evict_is_a_noop_when_everything_is_live(tmp_path, monkeypatch):
+    """Never issue a delete for an index that has nothing stale."""
+    import tracera.retrieval.vector_store as vs
+
+    table = _EvictTable(ids=["a", "b"], paths=["x.py", "y.py"])
+    monkeypatch.setattr(vs.VectorStore, "_get_or_create_table", lambda self: table)
+    store = vs.VectorStore(tmp_path / "lance")
+
+    assert store.evict_files_not_in({"x.py", "y.py"}) == 0
+    assert table.deletes == [], "no stale ids means no delete statement at all"
+
+
+def test_evict_keeps_rows_whose_file_is_unparseable_but_live(tmp_path, monkeypatch):
+    """
+    Eviction keys on the file path, not on chunk ids being in some set.
+
+    A live file may legitimately have zero chunks (it failed to parse, or is
+    binary), and an earlier revision of this check dropped such rows.
+    """
+    import tracera.retrieval.vector_store as vs
+
+    table = _EvictTable(
+        ids=["a", "b", "c"],
+        paths=["real.py", "empty.py", "gone/.next/x.js"],
+    )
+    monkeypatch.setattr(vs.VectorStore, "_get_or_create_table", lambda self: table)
+    store = vs.VectorStore(tmp_path / "lance")
+
+    store.evict_files_not_in({"real.py", "empty.py"})
+
+    assert table.paths == ["real.py", "empty.py"]
+
+
+def test_evict_batches_large_deletions(tmp_path, monkeypatch):
+    """A 20k-id clause is one very long scan; it must be split."""
+    import tracera.retrieval.vector_store as vs
+
+    n = vs._DELETE_BATCH * 2 + 7
+    ids = [f"s{i}" for i in range(n)]
+    table = _EvictTable(ids=ids, paths=[f".next/{i}.js" for i in range(n)])
+    monkeypatch.setattr(vs.VectorStore, "_get_or_create_table", lambda self: table)
+    store = vs.VectorStore(tmp_path / "lance")
+
+    removed = store.evict_files_not_in({"live.py"})
+
+    assert removed == n
+    assert len(table.deletes) == 3, f"expected 3 batches, got {len(table.deletes)}"
+
