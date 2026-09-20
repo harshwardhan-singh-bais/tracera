@@ -2347,6 +2347,13 @@ def eval_agent(
     ] = None,
     workspace: Annotated[Path | None, typer.Option("--workspace", "-w")] = None,
     output: Annotated[Path, typer.Option("--output", "-o")] = Path(".tracera/eval/agent_report.md"),
+    timeout: Annotated[
+        float,
+        typer.Option(
+            "--timeout",
+            help="Wall-clock budget per task in seconds. A stuck provider call fails that task instead of hanging the run; 0 disables the budget.",
+        ),
+    ] = 300.0,
 ) -> None:
     """
     Phase 49 — run the end-to-end agent benchmark.
@@ -2375,7 +2382,9 @@ def eval_agent(
     async def runner(task: str) -> dict:
         return await _run_agent_task(agent, task)
 
-    bench = AgentBenchmark(runner, tasks=task_list, name="cli-agent")
+    bench = AgentBenchmark(
+        runner, tasks=task_list, name="cli-agent", task_timeout_s=timeout
+    )
     report = asyncio.run(bench.run())
     console.print(report.to_markdown())
     report_path = output
@@ -2396,6 +2405,13 @@ def eval_ablation(
     output: Annotated[Path, typer.Option("--output", "-o")] = Path(
         ".tracera/eval/ablation_report.md"
     ),
+    timeout: Annotated[
+        float,
+        typer.Option(
+            "--timeout",
+            help="Wall-clock budget per task in seconds, applied to every arm; 0 disables it.",
+        ),
+    ] = 300.0,
 ) -> None:
     """
     Phase 50 — run the ablation study.
@@ -2436,7 +2452,9 @@ def eval_ablation(
 
         return runner
 
-    framework = AblationFramework(task_list, build_agent, name="cli-ablation")
+    framework = AblationFramework(
+        task_list, build_agent, name="cli-ablation", task_timeout_s=timeout
+    )
     report = asyncio.run(framework.run())
     console.print(report.to_markdown())
     report.save(output)
