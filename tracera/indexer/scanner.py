@@ -39,6 +39,11 @@ class RepositoryScanner:
         # ── build / tool output ───────────────────────────────────────────
         ".git/",
         ".tracera/",
+        # Agent tooling and its memory. Not source code — and because `.md` maps
+        # to the "markdown" language below, these notes were indexed and competed
+        # with the code for questions *about* the code. A per-query failure
+        # analysis found the agent's own notes outranking the implementation.
+        ".workbuddy-ai/",
         ".gitignore",
         ".venv/",
         "venv/",

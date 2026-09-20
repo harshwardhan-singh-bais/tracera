@@ -125,6 +125,25 @@ def test_scanner_ignores_gitignore_files_themselves(tmp_path: Path):
     assert "main.py" in paths
 
 
+def test_scanner_skips_agent_tooling_directories(tmp_path: Path):
+    """
+    ``.workbuddy-ai/`` holds agent notes, not source — and ``.md`` is indexed.
+
+    Because markdown is an indexed language, those notes were retrieved for
+    questions about the code and outranked the implementation. ``.tracera/`` is
+    included here as a regression guard for the same class of directory.
+    """
+    for d in (".workbuddy-ai", ".tracera"):
+        memory = tmp_path / d / "memory"
+        memory.mkdir(parents=True)
+        (memory / "NOTES.md").write_text("# agent notes\n")
+    (tmp_path / "real.py").write_text("x = 1")
+
+    paths = {f.path for f in RepositoryScanner(workspace_root=tmp_path).scan()}
+
+    assert paths == {"real.py"}, f"agent tooling leaked into the index: {paths}"
+
+
 def test_typescript_query_is_valid():
     """
     Regression: the TypeScript query used to name `identifier` for class and
