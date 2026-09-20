@@ -472,6 +472,8 @@ class MemoryLayer:
         min_extraction_importance: float = 0.3,
         enable_worthiness_filter: bool = True,
         enable_safety: bool = True,
+        pii_detection: bool | None = None,
+        prompt_injection_protection: bool | None = None,
         # Recall config
         recall_use_hybrid: bool = True,
         recall_token_budget: int = 2000,
@@ -497,6 +499,8 @@ class MemoryLayer:
         self._min_extraction_importance = min_extraction_importance
         self._enable_worthiness_filter = enable_worthiness_filter
         self._enable_safety = enable_safety
+        self._pii_detection = pii_detection
+        self._prompt_injection_protection = prompt_injection_protection
         self._enable_reconciliation = enable_reconciliation
         self._reconciliation_candidates = max(1, reconciliation_candidates)
         self._reconciliation_min_similarity = reconciliation_min_similarity
@@ -546,6 +550,8 @@ class MemoryLayer:
             min_importance=self._min_extraction_importance,
             enable_worthiness_filter=self._enable_worthiness_filter,
             enable_safety=self._enable_safety,
+            pii_detection=self._pii_detection,
+            prompt_injection_protection=self._prompt_injection_protection,
         )
         self._reconciler = MemoryReconciler(
             self._build_extraction_call(provider),

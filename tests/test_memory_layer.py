@@ -29,6 +29,7 @@ import pytest
 from tracera.memory.layer import (
     MemoryExtractor,
     MemoryLayer,
+    MemoryPolicy,
     MemoryStore,
 )
 from tracera.memory.layer.attribution import (
@@ -172,7 +173,10 @@ class FakeProvider(LLMProvider):
 
 def make_layer(db_path: Path, **kwargs: Any) -> MemoryLayer:
     """Build a fully-wired layer around a fake provider + fake embedder."""
-    store = MemoryStore(db_path / "mem.db")
+    # Explicit policy keeps the suite independent of the developer's real
+    # TRACERA_MEMORY_* values, and unthresholded because the toy hash embedder
+    # scores genuine matches below the production min_recall_score.
+    store = MemoryStore(db_path / "mem.db", policy=MemoryPolicy(recall_min_score=0.0))
     layer = MemoryLayer(
         store=store,
         embed_fn=fake_embed,

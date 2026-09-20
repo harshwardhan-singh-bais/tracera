@@ -34,7 +34,7 @@ import sys
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -130,51 +130,118 @@ class MemoryPolicy:
     prompt_injection_protection: bool = True
     cross_entity_isolation: bool = True  # Hard requirement
 
+    # Maintenance
+    decay_half_life_days: float = 90.0
+
+    #: How to treat a write below the quality thresholds.
+    #:   "soft" — store it, but scaled down in importance so it ranks lower and
+    #:            decays sooner (default; never loses information).
+    #:   "hard" — refuse the write outright (raises MemoryPolicyViolation).
+    write_gate: str = "soft"
+
+    # ── construction ─────────────────────────────────────────────────────
+
+    @classmethod
+    def from_settings(cls, settings: Any) -> MemoryPolicy:
+        """
+        Derive a policy from :class:`~tracera.config.settings.Settings`.
+
+        Settings is where operators configure things today; this makes
+        :class:`MemoryPolicy` the single object the store reads, without
+        changing any effective value. Fields with no setting behind them keep
+        their dataclass default.
+        """
+        return cls(
+            retention_days=cls._get(settings, "tracera_memory_retention_days", 365),
+            dedup_threshold=cls._get(settings, "tracera_memory_dedup_threshold", 0.9),
+            recall_top_k=cls._get(settings, "tracera_memory_top_k", 5),
+            recall_min_score=cls._get(settings, "tracera_memory_min_recall_score", 0.3),
+            decay_half_life_days=cls._get(
+                settings, "tracera_memory_decay_half_life_days", 90.0
+            ),
+        )
+
+    @staticmethod
+    def _get(settings: Any, name: str, default: Any) -> Any:
+        value = getattr(settings, name, None)
+        return default if value is None else value
+
+    @classmethod
+    def default(cls) -> MemoryPolicy:
+        """
+        The policy an unconfigured :class:`MemoryStore` runs under.
+
+        Derived from :func:`~tracera.config.settings.get_settings` when that is
+        reachable, so a store constructed with no explicit policy still honours
+        the operator's ``TRACERA_MEMORY_*`` environment. Falls back to the
+        dataclass defaults rather than failing to construct — the store must
+        never be unable to open because config loading is unhappy.
+        """
+        try:
+            from tracera.config.settings import get_settings
+
+            return cls.from_settings(get_settings())
+        except Exception as exc:  # pragma: no cover - defensive
+            log.debug("MemoryPolicy.default(): falling back to dataclass defaults (%s)", exc)
+            return cls()
+
     def for_scope(self, scope: MemoryScope) -> MemoryPolicy:
-        """Return a policy adjusted for a specific scope."""
-        # Base policy - can be overridden per scope
-        if scope == MemoryScope.GLOBAL:
-            return MemoryPolicy(
-                max_memories=50000,
-                max_memories_per_entity=10000,
-                retention_days=730,
-                min_confidence=0.7,
-            )
-        elif scope == MemoryScope.ORGANIZATION:
-            return MemoryPolicy(
-                max_memories=20000,
-                max_memories_per_entity=5000,
-                retention_days=365,
-                min_confidence=0.6,
-            )
-        elif scope == MemoryScope.PROJECT:
-            return MemoryPolicy(
-                max_memories=10000,
-                max_memories_per_entity=3000,
-                retention_days=180,
-                min_confidence=0.5,
-            )
-        elif scope == MemoryScope.ENTITY:
-            return MemoryPolicy(
-                max_memories=5000,
-                max_memories_per_entity=2000,
-                retention_days=90,
-                min_confidence=0.5,
-            )
-        elif scope == MemoryScope.PROCESS:
-            return MemoryPolicy(
-                max_memories=2000,
-                max_memories_per_entity=1000,
-                retention_days=30,
-                min_confidence=0.4,
-            )
-        else:  # SESSION
-            return MemoryPolicy(
-                max_memories=500,
-                max_memories_per_entity=500,
-                retention_days=7,
-                min_confidence=0.3,
-            )
+        """
+        Return this policy adjusted for a specific scope.
+
+        Overrides only the fields a scope actually changes and inherits the rest
+        (including anything derived from settings) via :func:`replace` — the
+        previous version built a brand-new ``MemoryPolicy()`` per scope, which
+        silently discarded operator configuration.
+        """
+        overrides: dict[str, Any] = {
+            MemoryScope.GLOBAL: {
+                "max_memories": 50000,
+                "max_memories_per_entity": 10000,
+                "retention_days": 730,
+                "min_confidence": 0.7,
+            },
+            MemoryScope.ORGANIZATION: {
+                "max_memories": 20000,
+                "max_memories_per_entity": 5000,
+                "retention_days": 365,
+                "min_confidence": 0.6,
+            },
+            MemoryScope.PROJECT: {
+                "max_memories": 10000,
+                "max_memories_per_entity": 3000,
+                "retention_days": 180,
+                "min_confidence": 0.5,
+            },
+            MemoryScope.ENTITY: {
+                "max_memories": 5000,
+                "max_memories_per_entity": 2000,
+                "retention_days": 90,
+                "min_confidence": 0.5,
+            },
+            MemoryScope.PROCESS: {
+                "max_memories": 2000,
+                "max_memories_per_entity": 1000,
+                "retention_days": 30,
+                "min_confidence": 0.4,
+            },
+            MemoryScope.SESSION: {
+                "max_memories": 500,
+                "max_memories_per_entity": 500,
+                "retention_days": 7,
+                "min_confidence": 0.3,
+            },
+        }
+        return replace(self, **overrides.get(scope, {}))
+
+
+class MemoryPolicyViolation(RuntimeError):
+    """
+    Raised when a write is refused outright by the policy's ``write_gate``.
+
+    Only possible with ``write_gate="hard"``; the default ``"soft"`` gate never
+    rejects a write, it just scales the memory down.
+    """
 
 
 # ── Records ───────────────────────────────────────────────────────────────────
@@ -716,6 +783,16 @@ def is_self_subject(name: str) -> bool:
     return canonical_key(name) in _SELF_SUBJECTS
 
 
+def _estimate_tokens(text: str) -> int:
+    """
+    Cheap token estimate for the recall budget (~4 chars/token for English).
+
+    Deliberately not a tokenizer call: the budget only needs to be in the right
+    ballpark, and recall is on the hot path of every LLM request.
+    """
+    return max(1, len(text or "") // 4)
+
+
 class VectorIndex:
     """
     In-process embedding matrix for one entity, backed by numpy.
@@ -860,9 +937,17 @@ class VectorIndex:
 class MemoryStore:
     """SQLite-backed memory store with entity/process scoping and dedup."""
 
-    def __init__(self, db_path: str | Path) -> None:
+    def __init__(
+        self,
+        db_path: str | Path,
+        policy: MemoryPolicy | None = None,
+    ) -> None:
         self._db_path = Path(db_path)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        # Single source of truth for retention, quality gates, quotas and recall
+        # budgets. Defaults to the operator's TRACERA_MEMORY_* settings, so a
+        # store built with no explicit policy is still policy-driven.
+        self.policy: MemoryPolicy = policy if policy is not None else MemoryPolicy.default()
         self._lock = threading.RLock()
         self._local = threading.local()
         # Vector-index cache: {entity_pk: (generation, VectorIndex)}
@@ -1093,7 +1178,7 @@ class MemoryStore:
         embedding: list[float],
         session_id: str | None = None,
         job_id: int | None = None,
-        similarity_threshold: float = 0.9,
+        similarity_threshold: float | None = None,
         confidence: float = 0.8,
         importance: float = 0.5,
         source_event: str | None = None,
@@ -1106,6 +1191,12 @@ class MemoryStore:
     ) -> tuple[bool, MemoryRecord]:
         """
         Write one memory.
+
+        Subject to the store's :class:`MemoryPolicy`: a write below the quality
+        thresholds is either refused (``write_gate="hard"``) or stored at
+        reduced importance (the default ``"soft"`` gate), and a successful
+        insert that pushes the entity past ``max_memories_per_entity`` evicts
+        the weakest existing memories first.
 
         Dedup order:
           1. A semantically similar row for this **entity** (cosine ≥ threshold)
@@ -1129,6 +1220,9 @@ class MemoryStore:
             raise ValueError(f"invalid memory kind: {kind!r}")
         if status not in ("active", "superseded", "archived", "invalidated"):
             raise ValueError(f"invalid memory status: {status!r}")
+        if similarity_threshold is None:
+            similarity_threshold = self.policy.dedup_threshold
+        confidence, importance = self._apply_write_gate(confidence, importance, text)
         entity_pk, process_pk = self._resolve_ids(entity_id, process_id)
         s, p, o = _normalize_triple(subject, predicate, object)
         subj_key = canonical_key(subject)
@@ -1262,10 +1356,101 @@ class MemoryStore:
             # Keep the cached matrix current in O(1) instead of rebuilding it.
             if inserted:
                 self._index_append(entity_pk, memory_id, embedding)
+                # 4) Quota: an entity may not exceed max_memories_per_entity.
+                self._enforce_entity_quota(conn, entity_pk, memory_id)
             else:
                 self._index_update(entity_pk, memory_id, embedding)
             row = conn.execute("SELECT * FROM memories WHERE id = ?", (memory_id,)).fetchone()
             return inserted, self._record_from_row(conn, row)
+
+    # ── Policy enforcement ──────────────────────────────────────────────────
+
+    def _apply_write_gate(
+        self, confidence: float, importance: float, text: str
+    ) -> tuple[float, float]:
+        """
+        Apply ``min_confidence`` / ``min_importance`` to an incoming write.
+
+        ``write_gate="hard"`` refuses the write with
+        :class:`MemoryPolicyViolation`. ``"soft"`` (the default) stores it but
+        scales ``importance`` by how far below the thresholds it sits, so weak
+        memories rank lower in recall and decay sooner — no information is
+        lost, which matters because "worth remembering" is a judgement the
+        extractor gets wrong at the margins.
+        """
+        policy = self.policy
+        below_conf = max(0.0, policy.min_confidence - confidence)
+        below_imp = max(0.0, policy.min_importance - importance)
+        if not below_conf and not below_imp:
+            return confidence, importance
+
+        if policy.write_gate == "hard":
+            raise MemoryPolicyViolation(
+                f"memory rejected by policy (write_gate='hard'): "
+                f"confidence={confidence:.2f} < {policy.min_confidence:.2f} or "
+                f"importance={importance:.2f} < {policy.min_importance:.2f}"
+            )
+
+        # Soft gate: scale rather than drop. A memory at the floor keeps 10% of
+        # its importance so it stays retrievable, just never competitive.
+        span = max(policy.min_confidence, policy.min_importance, 1e-6)
+        shortfall = min(1.0, (below_conf + below_imp) / span)
+        scaled = importance * max(0.1, 1.0 - shortfall)
+        log.debug(
+            "soft write gate: importance %.3f -> %.3f (confidence=%.2f, text=%r)",
+            importance,
+            scaled,
+            confidence,
+            text[:60],
+        )
+        return confidence, round(scaled, 4)
+
+    def _enforce_entity_quota(
+        self, conn: sqlite3.Connection, entity_pk: int, keep_id: int
+    ) -> int:
+        """
+        Evict the weakest memories once an entity exceeds its quota.
+
+        ``max_memories_per_entity`` was declared but never read, so an entity's
+        store grew without bound. Eviction is *weakest first* — lowest decay
+        score, then lowest importance, then oldest — and archives rather than
+        deletes, matching :meth:`run_gc`. The just-written memory is never a
+        candidate, and a memory ever marked ``useful`` is never evicted.
+        """
+        limit = self.policy.max_memories_per_entity
+        if limit <= 0:
+            return 0
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM memories WHERE entity_id = ? AND status = 'active'",
+            (entity_pk,),
+        ).fetchone()
+        excess = int(row["n"]) - limit
+        if excess <= 0:
+            return 0
+
+        victims = conn.execute(
+            "SELECT id FROM memories "
+            "WHERE entity_id = ? AND status = 'active' AND id != ? AND useful_count = 0 "
+            "ORDER BY COALESCE(decay_score, 1.0) ASC, importance ASC, last_seen_at ASC "
+            "LIMIT ?",
+            (entity_pk, keep_id, excess),
+        ).fetchall()
+        if not victims:
+            return 0
+        ids = [int(v["id"]) for v in victims]
+        placeholders = ",".join("?" * len(ids))
+        conn.execute(
+            f"UPDATE memories SET status = 'archived', expired_at = ? WHERE id IN ({placeholders})",
+            (time.time(), *ids),
+        )
+        conn.commit()
+        # Cached matrices are keyed by row id and filtered at query time, but
+        # the generation bump guarantees they are rebuilt.
+        self._generation += 1
+        log.info(
+            "entity quota: archived %d weakest memory/memories (limit=%d)", len(ids), limit
+        )
+        return len(ids)
 
     def _find_semantic_duplicate(
         self,
@@ -1501,12 +1686,13 @@ class MemoryStore:
         entity_id: str,
         query_embedding: list[float],
         *,
-        k: int = 5,
+        k: int | None = None,
         process_id: str | None = None,
-        min_score: float = 0.0,
+        min_score: float | None = None,
         as_of: float | None = None,
         kinds: list[str] | None = None,
         record_hits: bool = True,
+        token_budget: int | None = None,
     ) -> list[tuple[MemoryRecord, float]]:
         """
         Vector-search a single entity's memories (never cross-entity).
@@ -1518,8 +1704,19 @@ class MemoryStore:
         and true* at that timestamp, which is how superseded facts stay
         answerable ("what was the user's employer in March?").
 
+        ``k``, ``min_score`` and ``token_budget`` fall back to the store's
+        :class:`MemoryPolicy` (which derives them from ``TRACERA_MEMORY_*``)
+        when not given. Pass ``token_budget=0`` to disable budgeting; the
+        budget is what stops recall from silently eating the prompt.
+
         Returns ``[(record, similarity), ...]`` sorted by similarity desc.
         """
+        if k is None:
+            k = self.policy.recall_top_k
+        if min_score is None:
+            min_score = self.policy.recall_min_score
+        if token_budget is None:
+            token_budget = self.policy.recall_token_budget
         entity_pk = self.register_entity(entity_id)
         with self._lock:
             conn = self._conn()
@@ -1532,11 +1729,20 @@ class MemoryStore:
             ids = [mid for mid, _ in hits]
             rows = self._fetch_rows(conn, ids, process_id, as_of, kinds)
             results: list[tuple[MemoryRecord, float]] = []
+            spent = 0
             for memory_id, score in hits:
                 row = rows.get(memory_id)
                 if row is None or score < min_score:
                     continue
-                results.append((self._record_from_row(conn, row), score))
+                record = self._record_from_row(conn, row)
+                if token_budget > 0:
+                    cost = _estimate_tokens(record.text)
+                    if spent and spent + cost > token_budget:
+                        # Budget is a soft stop: the single best match is always
+                        # returned, otherwise a long memory could starve recall.
+                        break
+                    spent += cost
+                results.append((record, score))
                 if len(results) >= k:
                     break
             if record_hits and results:
@@ -2183,7 +2389,7 @@ class MemoryStore:
 
     # ── Decay, retention and garbage collection ──────────────────────────────
 
-    def apply_decay(self, *, half_life_days: float = 90.0) -> int:
+    def apply_decay(self, *, half_life_days: float | None = None) -> int:
         """
         Recompute ``decay_score`` for every memory.
 
@@ -2191,7 +2397,12 @@ class MemoryStore:
         memory was actually useful and by whether it was ever recalled. This is
         what makes forgetting principled instead of "whatever the user deletes" —
         the gap every memory server in the market currently leaves open.
+
+        ``half_life_days`` defaults to the store's
+        :attr:`MemoryPolicy.decay_half_life_days`.
         """
+        if half_life_days is None:
+            half_life_days = self.policy.decay_half_life_days
         lam = math.log(2) / max(1.0, half_life_days)
         now = time.time()
         with self._lock:
@@ -2218,7 +2429,7 @@ class MemoryStore:
     def run_gc(
         self,
         *,
-        retention_days: int | None = 365,
+        retention_days: int | None = None,
         decay_floor: float = 0.05,
         min_age_days: int = 30,
         dry_run: bool = False,
@@ -2229,7 +2440,13 @@ class MemoryStore:
         Archiving (not deleting) keeps the audit trail intact and stays
         reversible — ``status='archived'`` rows leave recall but can be restored.
         A memory that was ever marked ``useful`` is never collected.
+
+        ``retention_days`` defaults to the store's
+        :attr:`MemoryPolicy.retention_days` instead of a hard-coded literal.
+        Pass ``retention_days=0`` to collect on decay alone.
         """
+        if retention_days is None:
+            retention_days = self.policy.retention_days
         now = time.time()
         cutoff = now - retention_days * 86400 if retention_days else None
         age_cutoff = now - min_age_days * 86400
@@ -2254,12 +2471,58 @@ class MemoryStore:
                     (now, *ids),
                 )
                 conn.commit()
+
+            # Global cap. Retention and decay only ever retire *old* memories,
+            # so a store that is simply busy keeps growing; max_memories is the
+            # backstop that bounds it regardless of age.
+            capped = self._enforce_global_quota(conn, dry_run)
             return {
-                "candidates": len(ids),
-                "archived": 0 if dry_run else len(ids),
+                "candidates": len(ids) + capped,
+                "archived": 0 if dry_run else len(ids) + capped,
                 "dry_run": dry_run,
                 "ids": ids[:50],
+                "capped": capped,
             }
+
+    def _enforce_global_quota(self, conn: sqlite3.Connection, dry_run: bool) -> int:
+        """
+        Archive the weakest memories once the store exceeds ``max_memories``.
+
+        Same ordering and protections as the per-entity quota — weakest first,
+        never a ``useful`` memory, archive rather than delete — but measured
+        across all entities, so one busy entity cannot crowd out the rest.
+        """
+        limit = self.policy.max_memories
+        if limit <= 0:
+            return 0
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM memories WHERE status = 'active'"
+        ).fetchone()
+        excess = int(row["n"]) - limit
+        if excess <= 0:
+            return 0
+
+        victims = conn.execute(
+            "SELECT id FROM memories "
+            "WHERE status = 'active' AND useful_count = 0 "
+            "ORDER BY COALESCE(decay_score, 1.0) ASC, importance ASC, last_seen_at ASC "
+            "LIMIT ?",
+            (excess,),
+        ).fetchall()
+        if not victims:
+            return 0
+        if dry_run:
+            return len(victims)
+        ids = [int(v["id"]) for v in victims]
+        placeholders = ",".join("?" * len(ids))
+        conn.execute(
+            f"UPDATE memories SET status = 'archived', expired_at = ? WHERE id IN ({placeholders})",
+            (time.time(), *ids),
+        )
+        conn.commit()
+        self._generation += 1
+        log.info("global quota: archived %d weakest memory/memories (limit=%d)", len(ids), limit)
+        return len(ids)
 
     # ── Memory graph queries ─────────────────────────────────────────────────
 
@@ -3136,7 +3399,7 @@ class MemoryStore:
         self,
         entity_id: str | None = None,
         *,
-        similarity_threshold: float = 0.92,
+        similarity_threshold: float | None = None,
         min_mention_count: int = 2,
         max_merges: int = 50,
         dry_run: bool = False,
@@ -3148,10 +3411,19 @@ class MemoryStore:
         would resurrect a retired fact. ``dry_run`` reports what *would* merge
         without touching anything.
 
+        ``similarity_threshold`` defaults to
+        :attr:`MemoryPolicy.consolidation_threshold`; the pass is skipped when
+        the policy disables consolidation.
+
         This can be scheduled as a periodic background job.
         Returns statistics about the consolidation run.
         """
+        if similarity_threshold is None:
+            similarity_threshold = self.policy.consolidation_threshold
         stats = {"scanned": 0, "merged": 0, "superseded": 0, "errors": 0, "dry_run": dry_run}
+        if not self.policy.consolidation_enabled:
+            log.debug("run_consolidation: disabled by policy")
+            return stats
 
         with self._lock:
             conn = self._conn()

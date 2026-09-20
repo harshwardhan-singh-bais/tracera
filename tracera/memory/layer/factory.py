@@ -16,7 +16,7 @@ from tracera.config.settings import Settings, get_settings
 from tracera.logging import get_logger
 from tracera.memory.layer.attribution import Attribution
 from tracera.memory.layer.facade import MemoryLayer
-from tracera.memory.layer.store import MemoryStore
+from tracera.memory.layer.store import MemoryPolicy, MemoryStore
 from tracera.providers.base import LLMProvider
 
 log = get_logger("memory.layer.factory")
@@ -56,7 +56,11 @@ def create_memory_layer(settings: Settings | None = None) -> MemoryLayer | None:
     if not settings.tracera_memory_enabled:
         return None
     try:
-        store = MemoryStore(settings.memory_layer_db)
+        # One policy, derived once from settings, threaded into both the store
+        # and the layer. Settings is the config surface; MemoryPolicy is the
+        # object everything reads — so the two can no longer disagree.
+        policy = MemoryPolicy.from_settings(settings)
+        store = MemoryStore(settings.memory_layer_db, policy=policy)
         embedder = LocalMemoryEmbedder(
             settings.tracera_embedding_model,
             settings.tracera_embedding_device,
@@ -65,25 +69,33 @@ def create_memory_layer(settings: Settings | None = None) -> MemoryLayer | None:
         return MemoryLayer(
             store=store,
             embed_fn=embedder.embed,
-            top_k=settings.tracera_memory_top_k,
-            dedup_threshold=settings.tracera_memory_dedup_threshold,
-            min_recall_score=settings.tracera_memory_min_recall_score,
+            top_k=policy.recall_top_k,
+            dedup_threshold=policy.dedup_threshold,
+            min_recall_score=policy.recall_min_score,
             enabled_processes=settings.memory_layer_processes or None,
             extraction_model=settings.tracera_memory_extraction_model or None,
             worker_enabled=settings.tracera_memory_worker_enabled,
-            min_extraction_confidence=0.5,
-            min_extraction_importance=0.3,
-            enable_worthiness_filter=True,
+            min_extraction_confidence=policy.extraction_min_confidence,
+            min_extraction_importance=policy.extraction_min_importance,
+            enable_worthiness_filter=policy.worthiness_filter,
             enable_safety=True,
+            # Independently switchable now: an operator may want injection
+            # filtering for untrusted tool output while still storing legitimate
+            # facts that contain the user's own contact details.
+            pii_detection=policy.pii_detection,
+            prompt_injection_protection=policy.prompt_injection_protection,
             recall_use_hybrid=True,
-            recall_token_budget=2000,
+            recall_token_budget=policy.recall_token_budget,
             recall_grouped=True,
             recall_graph_expansion=settings.tracera_memory_graph_expansion,
             recall_graph_hops=settings.tracera_memory_graph_hops,
+            # Reconciliation (Mem0-style ADD/UPDATE/DELETE) is a distinct
+            # mechanism from consolidation (merging near-duplicates), so it
+            # keeps its own setting rather than borrowing the policy's flag.
             enable_reconciliation=settings.tracera_memory_reconciliation,
             reconciliation_candidates=settings.tracera_memory_reconciliation_candidates,
-            decay_half_life_days=settings.tracera_memory_decay_half_life_days,
-            retention_days=settings.tracera_memory_retention_days,
+            decay_half_life_days=policy.decay_half_life_days,
+            retention_days=policy.retention_days,
         )
     except Exception as e:  # noqa: BLE001 — never break startup over memory
         log.warning("Memory layer unavailable (disabled): %s", e)

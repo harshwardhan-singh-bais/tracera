@@ -49,6 +49,7 @@ from tracera.memory.layer.facade import AgentMemory
 from tracera.memory.layer.recall import RecallInjector, estimate_tokens
 from tracera.memory.layer.store import (
     SCHEMA_VERSION,
+    MemoryPolicy,
     MemoryRecord,
     canonical_key,
     unpack_embedding,
@@ -77,9 +78,18 @@ def fake_embed(text: str, dim: int = 48) -> list[float]:
     return [x / n for x in vec]
 
 
+#: Policy the suite runs under. Explicit, so the suite does not pick up the
+#: developer's real ``TRACERA_MEMORY_*`` values (which would make these tests
+#: environment-dependent). The toy hash embedder scores genuine matches around
+#: 0.25-0.35 cosine, well under the production ``min_recall_score`` of 0.3, so
+#: recall here runs unthresholded; the gate itself is tested directly in
+#: ``TestPolicyEnforcement``.
+TEST_POLICY = MemoryPolicy(recall_min_score=0.0)
+
+
 @pytest.fixture()
 def store(tmp_path: Path) -> MemoryStore:
-    return MemoryStore(tmp_path / "mem.db")
+    return MemoryStore(tmp_path / "mem.db", policy=TEST_POLICY)
 
 
 @pytest.fixture(autouse=True)

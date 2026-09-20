@@ -156,8 +156,26 @@ def filter_memory_worthy(
     min_confidence: float = 0.5,
     min_importance: float = 0.3,
     enable_safety: bool = True,
+    pii_detection: bool | None = None,
+    prompt_injection_protection: bool | None = None,
 ) -> list[ExtractedMemory]:
-    """Filter extracted memories by worthiness, confidence, and importance."""
+    """
+    Filter extracted memories by worthiness, confidence, and importance.
+
+    ``enable_safety`` is a master switch. ``pii_detection`` and
+    ``prompt_injection_protection`` narrow it independently —
+    :attr:`MemoryPolicy` exposes them as separate decisions, and an operator may
+    reasonably want injection filtering (untrusted tool output) without PII
+    filtering (which drops legitimate facts about the user's own email).
+    Leaving them ``None`` means "follow the master switch", which is the
+    pre-existing behaviour.
+    """
+    do_pii = enable_safety if pii_detection is None else (enable_safety and pii_detection)
+    do_injection = (
+        enable_safety
+        if prompt_injection_protection is None
+        else (enable_safety and prompt_injection_protection)
+    )
     filtered = []
     for item in items:
         # Check confidence and importance thresholds
@@ -175,16 +193,13 @@ def filter_memory_worthy(
             continue
 
         # Safety checks
-        if enable_safety:
-            # PII detection
-            if detect_pii(item.text):
-                log.debug("Filtered out memory with potential PII: %s", item.text[:50])
-                continue
+        if do_pii and detect_pii(item.text):
+            log.debug("Filtered out memory with potential PII: %s", item.text[:50])
+            continue
 
-            # Prompt injection protection
-            if detect_prompt_injection(item.text):
-                log.debug("Filtered out memory with potential prompt injection: %s", item.text[:50])
-                continue
+        if do_injection and detect_prompt_injection(item.text):
+            log.debug("Filtered out memory with potential prompt injection: %s", item.text[:50])
+            continue
 
         # Boost confidence by worthiness
         boosted_confidence = min(1.0, item.confidence * (0.8 + 0.2 * worthiness_score))
@@ -337,12 +352,16 @@ class MemoryExtractor:
         min_importance: float = 0.3,
         enable_worthiness_filter: bool = True,
         enable_safety: bool = True,
+        pii_detection: bool | None = None,
+        prompt_injection_protection: bool | None = None,
     ) -> None:
         self._call_llm = call_llm
         self._min_confidence = min_confidence
         self._min_importance = min_importance
         self._enable_worthiness_filter = enable_worthiness_filter
         self._enable_safety = enable_safety
+        self._pii_detection = pii_detection
+        self._prompt_injection_protection = prompt_injection_protection
 
     async def extract_turn(
         self,
@@ -364,6 +383,8 @@ class MemoryExtractor:
                     min_confidence=self._min_confidence,
                     min_importance=self._min_importance,
                     enable_safety=self._enable_safety,
+                    pii_detection=self._pii_detection,
+                    prompt_injection_protection=self._prompt_injection_protection,
                 )
 
             return items
