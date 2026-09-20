@@ -2224,7 +2224,7 @@ def eval_retrieval(
             help=(
                 "Cap chunks returned per file (0 disables). Frees the window for "
                 "files that would otherwise have been cut off. Measured at k=10: "
-                "cap 2 is recall-neutral for -12% context bytes; cap 1 takes -31% "
+                "cap 2 is recall-neutral for -22% context bytes; cap 1 takes -31% "
                 "bytes but costs recall@10. See tracera/retrieval/dedupe.py."
             ),
         ),
