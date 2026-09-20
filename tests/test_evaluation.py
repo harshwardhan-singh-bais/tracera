@@ -409,3 +409,62 @@ def test_ablation_arms_can_actually_differ() -> None:
         "eval_ablation forwards `tool_filter=None`, which is indistinguishable "
         "from omitting it — the ablation arms cannot differ"
     )
+
+
+def test_agent_task_runner_populates_every_field_the_benchmark_reads() -> None:
+    """
+    A field the benchmark reads but the runner never writes reports a zero.
+
+    That zero is indistinguishable from a real measurement of zero: the token
+    columns were empty for every task in every arm, so "no difference between
+    arms" was *unobservable* rather than true, and the one number the agent
+    benchmark exists to produce could never appear. `tool_calls` was the same,
+    and `success` was set to True by any completion at all — including one where
+    the model answered from its own priors without reading a single file.
+    """
+    import asyncio
+
+    from tracera.agent.react_loop import AgentEvent, AgentEventType
+    from tracera.main import _run_agent_task
+
+    class FakeAgent:
+        async def run(self, task: str):
+            # `agent.run` is a coroutine returning an async iterator, not an
+            # async generator function — the runner awaits it, then iterates.
+            async def events():
+                yield AgentEvent(
+                    type=AgentEventType.TOOL_END, iteration=1, tool_name="read_file"
+                )
+                yield AgentEvent(
+                    type=AgentEventType.RESPONSE_COMPLETE,
+                    iteration=1,
+                    text="done",
+                    metadata={
+                        "iterations": 2,
+                        "tool_calls": 1,
+                        "tokens_in": 120,
+                        "tokens_out": 30,
+                    },
+                )
+
+            return events()
+
+    outcome = asyncio.run(_run_agent_task(FakeAgent(), "t"))
+
+    assert outcome["success"] is True
+    assert outcome["iterations"] == 2
+    assert outcome["tool_calls"] == 1, "the benchmark's tool-call column would read 0"
+    assert outcome["tokens_in"] == 120, "the benchmark's token column would read 0"
+    assert outcome["tokens_out"] == 30
+    assert outcome["tool_names"] == {"read_file"}
+
+    class ErrorAgent:
+        async def run(self, task: str):
+            async def events():
+                yield AgentEvent(type=AgentEventType.ERROR, iteration=1, text="boom")
+
+            return events()
+
+    failed = asyncio.run(_run_agent_task(ErrorAgent(), "t"))
+    assert failed["success"] is False, "an errored task was counted as a success"
+    assert failed["error"] == "boom"

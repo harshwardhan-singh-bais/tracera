@@ -2276,6 +2276,40 @@ def eval_retrieval(
     console.print(f"\n[bold green]OK[/] Report saved to [cyan]{output}[/]")
 
 
+async def _run_agent_task(agent, task: str) -> dict:
+    """
+    Run one task and return the outcome dict the agent benchmarks read.
+
+    Every field here is read by ``AgentBenchmark``, and a field it reads but
+    this function never sets reports a **zero that looks like a measurement**:
+    ``tokens_in``/``tokens_out``/``tool_calls`` were all 0 for every task in
+    every arm, so the benchmark's token column was structurally always empty and
+    "no difference between arms" was unobservable rather than true.
+
+    Shared by ``eval agent`` and ``eval ablation`` on purpose — two hand-copied
+    runners is exactly how the two drift apart.
+    """
+    outcome: dict = {"tool_names": set()}
+    async for event in await agent.run(task):
+        meta = event.metadata or {}
+        if event.type.value == "response_complete":
+            outcome["output"] = event.text or ""
+            outcome["success"] = True
+            outcome["iterations"] = meta.get("iterations", 0)
+            outcome["tool_calls"] = meta.get("tool_calls", 0)
+            outcome["tokens_in"] = meta.get("tokens_in", 0)
+            outcome["tokens_out"] = meta.get("tokens_out", 0)
+        elif event.type.value == "tool_end":
+            outcome["tool_names"].add(event.tool_name or "")
+        elif event.type.value == "error":
+            outcome["error"] = event.text
+            # A run that errored must not count as a success. This used to be
+            # set to True by *any* completion, which made success_rate 100% for
+            # an agent that answered from its own priors without reading a file.
+            outcome["success"] = False
+    return outcome
+
+
 @eval_app.command("agent")
 def eval_agent(
     tasks: Annotated[
@@ -2310,17 +2344,7 @@ def eval_agent(
     agent, _, prov = _build_agent(settings, ws_path, pipeline)
 
     async def runner(task: str) -> dict:
-        outcome = {"tool_names": set()}
-        async for event in await agent.run(task):
-            if event.type.value == "response_complete":
-                outcome["output"] = event.text or ""
-                outcome["success"] = True
-                outcome["iterations"] = event.metadata.get("iterations", 0)
-            elif event.type.value == "tool_end":
-                outcome["tool_names"].add(event.tool_name or "")
-            elif event.type.value == "error":
-                outcome["error"] = event.text
-        return outcome
+        return await _run_agent_task(agent, task)
 
     bench = AgentBenchmark(runner, tasks=task_list, name="cli-agent")
     report = asyncio.run(bench.run())
@@ -2379,17 +2403,7 @@ def eval_ablation(
         )
 
         async def runner(task: str) -> dict:
-            outcome = {"tool_names": set()}
-            async for event in await agent.run(task):
-                if event.type.value == "response_complete":
-                    outcome["output"] = event.text or ""
-                    outcome["success"] = True
-                    outcome["iterations"] = event.metadata.get("iterations", 0)
-                elif event.type.value == "tool_end":
-                    outcome["tool_names"].add(event.tool_name or "")
-                elif event.type.value == "error":
-                    outcome["error"] = event.text
-            return outcome
+            return await _run_agent_task(agent, task)
 
         return runner
 
