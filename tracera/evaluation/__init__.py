@@ -6,6 +6,9 @@ TRACERA Evaluation — Phases 45-50.
     metrics.py           — Phase 46: Recall@k, MRR, nDCG@k, precision@k.
     strategies.py        — Phase 47/48: retrievable strategy wrappers
                             (grep, BM25, dense, hybrid, hybrid+reranker).
+                            The reranked arm is built only when the
+                            cross-encoder is already cached, so a benchmark
+                            never starts a download mid-run.
     retrieval_benchmark.py — Phases 46-48: run a dataset against strategies
                             and report accuracy / latency / context size.
     agent_benchmark.py   — Phase 49: end-to-end coding-task benchmark

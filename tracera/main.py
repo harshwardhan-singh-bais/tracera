@@ -2203,8 +2203,11 @@ def eval_retrieval(
     """
     Phases 46-48 — run the retrieval benchmark.
 
-    Compares grep / BM25 / dense / hybrid / hybrid+reranker on the dataset
-    and reports Recall@k, MRR, nDCG@k, latency, and context size.
+    Compares grep / BM25 / dense / hybrid on the dataset and reports Recall@k,
+    MRR, nDCG@k, latency, and context size. hybrid+reranker is added too, but
+    only when the cross-encoder is already in the Hugging Face cache — a
+    benchmark must not trigger a network download mid-run, so on a cold cache
+    that strategy is silently absent rather than slow.
     """
     _setup()
     settings = _get_settings()
