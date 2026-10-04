@@ -26,19 +26,37 @@ Supported hosts:
 | --- | --- | --- |
 | `claude-desktop` | Claude Desktop | `%APPDATA%/Claude/claude_desktop_config.json` |
 | `claude-code` | Claude Code | `~/.claude.json` |
-| `codex` | Codex CLI | `~/.codex/config.toml` |
+| `claude-code-project` | Claude Code (project) | `.mcp.json` in the workspace |
+| `codex` | Codex CLI | `~/.codex/config.toml` (TOML) |
 | `cursor` | Cursor | `%APPDATA%/Cursor/mcp.json` |
+| `cursor-project` | Cursor (project) | `.cursor/mcp.json` in the workspace |
 | `windsurf` | Windsurf | `%APPDATA%/Windsurf/mcp_config.json` |
 | `vscode` | VS Code (Copilot) | `.vscode/mcp.json` in the workspace |
 | `cline` | Cline (VS Code) | Cline's `cline_mcp_settings.json` |
+| `roo` | Roo Code (VS Code) | Roo's `cline_mcp_settings.json` |
+| `kilo` | Kilo Code (VS Code) | Kilo's `mcp_settings.json` |
 | `gemini-cli` | Gemini CLI | `~/.gemini/settings.json` |
 | `antigravity` | Google Antigravity | platform config dir / `~/.antigravity` |
+| `zed` | Zed | `~/.config/zed/settings.json` (`context_servers`) |
+| `opencode` | OpenCode | `~/.config/opencode/opencode.json` (`mcp`) |
+| `continue` | Continue | `~/.continue/config.json` |
+| `amazonq` | Amazon Q Developer | `~/.aws/amazonq/mcp.json` |
+| `qwen` | Qwen Code | `~/.qwen/settings.json` |
+| `kiro` | Kiro | `~/.kiro/settings/mcp.json` |
 
 The entry points at *this checkout* (`python -X utf8 -m tracera.main mcp
 serve --workspace <root>` with `PYTHONUTF8=1`), so code changes apply
-without reinstalling — restart the client and its agent gains all 36 tools:
+without reinstalling — restart the client and its agent gains all 44 tools:
 hybrid code search, blast radius, call hierarchy, dead code, hotspots,
 memory recall/remember, task context assembly, risk profiles and more.
+
+<Callout type="info">
+For coding agents — Claude Code, Cursor, Codex, Copilot, Cline, Roo, Windsurf
+and the rest — prefer [`tracera integrate apply`](/docs/integrations). It
+registers the MCP server **and** writes the agent brief that tells the model
+when to use it. `tracera mcp install` alone wires the server but leaves the
+model with no reason to reach for it.
+</Callout>
 
 <Callout type="info">
 The `PYTHONUTF8=1` in every generated entry is not decoration — on Windows,
