@@ -1,0 +1,215 @@
+---
+title: Agent Harnesses
+description: Wire TRACERA into any coding agent — Claude Code, Cursor, Codex, Copilot, Cline, Roo, Windsurf, Zed, Gemini CLI and more.
+---
+
+TRACERA works with any agent harness — an IDE, a CLI, or a desktop app that
+drives a model over your repo. One command wires it up.
+
+```bash
+tracera integrate list              # what can be integrated
+tracera integrate apply --all       # wire up everything detected
+tracera integrate doctor            # check what is already wired
+```
+
+## Two wires, not one
+
+Integrating a harness takes **two independent things**, and a harness needs
+both:
+
+| Wire | What it does | Where it lands |
+| --- | --- | --- |
+| **MCP server** | Lets the agent *call* TRACERA | The harness's own MCP config (`mcpServers`, `servers`, `context_servers`, `mcp`, or TOML) |
+| **Agent brief** | Lets the agent *know to* | The instruction file the harness reads (`AGENTS.md`, `CLAUDE.md`, `.cursor/rules/*.mdc`, …) |
+
+Wiring only the first gives you a tool the model never calls — it has no
+reason to prefer `search_code` over its own recollection. Wiring only the
+second gives you advice to call a tool that is not there.
+
+`tracera mcp install` does the first. `tracera integrate apply` does both.
+
+## `tracera integrate apply`
+
+```bash
+# Wire up everything detected on this machine
+tracera integrate apply --all
+
+# Name harnesses explicitly (overrides detection)
+tracera integrate apply claude-code cursor aider
+
+# Preview without writing anything
+tracera integrate apply --all --dry-run
+
+# Just the brief, or just the MCP server
+tracera integrate apply claude-code --no-mcp
+tracera integrate apply cursor --no-instructions
+```
+
+Every run reports per-target status:
+
+```
+                        TRACERA integrate — workspace=/repo
+┏━━━━━━━━━━━━━┳━━━━━━┳━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┓
+┃ Harness     ┃ What ┃ Target              ┃ Status    ┃ Detail             ┃
+┡━━━━━━━━━━━━━╇━━━━━━╇━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━┩
+│ Claude Code │ mcp  │ claude-code-project │ created   │ created .mcp.json  │
+│ Claude Code │ brief│ CLAUDE.md           │ updated   │ refreshed block    │
+│ Cursor      │ brief│ .cursor/rules/…mdc  │ unchanged │ already current    │
+└─────────────┴──────┴─────────────────────┴───────────┴────────────────────┘
+```
+
+## Scopes: instruction files stay in the repo by default
+
+Instruction files come in two scopes. **`apply` defaults to project scope**,
+so no instruction file outside the repo is touched unless you ask:
+
+```bash
+tracera integrate apply --all                    # project files only (default)
+tracera integrate apply --all --scope user       # ~/.claude/CLAUDE.md and friends
+tracera integrate apply --all --scope both
+```
+
+<Callout type="warn">
+`--scope` governs **instruction files only**. The MCP half of the wiring is
+independent: config paths are wherever the harness itself keeps them, and
+several harnesses have no project-level config file (Codex, Zed, Windsurf, the
+VS Code extensions), so those entries always land in the home directory — there
+is nowhere else to put them. `--no-mcp` skips that half entirely.
+
+Use `--dry-run` first if you want to see every path before anything is written.
+</Callout>
+
+Prefer project scope where it exists. The wiring travels with the repo, so a
+teammate who clones it gets the same setup instead of depending on your home
+directory layout.
+
+## What gets written
+
+The brief goes inside a **managed block**, so your own prose is never
+touched:
+
+```markdown
+# My house rules
+
+Be terse. Prefer composition.
+
+<!-- tracera:begin (managed by `tracera integrate`) -->
+
+## TRACERA — code intelligence & memory
+…generated from the live tool registry…
+
+<!-- tracera:end -->
+```
+
+Everything outside the markers is preserved byte-for-byte, including a
+trailing section you add later. Re-running is idempotent — already-current
+targets report `unchanged` and are not rewritten.
+
+A `.bak` sidecar is written next to every file before it is modified, and
+writes are atomic (temp file + rename), so a harness never reads a
+half-written brief.
+
+## Supported harnesses
+
+`tracera integrate list` prints this table live, with a **Seen** column showing
+which ones are detected on your machine.
+
+| Harness | Key | MCP | Instruction file |
+| --- | --- | --- | --- |
+| Claude Code | `claude-code` | yes | `CLAUDE.md`, `~/.claude/CLAUDE.md`, `AGENTS.md` |
+| Claude Desktop | `claude-desktop` | yes | — (in-app instructions) |
+| Codex CLI | `codex` | yes | `AGENTS.md` |
+| Cursor | `cursor` | yes | `.cursor/rules/tracera.mdc`, `AGENTS.md` |
+| VS Code (Copilot) | `vscode-copilot` | yes | `.github/copilot-instructions.md`, `.github/instructions/` |
+| VS Code (Copilot Chat, user scope) | `vscode-copilot-chat` | yes | — (MCP only) |
+| Cline | `cline` | yes | `.clinerules/tracera.md`, `AGENTS.md` |
+| Roo Code | `roo` | yes | `.roo/rules/tracera.md`, `AGENTS.md` |
+| Kilo Code | `kilo` | yes | `.kilocode/rules/tracera.md`, `AGENTS.md` |
+| Windsurf | `windsurf` | yes | `.windsurf/rules/tracera.md`, `.windsurfrules` |
+| Gemini CLI | `gemini-cli` | yes | `GEMINI.md`, `AGENTS.md` |
+| Google Antigravity | `antigravity` | yes | `AGENTS.md` |
+| Amazon Q Developer | `amazonq` | yes | `.amazonq/rules/tracera.md`, `AGENTS.md` |
+| Kiro | `kiro` | yes | `.kiro/steering/tracera.md`, `AGENTS.md` |
+| OpenCode | `opencode` | yes | `AGENTS.md` |
+| Qwen Code | `qwen` | yes | `QWEN.md`, `AGENTS.md` |
+| Continue | `continue` | yes | `.continue/rules/tracera.md`, `AGENTS.md` |
+| Zed | `zed` | yes | `AGENTS.md` |
+| Trae | `trae` | no | `.trae/rules/tracera.md`, `AGENTS.md` |
+| Aider | `aider` | no | `CONVENTIONS.md`, `AGENTS.md` |
+
+**`AGENTS.md` is the universal target.** It is the cross-tool standard read by
+Codex, Cursor, Gemini CLI, OpenCode, Zed and many others, so TRACERA writes it
+once for every harness that shares it — not once per harness.
+
+## Harnesses without MCP
+
+Aider and Trae have no MCP client, so they get the **CLI bridge** instead: the
+brief teaches the agent to shell out to `tracera` and parse JSON.
+
+```bash
+tracera search "where is the chunker" --json   # ranked hits, path:line, scores
+tracera status --json                          # index / memory / provider state
+```
+
+Both write machine-readable output to stdout and route progress to stderr, so
+you can pipe them straight into a parser:
+
+```bash
+tracera search "retry policy" -k 5 --json | jq '.results[] | "\(.file):\(.start_line) \(.symbol)"'
+```
+
+## Inspecting and checking
+
+```bash
+tracera integrate list                 # catalog + detection
+tracera integrate list --json          # machine-readable
+tracera integrate doctor               # is it wired? is the brief current?
+tracera integrate doctor --json
+```
+
+`doctor` is read-only. It reports, per harness, whether the harness looks
+installed, whether the MCP server is registered (and current), and whether the
+brief is present — plus the code-index state, which is what the tools
+actually read. A missing index is the most common reason an integrated agent
+gets poor results:
+
+```bash
+tracera index
+```
+
+## Printing the brief
+
+To paste the brief into a harness we have no target for, or to review the
+wording before applying:
+
+```bash
+tracera integrate instructions agents            # MCP tool brief
+tracera integrate instructions agents --cli      # CLI bridge brief
+tracera integrate instructions cursor -o /tmp/brief.md
+```
+
+## Detection
+
+`--all` targets harnesses whose config directory or project markers exist —
+`~/.claude`, `.cursor/`, `.github/`, a `.clinerules` directory, and so on.
+Detection is a heuristic, not a guarantee, so **naming a harness explicitly
+always overrides it**: passing `aider` integrates Aider even if nothing about
+your machine suggests you use it.
+
+## Verification status
+
+The catalog records the config shape each harness documents. Two of them have
+churned across releases and are worth a second look if the server does not
+appear after a restart:
+
+- **Zed** stores MCP servers under `context_servers`, not `mcpServers`.
+- **OpenCode** wants a single argv array plus an explicit `type: "local"`.
+
+Zed's `settings.json` is **JSONC** — it ships with a commented header, which
+strict JSON cannot parse. TRACERA reads it comment-tolerantly, so `apply zed`
+works on a default install. Writing back normalises the file to plain JSON
+(the original, comments intact, is kept in the `.bak`).
+
+Run `tracera integrate doctor` after integrating; if a harness reports
+`missing` where you expect `installed`, check that harness's current docs —
+the catalog carries the same caveat in its `note` field.
