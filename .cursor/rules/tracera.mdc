@@ -1,0 +1,42 @@
+---
+description: TRACERA code intelligence and memory
+globs:
+alwaysApply: true
+---
+<!-- tracera:begin (managed by `tracera integrate`) -->
+
+## TRACERA — code intelligence & memory
+
+This repository has [TRACERA](https://github.com/tracera/tracera) wired in. It answers structural questions about the code from a real index — symbols, call graphs, blast radius, git history — instead of from guesswork.
+
+**Prefer these tools over reading files speculatively.** They are cheap, they return exact `path:line` locations, and they are the difference between a plausible answer and a correct one.
+
+### When to use it
+
+- `get_context` — before editing a file you have not read — the definition plus the callers and dependencies that matter.
+- `search_code` — when the user names a concept and you do not know where it lives.
+- `get_blast_radius` — before changing a signature — what breaks if this moves.
+- `check_edit_safe` — immediately before writing a file, to catch a destructive edit.
+- `recall_memory` — at the start of a task, for decisions and conventions already learned.
+- `remember_memory` — when the user states a durable preference you would otherwise re-derive next session.
+- `run_tests` — before claiming a task is done.
+
+### Available tools
+
+- **Code intelligence** — `search_code`, `find_symbol`, `find_references`, `get_context`, `get_dependencies`, `find_importers`, `get_blast_radius`, `get_call_hierarchy`, `find_dead_code`, `get_changed_symbols`, `get_hotspots`, `search_ast`, `get_class_hierarchy`, `get_dependency_cycles`, `get_coupling_metrics`, `get_endpoint_impact`
+- **Context** — `assemble_task_context`, `get_ranked_context`, `plan_turn`, `get_session_stats`, `get_repo_map`
+- **Memory** — `recall_memory`, `remember_memory`, `forget_memory`, `list_sessions`, `search_memory`, `get_memory_graph`, `memory_timeline`, `memory_entities`, `memory_update`, `memory_feedback`, `memory_maintenance`, `memory_explain`, `memory_export`, `memory_import`
+- **Safety** — `check_edit_safe`, `check_delete_safe`, `plan_refactoring`, `get_pr_risk_profile`, `get_symbol_provenance`, `audit_agent_config`
+- **Repository** — `run_tests`, `inspect_repository`
+- **Diagnostics** — `get_server_status`
+
+### Ground rules
+
+- Cite locations as `path:line`. If you cannot point at one, say so rather than inventing a symbol.
+- If TRACERA reports the index is stale or empty, run `tracera index` rather than falling back to grep-and-hope.
+- Store durable facts with `remember_memory` — not in the code as comments.
+- Run the project's test command before reporting a task complete.
+
+<!-- workspace: ${workspaceFolder} -->
+
+<!-- tracera:end -->
