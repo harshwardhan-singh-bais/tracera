@@ -5,22 +5,18 @@
   "version": "1.0.0",
   "description": "TRACERA is an AI coding-agent MCP server that provides deep repository intelligence, code search, symbol analysis, dependency analysis, context assembly, memory, safety checks, refactoring planning, test execution, and repository inspection.",
   "author": {
-    "name": "harshwardhan"
+    "name": "TRACERA Team"
   },
   "server": {
-    "type": "uv",
-    "entry_point": "tracera/main.py",
+    "type": "python",
+    "entry_point": "tracera",
     "mcp_config": {
-      "command": "uv",
+      "command": "tracera",
       "args": [
-        "run",
-        "--directory",
-        "${__dirname}",
-        "tracera",
         "mcp",
         "serve",
         "--workspace",
-        "${user_config.workspace}"
+        "${__dirname}"
       ]
     }
   },
