@@ -2690,8 +2690,8 @@ wheels = [
 ]
 
 [[package]]
-name = "tracera"
-version = "0.1.0"
+name = "tracera-ai"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },

@@ -65,6 +65,7 @@ from tracera.tui.widgets.slash_actions import (
     parse_tool_invocation,
     single_arg_kwargs,
 )
+from tracera.tui.widgets.api_keys_prompt import ApiKeysPromptScreen
 
 #: Attached text files larger than this (bytes) are not injected into context.
 _ATTACH_TEXT_MAX_BYTES = 200_000
@@ -79,6 +80,7 @@ _HELP_TEXT = """\
 [bold]/memory[/]        Show memory contents
 [bold]/model[/] [name]   Switch model
 [bold]/models[/]        List all provider/model options
+[bold]/api-keys[/]       Add configuration API keys at runtime
 [bold]/plan[/] [task]    Decompose a task into steps
 [bold]/code[/] [task]    Run a coding task (same as plain input)
 [bold]/search[/] <q>     Search the code index (hybrid)
@@ -312,6 +314,8 @@ class TraceraTUI(App):
         self._banner = banner
         self._conversation = ConversationState()
         self._running_worker: Any = None
+        self._api_key_bootstrapped: bool = False
+        self._pending_first_task: str | None = None
         self._hovered_scrollable: ScrollableContainer | None = None
         self._plan_row: CollapsibleRow | None = None
         self._recent_files: list[tuple[str, str]] = []
@@ -323,7 +327,76 @@ class TraceraTUI(App):
         except Exception:
             tui_theme.set_theme(tui_theme.DEFAULT_THEME)
 
-    # ── Memory wiring ─────────────────────────────────────────────────────────
+        # ── New-user API-key bootstrap ─────────────────────────────────────────
+        # If the user has never been prompted and no key is set, intercept the
+        # first turn and route it into the ApiKeysPromptScreen. The user may
+        # still move on without a key (type 'skip'); once a key is added the
+        # in-memory settings singleton is updated and normal agent use resumes.
+        try:
+            from tracera.config.settings import get_settings
+
+            settings = get_settings()
+            if settings.tracera_api_key_required and not any(
+                settings.provider_api_key(p) for p in
+                ("openai", "anthropic", "gemini", "groq", "sambanova",
+                 "mistral", "cerebras", "nvidia", "nemotron", "openrouter",
+                 "together", "cohere")
+            ):
+                self._pending_first_task = None
+        except Exception:
+            pass
+
+    def on_submit_task(self, event: AgentPanel.SubmitTask) -> None:
+        """Intercept the very first user task until an API key is set."""
+        if self._api_key_bootstrapped:
+            return
+        try:
+            from tracera.config.settings import get_settings
+
+            settings = get_settings()
+        except Exception:
+            return
+
+        # Only intercept plain-text (non-slash) first turns.
+        text = event.text.strip()
+        if text.startswith("/"):
+            return
+        if settings.tracera_api_key_required and not any(
+            settings.provider_api_key(p) for p in
+            ("openai", "anthropic", "gemini", "groq", "sambanova",
+             "mistral", "cerebras", "nvidia", "nemotron", "openrouter",
+             "together", "cohere")
+        ):
+            self._pending_first_task = text
+            self.push_screen(ApiKeysPromptScreen(), callback=self._on_api_keys_done)
+            return
+
+        self._api_key_bootstrapped = True
+
+    def _on_api_keys_done(self, pairs: dict[str, str]) -> None:
+        """Receive the configured key pairs from the ApiKeysPromptScreen."""
+        if not pairs:
+            self._panel().add_meta("[dim]No keys configured — moving on without one.[/]")
+            self._api_key_bootstrapped = True
+            # Re-queue the pending first-time task (or run it plainly).
+            task = getattr(self, "_pending_first_task", None)
+            if task:
+                self._pending_first_task = None
+                self._start_agent_task(task)
+            return
+        names = ", ".join(sorted(pairs))
+        self._panel().add_meta(f"[bold]API keys configured:[/] [cyan]{escape(names)}[/]")
+        self._api_key_bootstrapped = True
+
+    def _wire_memory_to_agent(self) -> None:
+        """Receive the configured key pairs from the ApiKeysPromptScreen."""
+        if not pairs:
+            self._panel().add_meta("[dim]No keys configured — moving on without one.[/]")
+            self._api_key_bootstrapped = True
+            return
+        names = ", ".join(sorted(pairs))
+        self._panel().add_meta(f"[bold]API keys configured:[/] [cyan]{escape(names)}[/]")
+        self._api_key_bootstrapped = True
 
     def _wire_memory_to_agent(self) -> None:
         """Connect the memory facade to the agent so TUI commands and tools can reach it.
@@ -500,6 +573,9 @@ class TraceraTUI(App):
 
         if cmd == "/help":
             panel.add_assistant_message(_HELP_TEXT, trusted=True)
+        elif cmd == "/api-keys":
+            self.push_screen(ApiKeysPromptScreen(), callback=self._on_api_keys_done)
+            return
         elif cmd == "/clear":
             self.action_clear_conversation()
         elif cmd == "/status":
@@ -509,7 +585,16 @@ class TraceraTUI(App):
         elif cmd == "/reset":
             self._conversation = ConversationState()
             panel.add_assistant_message("[dim]Conversation reset.[/]", trusted=True)
+        elif cmd == "/api-keys":
+            self.push_screen(ApiKeysPromptScreen(), callback=self._on_api_keys_done)
+            return
         elif cmd == "/plan":
+            task = text[6:].strip()
+            if task:
+                await self._run_planning(task)
+            else:
+                panel.add_error("Usage: /plan <task description>")
+        elif cmd == "/model":
             task = text[6:].strip()
             if task:
                 await self._run_planning(task)
@@ -2007,6 +2092,63 @@ class TraceraTUI(App):
         failed = re.search(r"(\d+) failed", output)
         suffix = f", {failed.group(1)} failed" if failed else ""
         return f"{total} passed{suffix}"
+
+    def _show_api_keys(self) -> None:
+        """Show which provider API keys are configured, and prompt for missing ones."""
+        try:
+            from tracera.config.settings import get_settings
+
+            settings = get_settings()
+        except Exception as e:
+            self._panel().add_error(f"Cannot read settings: {escape(str(e))}")
+            return
+
+        provider_names = [
+            ("OpenAI", "openai", "OPENAI_API_KEY"),
+            ("Anthropic", "anthropic", "ANTHROPIC_API_KEY"),
+            ("Gemini", "gemini", "GOOGLE_API_KEY"),
+            ("Groq", "groq", "GROQ_API_KEY"),
+            ("SambaNova", "sambanova", "SAMBANOVA_API_KEY"),
+            ("Mistral", "mistral", "MISTRAL_API_KEY"),
+            ("Cerebras", "cerebras", "CEREBRAS_API_KEY"),
+            ("NVIDIA", "nvidia", "NVIDIA_API_KEY"),
+            ("Nemotron", "nemotron", "NEMOTRON_API_KEY"),
+            ("OpenRouter", "openrouter", "OPENROUTER_API_KEY"),
+            ("Together", "together", "TOGETHER_API_KEY"),
+            ("Cohere", "cohere", "COHERE_API_KEY"),
+        ]
+
+        lines = [
+            "[bold cyan]Configuration API keys[/]",
+            "",
+        ]
+        for label, _, env in provider_names:
+            resolved = settings.provider_api_key(env.lower())
+            if resolved:
+                lines.append(f"  [green]✓[/] [bold]{escape(label)}[/]  [dim]{escape(env)}[/]  [dim](set)[/]")
+            else:
+                lines.append(f"  [red]✗[/] [bold]{escape(label)}[/]  [dim]{escape(env)}[/]  [dim](missing)[/]")
+
+        # Prompt the user to add the missing ones before proceeding.
+        missing = [env for _, _, env in provider_names if not settings.provider_api_key(env.lower())]
+        lines.append("")
+        if missing:
+            lines.append(
+                "[dim]Missing: [bold]{}[/]. [/]".format(", ".join(missing))
+            )
+            lines.append(
+                "[dim]Add them now? [bold]Type 'skip'[/] to move on without any key.[/]"
+            )
+
+        self._panel().add_assistant_message("\n".join(lines), trusted=True)
+
+    def _on_api_keys_done(self, pairs: dict[str, str]) -> None:
+        """Receive the configured key pairs from the ApiKeysPromptScreen."""
+        if not pairs:
+            self._panel().add_meta("[dim]No keys configured.[/]")
+            return
+        names = ", ".join(sorted(pairs))
+        self._panel().add_meta(f"[bold]API keys configured:[/] [cyan]{escape(names)}[/]")
 
     def _show_status(self, panel: AgentPanel) -> None:
         provider = self.agent.provider

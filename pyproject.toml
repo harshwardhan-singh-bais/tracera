@@ -3,8 +3,8 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "tracera"
-version = "0.2.0"
+name = "tracera-ai"
+version = "0.3.0"
 description = "CodePilotX — Agentic Code Intelligence & Autonomous Coding Engine"
 readme = "README.md"
 homepage = "https://github.com/tracera/tracera"

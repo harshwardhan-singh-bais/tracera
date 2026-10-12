@@ -34,6 +34,9 @@ class Settings(BaseSettings):
 
     tracera_profile: Profile = Field("development", alias="TRACERA_PROFILE")
     tracera_workspace: Path = Field(Path("."), alias="TRACERA_WORKSPACE")
+    # If a new user installs `tracera-ai` but declines to add an API key,
+    # this flag remembers that decision so the app doesn't hard-block them.
+    tracera_api_key_required: bool = Field(True, alias="TRACERA_API_KEY_REQUIRED")
     tracera_log_level: str = Field("INFO", alias="TRACERA_LOG_LEVEL")
     tracera_log_file: Path | None = Field(None, alias="TRACERA_LOG_FILE")
     tracera_data_dir: Path = Field(Path(".tracera"), alias="TRACERA_DATA_DIR")

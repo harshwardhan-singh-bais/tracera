@@ -39,9 +39,10 @@ SLASH_COMMANDS: dict[str, str] = {
     "files": "Recently touched files",
     "phases": "Phase map + verified checklist",
     "delegate": "Delegate a task to sub-agents: /delegate <task>",
-    "agents": "Sub-agent fleet overview (Researcher/Coder/Tester/Reviewer/Debugger)",
-    "reset": "Reset conversation state",
+    "agents": "Sub-agent fleet overview (Researcher/Coder/Tester/Reviewer/Debugger)",    "reset": "Reset conversation state",
+    "api-keys": "Add configuration API keys at runtime",
 }
+
 
 #: Ordered the way they should appear in autocomplete.
 COMMAND_ORDER: list[str] = [
@@ -69,6 +70,7 @@ COMMAND_ORDER: list[str] = [
     "deps",
     "dashboard",
     "theme",
+    "api-keys",
     "files",
     "observability",
     "phases",

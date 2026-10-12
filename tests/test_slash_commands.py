@@ -139,3 +139,44 @@ def test_command_registry_merges_aliases():
     for alias in SLASH_TOOLS:
         assert alias in SLASH_COMMANDS, f"Alias '{alias}' missing from autocomplete registry"
     assert len(COMMAND_ORDER) == len(set(COMMAND_ORDER)), "Duplicate entries in COMMAND_ORDER"
+
+
+def test_api_keys_command_registered():
+    """The new /api-keys command exists in the autocomplete registry and order."""
+    from tracera.tui.widgets.command_registry import COMMAND_ORDER, SLASH_COMMANDS
+
+    assert "api-keys" in SLASH_COMMANDS
+    assert "api-keys" in COMMAND_ORDER
+    assert SLASH_COMMANDS["api-keys"] == "Add configuration API keys at runtime"
+
+
+def test_feature_groups_reference_known_commands_or_aliases():
+    from tracera.tui.widgets.slash_actions import FEATURE_GROUPS
+    from tracera.tui.widgets.command_registry import SLASH_COMMANDS
+    from tracera.tui.widgets.slash_actions import SLASH_TOOLS
+
+    all_commands = set(SLASH_COMMANDS) | set(SLASH_TOOLS)
+    for group, items in FEATURE_GROUPS.items():
+        assert items, f"Feature group '{group}' is empty"
+        for usage, desc in items:
+            assert desc, f"Feature '{usage}' in '{group}' has no description"
+            name = usage.split()[0].lstrip("/")
+            assert name in all_commands, (
+                f"/{name} in FEATURE_GROUPS ('{group}') is neither a documented "
+                "command nor a tool alias"
+            )
+
+
+def test_feature_groups_cover_all_manual_contributions():
+    """Every slash command contributed outside the registry is present in the groups."""
+    from tracera.tui.widgets.slash_actions import FEATURE_GROUPS
+    from tracera.tui.widgets.command_registry import SLASH_COMMANDS
+
+    registered = set(SLASH_COMMANDS)
+    for group, items in FEATURE_GROUPS.items():
+        for usage, _ in items:
+            name = usage.split()[0].lstrip("/")
+            assert name in registered, (
+                f"/{name} in FEATURE_GROUPS ('{group}') is missing from "
+                "SLASH_COMMANDS"
+            )
